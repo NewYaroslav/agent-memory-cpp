@@ -24,6 +24,7 @@ The repository is in the project-skeleton stage. The current code provides:
 - dependency-free retrieval value types and retriever contract;
 - opt-in MDBX dependency wiring for future storage backends;
 - optional MDBX-backed document storage adapter;
+- optional MDBX-backed resource manifest storage adapter;
 - CMake options for tests, examples, warnings, and MDBX wiring;
 - smoke/domain/storage/embedding/index tests and one basic example.
 

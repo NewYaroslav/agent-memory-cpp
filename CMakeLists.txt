@@ -65,6 +65,7 @@ if(AGENT_MEMORY_ENABLE_MDBX)
     target_sources(agent_memory
         PRIVATE
             src/agent_memory/infrastructure/mdbx/MdbxDocumentStorage.cpp
+            src/agent_memory/infrastructure/mdbx/MdbxResourceManifestStorage.cpp
     )
 
     agent_memory_provide_mdbx_containers(AGENT_MEMORY_MDBX_CONTAINERS_TARGET)
