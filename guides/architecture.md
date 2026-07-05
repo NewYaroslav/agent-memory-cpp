@@ -24,6 +24,9 @@ Rules:
   strategy semantics.
 - Embedding adapters implement embedding contracts; they do not own retrieval
   ranking policy.
+- Retrieval implementations may compose embedding, index, and storage
+  contracts, but they must not expose backend-specific dependencies through
+  public retrieval contracts.
 - Context assembly consumes retrieval results and memory policies; it should not
   perform storage-specific queries directly.
 
@@ -82,3 +85,12 @@ owning retrieval ranking policy.
 
 `ExactVectorIndex` is allowed in the index layer because it is dependency-free
 and acts as the deterministic baseline for tests and small local workloads.
+
+## Planned Retrieval Direction
+
+Retrieval contracts live under `src/agent_memory/retrieval/` and stay
+dependency free. A retriever accepts text, embedding, or mixed query signals,
+metadata filters, and a result limit, then returns ordered scored chunks.
+
+Concrete retrievers should be built as composition over `IEmbedder`,
+`IVectorIndex`, and `IDocumentStorage` rather than as one large facade.
