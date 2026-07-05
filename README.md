@@ -25,6 +25,7 @@ embedding integrations.
 * Exact and approximate vector search
 * BM25 and hybrid retrieval
 * Markdown knowledge-base ingestion
+* Targeted source reindexing
 * Knowledge graphs and named entities
 * Deterministic, inspectable storage
 * No mandatory Python runtime
@@ -209,6 +210,13 @@ Retrieval contracts stay dependency-free and describe text, embedding, or mixed
 queries with result limits and metadata filters. `IRetriever` returns ordered
 scored chunks; concrete retrieval pipelines can compose embedders, indexes, and
 document storage without leaking backend details into the public contract.
+
+## Resource reindexing
+
+Future ingestion work will track resource ownership for derived records so one
+source can be replaced without rebuilding the whole knowledge base. The intended
+manifest and partial-reindex flow are tracked in
+`guides/resource-reindexing.md`.
 
 ## Optimization roadmap
 

@@ -18,6 +18,10 @@ Mandatory rules for AI coding agents working in `agent-memory-cpp`.
   as optional adapters, not as forks of chat/generation wrappers.
 - Separate storage, embedding, indexing, retrieval, memory strategies, ingestion,
   and context assembly. Do not collapse behavior into a single facade.
+- Keep derived records traceable to their source resource when adding ingestion,
+  indexes, or mutable memory features.
+- Prefer targeted resource reindexing over whole-store rebuilds for source
+  updates.
 - Optional infrastructure adapters must depend inward on core contracts, not the
   other way around.
 - Do not add general agent orchestration, browser automation, participant
