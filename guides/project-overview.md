@@ -31,6 +31,7 @@ The library scope is limited to:
 
 - memory records and memory strategies;
 - ingestion and chunking;
+- resource ownership and targeted reindexing;
 - persistent storage;
 - embedding interfaces and adapters;
 - exact and approximate indexes;
@@ -78,3 +79,9 @@ placeholder layers unless a PR needs them.
 Detailed follow-up tasks for compression, optional Eigen/SIMD scoring, vector
 encoding, binary signatures, MDBX bucket indexes, and recall/latency benchmarks
 are tracked in `guides/optimization-roadmap.md`.
+
+## Reindexing Backlog
+
+Resource manifests, source revision tracking, targeted reindexing, tombstones,
+and compaction for mutable memory are tracked in
+`guides/resource-reindexing.md`.

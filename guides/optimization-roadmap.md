@@ -231,6 +231,9 @@ mixed bits
 ### MDBX Prototype
 
 - Add MDBX-backed bucket storage after the in-memory prototype.
+- Integrate with resource manifests before treating bucket storage as mutable
+  production storage; bucket postings need `resource_id` and generation or an
+  equivalent stale-entry guard.
 - Prefer the two-stage layout first:
 
 ```text
@@ -253,6 +256,16 @@ chunk_store:
 - Prefer sparse MDBX key-value lookup for 64-bit short keys.
 - Treat dense direct-address directories as possible only for small key sizes
   and only after measuring memory cost.
+
+### Mutable Bucket Updates
+
+- Do not rely on stable entry offsets inside compressed bucket blobs.
+- For deletion or reindexing, filter bucket entries by `chunk_id`,
+  `resource_id`, and generation after decompression.
+- For frequently updated memory, allow stale bucket entries and skip them at
+  query time until compaction rewrites affected buckets.
+- Keep compaction observable through benchmark counters such as stale entry
+  ratio, rewritten bucket count, and reclaimed bytes.
 
 ### Query Pipeline
 
@@ -375,11 +388,13 @@ Once introduced, these macros should be defined consistently as `0` or `1`.
 8. Short-key generation and Hamming neighbor masks.
 9. In-memory binary bucket index prototype.
 10. Recall/latency benchmark against exact float search.
-11. MDBX-backed two-stage bucket storage.
-12. Bucket compression benchmarks.
-13. Optional Eigen rerank/scoring adapter.
-14. One-stage bucket benchmark variant.
-15. Haar-like experimental encoder.
+11. Resource manifest contracts for targeted reindexing.
+12. MDBX-backed two-stage bucket storage.
+13. Bucket compression benchmarks.
+14. Generation-aware stale filtering and compaction.
+15. Optional Eigen rerank/scoring adapter.
+16. One-stage bucket benchmark variant.
+17. Haar-like experimental encoder.
 
 ## Non-Goals For The First Optimization Pass
 

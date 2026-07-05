@@ -64,6 +64,25 @@ The MDBX document storage adapter lives under
 `src/agent_memory/infrastructure/mdbx/`. It implements `IDocumentStorage` and
 must not define memory strategy, retrieval ranking, or embedding behavior.
 
+## Planned Resource Reindexing Direction
+
+Ingestion should eventually track resource ownership for all derived records.
+Each original source item should have a stable `ResourceId`, a current revision
+or generation, and a manifest of chunks, embeddings, vector records, binary
+bucket postings, lexical postings, or graph records derived from it.
+
+This lets the system replace one markdown file, note, profile fact, or other
+resource without rebuilding unrelated indexes. Resource reindexing should
+compose storage, embedding, and index contracts; it should not become a large
+facade that owns retrieval policy.
+
+MDBX-backed implementations should update a resource, its manifest, and its
+derived records in one writable transaction when possible. Approximate indexes
+with compressed bucket lists may use stale-generation filtering or tombstones
+before physical compaction.
+
+Detailed tasks are tracked in `guides/resource-reindexing.md`.
+
 ## Planned Embedding Direction
 
 Embedding contracts live under `src/agent_memory/embedding/` and stay

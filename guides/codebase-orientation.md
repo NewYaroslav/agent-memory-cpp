@@ -124,6 +124,10 @@ compiled only when `AGENT_MEMORY_ENABLE_MDBX=ON`. It implements
 `IDocumentStorage` through `mdbx-containers` tables and stores adapter details
 behind a Pimpl so public storage contracts stay dependency-free.
 
+Future resource manifest storage should keep the same boundary: contracts stay
+dependency-free, while MDBX tables for resource ownership and partial
+reindexing belong behind infrastructure adapters.
+
 ## Embedding Direction
 
 Embedding code starts with dependency-free contracts in
@@ -172,6 +176,8 @@ backend-specific details must stay behind adapter boundaries.
 - MDBX-specific implementation details: future infrastructure/storage area.
 - Embedding contracts: `src/agent_memory/embedding/`.
 - Retrieval/ranking behavior: `src/agent_memory/retrieval/`.
+- Resource ownership and targeted reindexing: start with domain/storage
+  contracts, then add infrastructure adapters.
 - Memory policies and composition: `src/agent_memory/memory/`.
 - Context builders and formatting: `src/agent_memory/context/`.
 
