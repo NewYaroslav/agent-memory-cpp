@@ -130,7 +130,8 @@ src/agent_memory/
 |   `-- IRetriever.hpp
 |-- infrastructure/
 |   `-- mdbx/
-|       `-- MdbxDocumentStorage.hpp
+|       |-- MdbxDocumentStorage.hpp
+|       `-- MdbxResourceManifestStorage.hpp
 |-- storage/
 |   |-- IDocumentStorage.hpp
 |   `-- IResourceManifestStorage.hpp

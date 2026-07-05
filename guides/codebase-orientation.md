@@ -48,6 +48,8 @@ src/agent_memory/
         mdbx/
             MdbxDocumentStorage.hpp
             MdbxDocumentStorage.cpp
+            MdbxResourceManifestStorage.hpp
+            MdbxResourceManifestStorage.cpp
     storage/
         IDocumentStorage.hpp
         IDocumentStorage.cpp
@@ -68,6 +70,7 @@ tests/
     infrastructure/
         mdbx/
             mdbx_document_storage_test.cpp
+            mdbx_resource_manifest_storage_test.cpp
     storage/
         feature_flags_test.cpp
         document_storage_contract_test.cpp
@@ -138,9 +141,9 @@ compiled only when `AGENT_MEMORY_ENABLE_MDBX=ON`. It implements
 `IDocumentStorage` through `mdbx-containers` tables and stores adapter details
 behind a Pimpl so public storage contracts stay dependency-free.
 
-Future resource manifest storage should keep the same boundary: contracts stay
-dependency-free, while MDBX tables for resource ownership and partial
-reindexing belong behind infrastructure adapters.
+`MdbxResourceManifestStorage` uses the same optional infrastructure boundary for
+`IResourceManifestStorage` and stores resource manifests in an MDBX table while
+keeping public storage contracts dependency-free.
 
 ## Embedding Direction
 
