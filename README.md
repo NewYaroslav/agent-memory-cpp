@@ -132,7 +132,8 @@ src/agent_memory/
 |   `-- mdbx/
 |       `-- MdbxDocumentStorage.hpp
 |-- storage/
-|   `-- IDocumentStorage.hpp
+|   |-- IDocumentStorage.hpp
+|   `-- IResourceManifestStorage.hpp
 `-- core/
     |-- LibraryInfo.hpp
     `-- LibraryInfo.cpp

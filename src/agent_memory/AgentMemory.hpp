@@ -19,5 +19,6 @@
 #include "retrieval/IRetriever.hpp"
 #include "retrieval/Retrieval.hpp"
 #include "storage/IDocumentStorage.hpp"
+#include "storage/IResourceManifestStorage.hpp"
 
 #endif

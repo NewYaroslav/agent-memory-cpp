@@ -51,6 +51,8 @@ src/agent_memory/
     storage/
         IDocumentStorage.hpp
         IDocumentStorage.cpp
+        IResourceManifestStorage.hpp
+        IResourceManifestStorage.cpp
 tests/
     CMakeLists.txt
     domain/
@@ -69,6 +71,7 @@ tests/
     storage/
         feature_flags_test.cpp
         document_storage_contract_test.cpp
+        resource_manifest_storage_contract_test.cpp
     smoke/
         agent_memory_smoke.cpp
 ```
@@ -109,10 +112,15 @@ storage and indexing steps:
 
 ## Storage Contracts
 
-The storage layer currently provides `IDocumentStorage`, a dependency-free
-contract for persisting a `DocumentSnapshot` and loading/removing documents and
-their chunks. Concrete backends, including MDBX, must implement this contract
-outside the domain layer.
+The storage layer currently provides dependency-free contracts:
+
+- `IDocumentStorage` for persisting a `DocumentSnapshot` and loading/removing
+  documents and their chunks.
+- `IResourceManifestStorage` for persisting the resource-owned derived-record
+  manifest used by targeted reindexing.
+
+Concrete backends, including MDBX, must implement these contracts outside the
+domain layer.
 
 `ChunkId` values are globally unique within a storage backend, not scoped only
 to one document.

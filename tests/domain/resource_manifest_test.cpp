@@ -84,6 +84,10 @@ int main() {
         return fail("chunk derived record ref must be valid with chunk id");
     }
 
+    if(!agent_memory::is_valid_derived_record_ref(chunk_ref)) {
+        return fail("chunk derived record ref must pass strict validation");
+    }
+
     const agent_memory::DerivedRecordRef invalid_chunk_ref{
         agent_memory::DerivedRecordKind::Chunk,
         {},
@@ -93,6 +97,21 @@ int main() {
 
     if(agent_memory::has_required_reference(invalid_chunk_ref)) {
         return fail("chunk derived record ref must require a chunk id");
+    }
+
+    const agent_memory::DerivedRecordRef chunk_ref_with_key{
+        agent_memory::DerivedRecordKind::Chunk,
+        agent_memory::ChunkId{"chunk:readme:extra"},
+        "unexpected",
+        0
+    };
+
+    if(!agent_memory::has_required_reference(chunk_ref_with_key)) {
+        return fail("chunk ref with extra key still has the required chunk id");
+    }
+
+    if(agent_memory::is_valid_derived_record_ref(chunk_ref_with_key)) {
+        return fail("strict validation must reject unused ref fields");
     }
 
     const agent_memory::DerivedRecordRef bucket_ref{
@@ -106,10 +125,18 @@ int main() {
         return fail("bucket posting ref must be valid with key and ordinal");
     }
 
+    if(!agent_memory::is_valid_derived_record_ref(bucket_ref)) {
+        return fail("bucket posting ref must pass strict validation");
+    }
+
     const agent_memory::ResourceManifest manifest{
         revision,
         {chunk_ref, bucket_ref}
     };
+
+    if(!agent_memory::is_valid_resource_manifest(manifest)) {
+        return fail("resource manifest must pass strict validation");
+    }
 
     if(manifest.records.size() != 2) {
         return fail("resource manifest must store derived record refs");

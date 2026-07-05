@@ -99,6 +99,32 @@ namespace agent_memory {
         return false;
     }
 
+    bool is_valid_derived_record_ref(const DerivedRecordRef& ref) noexcept {
+        if(derived_record_kind_uses_chunk_id(ref.kind)) {
+            return !ref.chunk_id.empty() && ref.key.empty();
+        }
+
+        if(derived_record_kind_uses_key(ref.kind)) {
+            return ref.chunk_id.empty() && !ref.key.empty();
+        }
+
+        return false;
+    }
+
+    bool is_valid_resource_manifest(const ResourceManifest& manifest) noexcept {
+        if(manifest.revision.resource_id.empty()) {
+            return false;
+        }
+
+        for(const auto& record : manifest.records) {
+            if(!is_valid_derived_record_ref(record)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     bool matches_revision_hashes(
         const ResourceRevision& revision,
         std::uint64_t content_hash,
