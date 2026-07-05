@@ -6,5 +6,9 @@
 /// \brief Public aggregate include for Agent Memory C++.
 
 #include "core/LibraryInfo.hpp"
+#include "domain/Document.hpp"
+#include "domain/Identifiers.hpp"
+#include "domain/Metadata.hpp"
+#include "domain/SourceKind.hpp"
 
 #endif
