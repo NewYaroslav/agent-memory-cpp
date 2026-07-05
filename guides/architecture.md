@@ -105,6 +105,23 @@ owning retrieval ranking policy.
 `ExactVectorIndex` is allowed in the index layer because it is dependency-free
 and acts as the deterministic baseline for tests and small local workloads.
 
+## Planned Lexical Search Direction
+
+Lexical search contracts should stay dependency free and use `ChunkId` as the
+primary retrieval key. Postings should also carry `ResourceId` and generation so
+targeted reindexing can remove, replace, or skip stale entries without a full
+corpus rebuild.
+
+BM25 is the first ranked keyword baseline. Boolean, BM25F, phrase/proximity,
+fuzzy, n-gram, graph, learned sparse, and late-interaction methods should be
+added as separate focused layers.
+
+Canonical persisted source and chunk text is UTF-8. UTF-32/code point buffers
+are allowed only as temporary tokenizer internals or benchmarked derived
+artifacts.
+
+Detailed tasks are tracked in `guides/lexical-search-roadmap.md`.
+
 ## Planned Retrieval Direction
 
 Retrieval contracts live under `src/agent_memory/retrieval/` and stay
@@ -113,6 +130,9 @@ metadata filters, and a result limit, then returns ordered scored chunks.
 
 Concrete retrievers should be built as composition over `IEmbedder`,
 `IVectorIndex`, and `IDocumentStorage` rather than as one large facade.
+
+Hybrid retrieval should start with metadata filters, BM25, vector search, and
+Reciprocal Rank Fusion before adding planner-guided or learned reranking layers.
 
 ## Planned Optimization Direction
 

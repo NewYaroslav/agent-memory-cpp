@@ -209,6 +209,13 @@ stores chunk embeddings and exposes nearest-neighbour search by query embedding,
 result limit, and exact metadata filters. `ExactVectorIndex` provides a small
 in-memory baseline implementation for deterministic tests and local use.
 
+## Lexical search
+
+BM25 and keyword search are planned as first-version retrieval capabilities for
+exact technical terms, identifiers, paths, commands, and errors. The planned
+token dictionary, postings layout, Unicode policy, raw resource store, and
+hybrid retrieval direction are tracked in `guides/lexical-search-roadmap.md`.
+
 ## Retrieval
 
 Retrieval contracts stay dependency-free and describe text, embedding, or mixed
