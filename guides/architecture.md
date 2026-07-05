@@ -79,3 +79,6 @@ Vector indexes store chunk embeddings and expose nearest-neighbour search by
 query vector, result limit, score, and exact metadata filters. Exact in-memory,
 MDBX-backed, or approximate indexes must implement these contracts without
 owning retrieval ranking policy.
+
+`ExactVectorIndex` is allowed in the index layer because it is dependency-free
+and acts as the deterministic baseline for tests and small local workloads.
