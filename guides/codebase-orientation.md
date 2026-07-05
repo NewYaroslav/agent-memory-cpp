@@ -47,6 +47,8 @@ src/agent_memory/
         Tokenizer.cpp
         Lexical.hpp
         Lexical.cpp
+        ExactLexicalIndex.hpp
+        ExactLexicalIndex.cpp
         ILexicalIndex.hpp
         ILexicalIndex.cpp
         TokenDictionary.hpp
@@ -93,6 +95,7 @@ tests/
         lexical_value_types_test.cpp
         token_dictionary_contract_test.cpp
         lexical_index_contract_test.cpp
+        exact_lexical_index_test.cpp
     infrastructure/
         mdbx/
             mdbx_document_storage_test.cpp
@@ -228,6 +231,10 @@ layer dependency-free; optional Unicode backends belong behind later adapters.
 keeps non-ASCII UTF-8 bytes intact, recognizes words, numbers, identifiers,
 paths, optional symbols, and can emit searchable parts for code-style
 identifiers.
+
+`ExactLexicalIndex` is the dependency-free in-memory BM25 baseline. It stores
+tokenized chunks, tracks per-token document frequency, applies exact metadata
+filters, and keeps result ordering deterministic by chunk id when scores tie.
 
 ## Retrieval Contracts
 

@@ -147,6 +147,20 @@ add_test(
     COMMAND agent_memory_lexical_index_contract_test
 )
 
+add_executable(agent_memory_exact_lexical_index_test
+    lexical/exact_lexical_index_test.cpp
+)
+
+target_link_libraries(agent_memory_exact_lexical_index_test
+    PRIVATE
+        agent_memory::agent_memory
+)
+
+add_test(
+    NAME agent_memory_exact_lexical_index_test
+    COMMAND agent_memory_exact_lexical_index_test
+)
+
 add_executable(agent_memory_document_storage_contract_test
     storage/document_storage_contract_test.cpp
 )
