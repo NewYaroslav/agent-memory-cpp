@@ -1,0 +1,85 @@
+# Coding Style
+
+## Scope
+
+These rules apply to C++ sources, headers, examples, tests, CMake files, and
+project documentation. Prefer the local style in nearby files when it is more
+specific.
+
+## Naming
+
+- Class, struct, and enum names use `PascalCase`.
+- Methods and free functions use `snake_case`.
+- Private and protected data members use `m_` plus `snake_case`.
+- Boolean variables should start with `is`, `has`, `use`, or `enable`.
+- Enum values use `PascalCase`.
+- Public/configuration macros use the `AGENT_MEMORY_` prefix.
+
+Getter methods may omit `get_` when they behave like property accessors, such as
+`size()` or `empty()`. Use `get_` when the method performs computation or when
+omitting the prefix would be misleading.
+
+## File Names
+
+- If a file contains one primary class, use `PascalCase`, for example
+  `LibraryInfo.hpp`.
+- If a file contains helpers, utilities, or aggregate includes, use
+  `snake_case` or a clear aggregate name.
+- Keep `.hpp` and `.cpp` files side by side under `src/`.
+
+## Include Guards
+
+- Use `#pragma once` and a non-reserved include guard for project-owned `.hpp`
+  and `.h` headers.
+- Guard names use `AGENT_MEMORY_HEADER_<PATH>_<FILE>_<EXT>_INCLUDED`.
+- Examples:
+  - `AGENT_MEMORY_HEADER_AGENT_MEMORY_HPP_INCLUDED`;
+  - `AGENT_MEMORY_HEADER_CORE_LIBRARY_INFO_HPP_INCLUDED`;
+  - `AGENT_MEMORY_HEADER_STORAGE_MDBX_STORAGE_HPP_INCLUDED`.
+- Keep implementation fragments such as `.ipp` unguarded if they are included
+  from guarded headers.
+- Public/configuration macros should not reuse include-guard names.
+
+## Includes
+
+- In `.cpp` files, include the matching project header first.
+- Keep project headers before external or standard library headers.
+- Do not use `using namespace` in headers or implementation files.
+
+## Formatting
+
+- Use 4 spaces for indentation.
+- Keep opening braces on the same line for namespaces, classes, functions, and
+  control blocks.
+- Keep lines around 100-120 columns where practical.
+- Prefer simple control flow over clever expressions.
+
+## Comments And Doxygen
+
+- All comments and Doxygen text must be in English.
+- Prefer `///` Doxygen comments for public APIs.
+- Avoid comments that restate the code.
+- Add comments for non-obvious constraints, invariants, dependency boundaries,
+  ownership rules, or algorithmic choices.
+
+Use this tag order when a public API needs detailed documentation:
+
+```text
+\brief
+\tparam
+\param
+\return
+\throws
+\pre
+\post
+\invariant
+\complexity
+\thread_safety
+\note / \warning
+```
+
+## Tests
+
+- Test names should describe the behavior under test.
+- Avoid magic literals in tests when the value has domain meaning.
+- Keep smoke tests small; add focused tests when real domain behavior appears.

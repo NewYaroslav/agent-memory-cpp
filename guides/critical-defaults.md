@@ -1,0 +1,30 @@
+# Critical Defaults
+
+Mandatory rules for AI coding agents working in `agent-memory-cpp`.
+
+- Check `git status --short` before editing and do not overwrite user changes.
+- Prefer project MCP/code graph tools for code discovery when they are available;
+  otherwise use `rg` or `rg --files`.
+- Keep edits scoped to the requested task and the relevant local style.
+- Preserve C++17 compatibility. Do not introduce compiler extensions.
+- Use the static library target `agent_memory` as the primary build product.
+- Avoid a header-only architecture for core functionality. Keep dependency-heavy
+  code in `.cpp` files or isolated adapters.
+- Keep headers and implementation files side by side under `src/`.
+- Keep public includes under the `agent_memory/` prefix.
+- Separate storage, embedding, indexing, retrieval, memory strategies, ingestion,
+  and context assembly. Do not collapse behavior into a single facade.
+- Optional infrastructure adapters must depend inward on core contracts, not the
+  other way around.
+- Do not add general agent orchestration, browser automation, participant
+  simulation, TTS/ASR, LLM inference, or prompt-template collections to the core
+  library.
+- Use non-reserved include guards for project-owned `.hpp` and `.h` headers:
+  `AGENT_MEMORY_HEADER_<PATH>_<FILE>_<EXT>_INCLUDED`.
+- Public/configuration macros use the `AGENT_MEMORY_` prefix and should not
+  reuse include-guard names.
+- All comments and Doxygen text must be in English.
+- For code changes, run the narrowest relevant CMake configure, build, and CTest
+  checks before handing off.
+- All changes reach `main` through PRs unless the user explicitly asks for a
+  direct push.

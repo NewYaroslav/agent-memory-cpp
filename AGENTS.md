@@ -1,77 +1,48 @@
 # AGENTS.md
 
-This file defines project-local guidance for coding agents working in this
-repository.
+This file is the entry point for AI coding agents working in
+`agent-memory-cpp`. Keep it short; put detailed rules in topic guides under
+`guides/`.
 
-## Project Intent
+The project is an embedded C++17 static library for AI-agent memory, retrieval,
+indexing, ingestion, storage, and context construction. It is not a general
+agent framework.
 
-- `agent-memory-cpp` is an embedded C++17 library for AI-agent memory,
-  retrieval, indexing, and context construction.
-- Keep the public scope narrow: memory, retrieval, ingestion, storage, and
-  context assembly.
+## Read First
+
+- [Critical defaults](guides/critical-defaults.md) - mandatory rules for every
+  repository task.
+- [Coding agent workflow](guides/coding-agent-workflow.md) - default workflow
+  for file-editing tasks.
+- [Project overview](guides/project-overview.md) - scope, current status,
+  goals, and non-goals.
+- [Architecture](guides/architecture.md) - DDD-like boundaries, dependency
+  direction, and planned source areas.
+- [Codebase orientation](guides/codebase-orientation.md) - current repository
+  map and extension points.
+- [Build and test](guides/build-and-test.md) - CMake options, local checks, and
+  CI expectations.
+- [Coding style](guides/coding-style.md) - naming, file layout, comments, and
+  include guards.
+- [Commit conventions](guides/commit-conventions.md) - commit format when the
+  user asks for a commit.
+
+## Critical Defaults
+
+- Check `git status --short` before editing and do not overwrite user changes.
+- Keep edits scoped to the requested PR or task.
+- Preserve C++17 as the language baseline.
+- Keep core functionality in a static library. Do not turn the project into a
+  header-only library unless the user explicitly changes that direction.
+- Keep public headers and `.cpp` files side by side under `src/`.
+- Isolate optional dependencies behind implementation files and adapter layers.
+- Keep storage, indexing, retrieval, memory strategies, ingestion, and context
+  formatting as separate concerns.
 - Do not add agent orchestration, browser automation, participant simulation,
-  TTS/ASR, or generic prompt-template collections to the core library.
-
-## Architecture
-
-- Use a DDD-like layout with small domain slices and explicit boundaries.
-- Keep C++ headers and implementation files side by side under `src/`.
-- Use static-library builds as the primary mode. Avoid a header-only design for
-  core functionality so dependencies can stay isolated behind `.cpp` files.
-- Keep storage, indexing, retrieval, memory strategies, and context formatting
-  separate. Do not hide all behavior inside a single facade class.
-- Optional infrastructure adapters must depend inward on core contracts.
-
-Preferred top-level source areas:
-
-```text
-src/agent_memory/
-    core/
-    domain/
-    storage/
-    embedding/
-    index/
-    retrieval/
-    ingestion/
-    memory/
-    context/
-    infrastructure/
-```
-
-## Build
-
-- Language baseline: C++17.
-- CMake baseline: 3.20 or newer.
-- Main target: `agent_memory`.
-- Public alias: `agent_memory::agent_memory`.
-- Build tests with `AGENT_MEMORY_BUILD_TESTS`.
-- Build examples with `AGENT_MEMORY_BUILD_EXAMPLES`.
-
-## Style
-
-- All comments and Doxygen text must be in English.
-- Use `#pragma once` and include guards in the form
-  `AGENT_MEMORY_HEADER_<PATH>_<FILE>_HPP_INCLUDED`.
-- Class, struct, and enum names use `PascalCase`.
-- Methods and free functions use `snake_case`.
-- Private and protected data members use `m_` + `snake_case`.
-- Boolean names start with `is`, `has`, `use`, or `enable`.
-- Enum values use `PascalCase`.
-- If a file contains one class, use `PascalCase` file names.
-- If a file contains helpers or aggregate includes, use `snake_case` or a
-  clear aggregate name.
-- Use 4 spaces for indentation.
-- Keep opening braces on the same line for namespaces, classes, and methods.
-- Do not use `using namespace`.
-- Put project headers before system headers in include lists.
-- Avoid comments that restate the code. Add comments only for non-obvious
-  constraints, invariants, or boundary decisions.
-
-## Git
-
-- Work on feature branches; do not commit directly to `main` unless explicitly
-  requested.
-- Use English Conventional Commit messages.
-- Keep PRs small and independently buildable.
-- Before handing off code changes, run the narrowest relevant CMake configure,
-  build, and CTest checks.
+  TTS/ASR, LLM inference, or generic prompt-template collections to the core
+  library.
+- Use non-reserved include guards for project-owned `.hpp` and `.h` headers:
+  `AGENT_MEMORY_HEADER_<PATH>_<FILE>_<EXT>_INCLUDED`.
+- All code comments and Doxygen text must be in English.
+- All changes reach `main` through PRs unless the user explicitly asks for a
+  direct push.
