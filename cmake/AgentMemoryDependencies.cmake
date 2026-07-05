@@ -43,6 +43,29 @@ function(_agent_memory_try_flat_libmdbx agent_memory_root)
         get_filename_component(_libmdbx_source_dir "${_libmdbx_source_dir}" REALPATH)
     endif()
 
+    find_program(_git_executable git)
+    if(_git_executable)
+        execute_process(
+            COMMAND "${_git_executable}" rev-parse --is-inside-work-tree
+            WORKING_DIRECTORY "${_libmdbx_source_dir}"
+            OUTPUT_VARIABLE _libmdbx_is_git_repo
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(_libmdbx_is_git_repo STREQUAL "true")
+            execute_process(
+                COMMAND "${_git_executable}" fetch --tags --force
+                WORKING_DIRECTORY "${_libmdbx_source_dir}"
+                RESULT_VARIABLE _libmdbx_fetch_tags_result
+                OUTPUT_QUIET
+                ERROR_QUIET
+            )
+            if(NOT _libmdbx_fetch_tags_result EQUAL 0)
+                message(WARNING "[agent-memory] Failed to fetch tags for external/libmdbx")
+            endif()
+        endif()
+    endif()
+
     set(MDBX_BUILD_SHARED_LIBRARY OFF CACHE BOOL "Build libmdbx shared library" FORCE)
     set(MDBX_BUILD_TOOLS OFF CACHE BOOL "Build libmdbx tools" FORCE)
     set(MDBX_ENABLE_TESTS OFF CACHE BOOL "Build libmdbx tests" FORCE)

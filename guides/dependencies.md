@@ -31,6 +31,10 @@ Preferred lookup order:
 Avoid making `BUNDLED` a strict override over parent-provided targets. Parent
 projects must be able to keep the dependency graph flat.
 
+`AGENT_MEMORY_MDBX_DEPS_MODE` is forwarded to the source build of
+`mdbx-containers` and controls how MDBXC provides libmdbx. It is not a strict
+global selector for how `agent-memory-cpp` finds `mdbx-containers` itself.
+
 ## MDBX Chain
 
 `agent-memory-cpp` owns these flat submodules for MDBX-backed storage work:

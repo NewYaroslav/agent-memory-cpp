@@ -43,4 +43,9 @@ target_link_libraries(agent_memory_feature_flags_test
         agent_memory::agent_memory
 )
 
+target_compile_definitions(agent_memory_feature_flags_test
+    PRIVATE
+        AGENT_MEMORY_EXPECTED_HAS_MDBX=$<BOOL:${AGENT_MEMORY_ENABLE_MDBX}>
+)
+
 add_test(NAME agent_memory_feature_flags_test COMMAND agent_memory_feature_flags_test)

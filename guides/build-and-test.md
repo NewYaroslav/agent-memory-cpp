@@ -66,8 +66,14 @@ ctest --test-dir tmp/build-cpp17 --build-config Release --output-on-failure
 
 ## CI Expectations
 
-GitHub Actions builds on Windows, Linux, and macOS. CI should configure, build,
-and run CTest with examples and tests enabled.
+GitHub Actions builds the default configuration on Windows, Linux, and macOS.
+CI should configure, build, and run CTest with examples and tests enabled.
+
+CI also includes a Linux MDBX wiring job. That job initializes only the flat
+`external/libmdbx` and `external/mdbx-containers` submodules, configures with
+`AGENT_MEMORY_ENABLE_MDBX=ON`, and runs CTest. Do not use recursive submodule
+checkout for this job; nested dependency checkouts would hide flat-layout
+regressions.
 
 ## Verification Heuristics
 
