@@ -26,6 +26,16 @@ The contract layer should model:
 - whether returned vectors are normalized;
 - embedding purpose, such as query, document, or symmetric text embedding.
 
+The current dependency-free contract types are:
+
+- `Embedding`;
+- `EmbeddingRequest`;
+- `EmbeddingModelInfo`;
+- `EmbeddingPurpose`;
+- `SimilarityMetric`;
+- `PoolingMode`;
+- `IEmbedder`.
+
 ## Backends
 
 Concrete backends should live behind adapter boundaries, for example:

@@ -116,6 +116,9 @@ src/agent_memory/
 |   |-- Identifiers.hpp
 |   |-- Metadata.hpp
 |   `-- SourceKind.hpp
+|-- embedding/
+|   |-- Embedding.hpp
+|   `-- IEmbedder.hpp
 |-- storage/
 |   `-- IDocumentStorage.hpp
 `-- core/
@@ -148,7 +151,9 @@ additional backends can be added later.
 
 Embedding generation will be exposed through a backend-independent interface.
 The project will provide its own embedding contracts instead of forking
-chat/generation wrappers such as `cpp-llamalib`.
+chat/generation wrappers such as `cpp-llamalib`. The current contract layer
+models embedding requests, vectors, model metadata, embedding purpose,
+similarity metric, pooling mode, and batch embedding.
 
 Planned backends:
 
@@ -163,14 +168,15 @@ Example interface:
 ```cpp
 class IEmbedder {
 public:
-    virtual ~IEmbedder() = default;
+    virtual ~IEmbedder();
 
     virtual const EmbeddingModelInfo& info() const noexcept = 0;
 
-    virtual std::vector<float> encode(
-        std::string_view text,
-        EmbeddingPurpose purpose
-    ) = 0;
+    virtual Embedding embed(const EmbeddingRequest& request) = 0;
+
+    virtual std::vector<Embedding> embed_batch(
+        const std::vector<EmbeddingRequest>& requests
+    );
 };
 ```
 

@@ -25,6 +25,11 @@ src/agent_memory/
         Metadata.cpp
         SourceKind.hpp
         SourceKind.cpp
+    embedding/
+        Embedding.hpp
+        Embedding.cpp
+        IEmbedder.hpp
+        IEmbedder.cpp
     storage/
         IDocumentStorage.hpp
         IDocumentStorage.cpp
@@ -32,6 +37,8 @@ tests/
     CMakeLists.txt
     domain/
         domain_primitives_test.cpp
+    embedding/
+        embedding_contracts_test.cpp
     storage/
         feature_flags_test.cpp
         document_storage_contract_test.cpp
@@ -87,11 +94,16 @@ first so `mdbx-containers` can reuse the parent-provided MDBX target.
 
 ## Embedding Direction
 
-Embedding code should start with dependency-free contracts in
-`src/agent_memory/embedding/`. Concrete providers such as `llama.cpp`, ONNX
-Runtime, or HTTP APIs belong behind optional adapter boundaries. Do not fork
-`cpp-llamalib` to turn a chat/generation wrapper into the project embedding
-API.
+Embedding code starts with dependency-free contracts in
+`src/agent_memory/embedding/`:
+
+- `Embedding`, `EmbeddingRequest`, and `EmbeddingModelInfo`;
+- `EmbeddingPurpose`, `SimilarityMetric`, and `PoolingMode`;
+- `IEmbedder` with single-item and batch embedding methods.
+
+Concrete providers such as `llama.cpp`, ONNX Runtime, or HTTP APIs belong
+behind optional adapter boundaries. Do not fork `cpp-llamalib` to turn a
+chat/generation wrapper into the project embedding API.
 
 ## Where To Add Code
 
