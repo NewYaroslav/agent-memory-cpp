@@ -32,6 +32,7 @@ add_library(agent_memory STATIC
     src/agent_memory/retrieval/IRetriever.cpp
     src/agent_memory/retrieval/Retrieval.cpp
     src/agent_memory/storage/IDocumentStorage.cpp
+    src/agent_memory/storage/IResourceManifestStorage.cpp
 )
 add_library(agent_memory::agent_memory ALIAS agent_memory)
 

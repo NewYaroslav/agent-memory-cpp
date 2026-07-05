@@ -76,6 +76,16 @@ namespace agent_memory {
     /// \brief Returns true when the required reference field is present.
     [[nodiscard]] bool has_required_reference(const DerivedRecordRef& ref) noexcept;
 
+    /// \brief Returns true when a derived-record reference has only valid fields.
+    [[nodiscard]] bool is_valid_derived_record_ref(
+        const DerivedRecordRef& ref
+    ) noexcept;
+
+    /// \brief Returns true when a manifest can be persisted by storage backends.
+    [[nodiscard]] bool is_valid_resource_manifest(
+        const ResourceManifest& manifest
+    ) noexcept;
+
     /// \brief Checks whether revision hashes match source and pipeline inputs.
     [[nodiscard]] bool matches_revision_hashes(
         const ResourceRevision& revision,
