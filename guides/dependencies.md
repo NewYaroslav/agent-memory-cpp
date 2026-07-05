@@ -66,6 +66,8 @@ behind a CMake option and an adapter boundary:
 - Eigen for zero-copy math views and scoring/reranking helpers.
 - simdutf for fast UTF-8 validation and UTF-8/UTF-32 transcoding in tokenizer
   adapters. It is not a normalization, stemming, or search engine dependency.
+- utfcpp as a lightweight scalar UTF-8 validation, conversion, and code point
+  iteration fallback when simdutf is not needed or not available.
 - ICU for Unicode normalization, case folding, locale-aware segmentation, and
   other heavyweight tokenizer behavior when the std-only tokenizer is not
   enough.
@@ -80,6 +82,7 @@ Planned options should be introduced only with corresponding implementation:
 AGENT_MEMORY_ENABLE_ZSTD
 AGENT_MEMORY_ENABLE_EIGEN
 AGENT_MEMORY_ENABLE_SIMDUTF
+AGENT_MEMORY_ENABLE_UTFCPP
 AGENT_MEMORY_ENABLE_ICU
 AGENT_MEMORY_ENABLE_XAPIAN
 AGENT_MEMORY_ENABLE_PISA
@@ -91,6 +94,7 @@ Planned public feature macros:
 AGENT_MEMORY_HAS_ZSTD
 AGENT_MEMORY_HAS_EIGEN
 AGENT_MEMORY_HAS_SIMDUTF
+AGENT_MEMORY_HAS_UTFCPP
 AGENT_MEMORY_HAS_ICU
 AGENT_MEMORY_HAS_XAPIAN
 AGENT_MEMORY_HAS_PISA

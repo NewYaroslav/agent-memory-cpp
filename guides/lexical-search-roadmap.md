@@ -183,10 +183,13 @@ Near-term tokenizer contracts should model:
 Optional tokenizer backends can be introduced later:
 
 - `simdutf` for fast UTF-8 validation and UTF-8/UTF-32 transcoding;
+- `utfcpp` for lightweight scalar UTF-8 validation, conversion, and code point
+  iteration when SIMD support is unnecessary;
 - ICU for normalization, Unicode case folding, and word boundary segmentation.
 
-Libraries such as `utfcpp` and `tiny-utf8` are useful references, but the core
-tokenizer contract should remain project-owned.
+Libraries such as `tiny-utf8` are useful references, but the core tokenizer
+contract should remain project-owned. Do not replace public `std::string` text
+payloads with a custom UTF string type.
 
 ### Query Parsing
 
@@ -620,9 +623,11 @@ for latency, storage, and update benchmarks.
 - PISA: performance-oriented C++ inverted index research engine. Useful for
   compression, WAND/BMW, and query processing ideas.
 - simdutf / lemire-simdutf: optional Unicode validation and transcoding backend.
+- utfcpp: lightweight optional scalar UTF-8 validation and code point iteration
+  backend.
 - ICU: optional heavy Unicode normalization, case folding, and word boundary
   backend.
-- utfcpp and tiny-utf8: useful UTF handling references.
+- tiny-utf8: useful UTF handling reference, not a planned public string type.
 - symgraph and OpenWiki: useful references for graph/document retrieval shapes.
 - RLM and rlm-minimal: references for planner-guided, recursive retrieval.
 
