@@ -10,5 +10,6 @@
 #include "domain/Identifiers.hpp"
 #include "domain/Metadata.hpp"
 #include "domain/SourceKind.hpp"
+#include "storage/IDocumentStorage.hpp"
 
 #endif

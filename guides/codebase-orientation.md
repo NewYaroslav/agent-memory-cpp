@@ -21,10 +21,15 @@ src/agent_memory/
         Metadata.cpp
         SourceKind.hpp
         SourceKind.cpp
+    storage/
+        IDocumentStorage.hpp
+        IDocumentStorage.cpp
 tests/
     CMakeLists.txt
     domain/
         domain_primitives_test.cpp
+    storage/
+        document_storage_contract_test.cpp
     smoke/
         agent_memory_smoke.cpp
 ```
@@ -59,6 +64,13 @@ storage and indexing steps:
 - `Metadata`;
 - `SourceKind`;
 - `Document`, `DocumentChunk`, and `TextRange`.
+
+## Storage Contracts
+
+The storage layer currently provides `IDocumentStorage`, a dependency-free
+contract for persisting a `DocumentSnapshot` and loading/removing documents and
+their chunks. Concrete backends, including MDBX, must implement this contract
+outside the domain layer.
 
 ## Where To Add Code
 

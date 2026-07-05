@@ -22,6 +22,7 @@ add_library(agent_memory STATIC
     src/agent_memory/domain/Identifiers.cpp
     src/agent_memory/domain/Metadata.cpp
     src/agent_memory/domain/SourceKind.cpp
+    src/agent_memory/storage/IDocumentStorage.cpp
 )
 add_library(agent_memory::agent_memory ALIAS agent_memory)
 
