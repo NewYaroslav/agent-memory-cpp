@@ -31,9 +31,11 @@ add_library(agent_memory STATIC
     src/agent_memory/index/ExactVectorIndex.cpp
     src/agent_memory/index/IVectorIndex.cpp
     src/agent_memory/index/VectorIndex.cpp
+    src/agent_memory/lexical/ITokenDictionary.cpp
     src/agent_memory/lexical/ITokenizer.cpp
     src/agent_memory/lexical/Lexical.cpp
     src/agent_memory/lexical/StandardTokenizer.cpp
+    src/agent_memory/lexical/TokenDictionary.cpp
     src/agent_memory/lexical/Tokenizer.cpp
     src/agent_memory/retrieval/IRetriever.cpp
     src/agent_memory/retrieval/Retrieval.cpp

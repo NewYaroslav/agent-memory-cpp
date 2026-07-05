@@ -28,6 +28,8 @@ The repository is in the project-skeleton stage. The current code provides:
 - std-only tokenizer baseline for UTF-8 text, markdown, and code-like text;
 - dependency-free lexical search value types for postings, stats, queries, and
   results;
+- dependency-free token dictionary contract for token-id allocation and
+  document-frequency stats;
 - planned lexical/BM25 retrieval architecture;
 - opt-in MDBX dependency wiring for future storage backends;
 - optional MDBX-backed document storage adapter;
