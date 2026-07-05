@@ -210,6 +210,12 @@ queries with result limits and metadata filters. `IRetriever` returns ordered
 scored chunks; concrete retrieval pipelines can compose embedders, indexes, and
 document storage without leaking backend details into the public contract.
 
+## Optimization roadmap
+
+Follow-up tasks for text compression, optional Eigen/SIMD scoring, vector
+encodings, binary signature bucket indexes, MDBX-backed approximate search, and
+benchmark gates are tracked in `guides/optimization-roadmap.md`.
+
 ## Project status
 
 The project is in the initial design and prototyping stage.

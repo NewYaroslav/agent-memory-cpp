@@ -47,3 +47,18 @@ Concrete backends should live behind adapter boundaries, for example:
 
 Each backend must keep its dependency wiring optional and must not leak backend
 types into dependency-free contracts.
+
+## Vector Storage And Math
+
+Keep `Embedding::values` as `std::vector<float>`. It is the portable storage
+format used by serialization, MDBX adapters, tests, APIs, and exact reranking.
+
+Do not replace the public embedding vector with `Eigen::VectorXf`. If Eigen is
+added later, use it behind optional math or retrieval adapters through
+temporary `Eigen::Map` views over `Embedding::values`.
+
+Generic lossless compression such as Zstd is useful for text and cold storage,
+but it should not be the hot-path representation for vector search. Future
+vector storage reductions should be modeled as separate encodings such as
+float16, int8, binary signatures, or product quantization, while full float
+embeddings remain available for final ranking.
