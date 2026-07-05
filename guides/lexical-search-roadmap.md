@@ -31,6 +31,27 @@ adapters.
 - Prefer RRF as the first hybrid fusion method because it does not require
   cross-backend score normalization.
 
+## Keyword Search Versus BM25
+
+Keyword search is the broad capability: tokenize a query, find matching tokens,
+apply Boolean operators or filters, and return candidates. BM25 is the first
+ranked scoring model for those keyword candidates.
+
+Keep these concepts separate in the API:
+
+```text
+keyword matching:
+    exact term lookup, Boolean AND/OR/NOT, phrase, proximity, filters
+
+BM25 scoring:
+    ranked score over matching chunks using term rarity, term frequency, and
+    chunk length normalization
+```
+
+This separation matters because Boolean search, phrase search, and metadata
+filters may be useful even when BM25 scoring is disabled or replaced by a later
+BM25F/fuzzy/hybrid pipeline.
+
 ## Lexical Data Model
 
 The logical indexing pipeline is:
@@ -82,6 +103,19 @@ BM25 only needs term frequency and chunk length. Positions are included in the
 roadmap because phrase search, proximity search, snippets, and highlighting need
 token order.
 
+The first implementation may expose two storage modes:
+
+```text
+BM25-only:
+    postings store chunk_id + tf
+
+positional:
+    postings store chunk_id + tf + positions
+```
+
+The public value types should not prevent positions, but a backend should be
+allowed to omit positions until phrase/proximity search is enabled.
+
 ## Token Dictionary
 
 Token strings should be normalized before they receive ids:
@@ -96,6 +130,37 @@ lexical_token_by_id:
 
 The reverse dictionary is not required for scoring, but it is useful for
 debugging, index dumps, explain output, and relevance diagnostics.
+
+### Token Id Lifecycle
+
+`TokenId` values are index-local stable identifiers. The first implementation
+should allocate them monotonically and avoid reusing ids during normal updates.
+This keeps posting references, diagnostics, and future segment/tombstone logic
+simple.
+
+Deletion of the last posting for a token does not have to immediately remove the
+token dictionary entry. A later compaction pass can reclaim unused tokens after
+checking token stats and posting segments.
+
+Stats updates must keep these counters coherent:
+
+```text
+document_frequency:
+    number of chunks containing the token
+
+collection_frequency:
+    total token occurrences across indexed chunks
+
+chunk_count:
+    number of chunks with lexical stats
+
+total_token_count:
+    sum of token_count across indexed chunks
+```
+
+When a resource is reindexed, old token stats must be decremented before new
+stats are added, unless the backend uses generation filtering and delayed
+compaction.
 
 ## Tokenization
 
@@ -122,6 +187,25 @@ Optional tokenizer backends can be introduced later:
 
 Libraries such as `utfcpp` and `tiny-utf8` are useful references, but the core
 tokenizer contract should remain project-owned.
+
+### Query Parsing
+
+The first query parser can be simple: tokenize free text with the same tokenizer
+used for indexing. Later parsers can add syntax for:
+
+```text
+"quoted phrases"
+term1 AND term2
+term1 OR term2
+term1 NOT term2
+exact NEAR/5 index
+field:path guides/
+metadata:language=cpp
+```
+
+Query parsing should stay separate from tokenization so programmatic callers can
+construct structured queries without round-tripping through a textual query
+language.
 
 ## UTF Storage Rule
 
@@ -158,6 +242,25 @@ b  = 0.75
 
 The index should expose these as options instead of hard-coding them into the
 public contract.
+
+BM25 scoring inputs come from the lexical index:
+
+```text
+tf      = term frequency in the chunk
+df      = number of chunks containing the token
+doc_len = token_count for the chunk
+avgdl   = total_token_count / chunk_count
+```
+
+Use the common Okapi IDF variant as the first baseline:
+
+```text
+idf = log(1 + (chunk_count - df + 0.5) / (df + 0.5))
+```
+
+If a query repeats a term, the first implementation may either de-duplicate
+query terms or count query term frequency explicitly. Pick one behavior and test
+it before exposing tuning options.
 
 ## Search Contracts
 
@@ -236,6 +339,21 @@ The first implementation may rewrite a full posting list on resource updates.
 For larger mutable corpora, add segmented postings, tombstones, generation
 filtering, and compaction.
 
+### Posting Segments
+
+Large posting lists should eventually move from one blob per token to segmented
+storage:
+
+```text
+lexical_posting_segments:
+    key   = token_id + segment_id
+    value = posting segment blob
+```
+
+Segments allow resource updates to touch fewer bytes and make tombstone cleanup
+more incremental. The simple blob layout is still the right first backend
+because it is easier to test against the in-memory BM25 baseline.
+
 ## Targeted Reindexing
 
 When a resource is replaced:
@@ -260,6 +378,11 @@ key  = token_id or an encoded posting segment key
 
 The manifest does not need stable offsets into compressed posting blobs. Removal
 should filter by `chunk_id`, `resource_id`, and generation.
+
+For mutable memory, a backend may leave stale postings in place and skip them at
+query time when their generation does not match the current resource generation.
+That path needs a cheap current-generation lookup or cache; otherwise stale
+filtering can turn lexical search into too many random reads.
 
 ## Raw Resource Stores
 
@@ -295,7 +418,13 @@ FileSystemResourceStore
     root_path
     include globs: *.md, *.txt, *.cpp, *.hpp
     exclude globs: .git, build, node_modules
+    stable resource id from relative path or configured id policy
+    content hash for change detection
 ```
+
+PDF and office document support should be separate parser adapters. They should
+produce UTF-8 resource text and metadata rather than forcing lexical indexing to
+understand PDF/docx internals.
 
 The same indexing pipeline should support two source modes:
 
@@ -412,6 +541,27 @@ learned reranker
 planner-guided fusion
 ```
 
+### Metadata And Structured Filters
+
+Metadata filters are part of the first practical hybrid retrieval layer, not a
+later luxury. Filters can be applied before candidate generation when a backend
+has supporting indexes, or after candidate generation as an exact filter.
+
+Examples:
+
+```text
+source_kind = markdown
+path starts_with guides/
+language = cpp
+resource_id = resource:indexer
+timestamp in range
+tags contains memory
+```
+
+The first lexical contracts can reuse exact `MetadataFilter` semantics from the
+vector index. More expressive structured filters should be introduced only when
+both lexical and vector retrieval can share them.
+
 ## Planner-Guided Retrieval
 
 RLM-style recursive retrieval is not a first lexical-index task, but it is worth
@@ -431,13 +581,45 @@ root planner:
 This belongs in a later retrieval planning or context assembly layer, not in
 `ILexicalIndex`.
 
+## Benchmark Expectations
+
+Lexical work should add benchmark gates before optimized storage or external
+adapters become defaults. Track at least:
+
+```text
+query latency
+index build time
+resource reindex time
+posting bytes per token
+token dictionary size
+chunk stats size
+candidate count
+top-k ranking stability
+index size on disk
+stale posting ratio
+compaction time
+```
+
+Compare:
+
+```text
+BM25-only
+vector-only
+BM25 + vector with RRF
+BM25 + vector + metadata filters
+later: graph expansion and rerank
+```
+
+Use small curated corpora for behavior tests and larger markdown/code corpora
+for latency, storage, and update benchmarks.
+
 ## Reference Projects
 
 - Xapian: mature C++ search engine with BM25 weighting. Useful as a reference or
   optional adapter, not a core dependency.
 - PISA: performance-oriented C++ inverted index research engine. Useful for
   compression, WAND/BMW, and query processing ideas.
-- simdutf: optional Unicode validation and transcoding backend.
+- simdutf / lemire-simdutf: optional Unicode validation and transcoding backend.
 - ICU: optional heavy Unicode normalization, case folding, and word boundary
   backend.
 - utfcpp and tiny-utf8: useful UTF handling references.
@@ -450,16 +632,17 @@ This belongs in a later retrieval planning or context assembly layer, not in
 2. Add tokenizer value types and `ITokenizer`.
 3. Add a std-only code-aware tokenizer.
 4. Add lexical query, result, posting, and stats value types.
-5. Add `ILexicalIndex`.
-6. Add in-memory BM25 lexical index.
-7. Integrate lexical indexing into resource reindexing.
-8. Add hybrid retrieval with BM25 + vector through RRF.
-9. Add file-system raw resource store for `.md` and `.txt`.
-10. Add phrase/proximity over positions.
-11. Add MDBX lexical index with simple posting-list blobs.
-12. Add segmented postings, tombstones, and compaction.
-13. Add BM25F field weighting.
-14. Add fuzzy and n-gram search.
-15. Add graph retrieval integration.
-16. Add optional Unicode backends.
-17. Add optional external search adapters if benchmarks justify them.
+5. Add token dictionary and token-id allocation contracts.
+6. Add `ILexicalIndex`.
+7. Add in-memory BM25 lexical index.
+8. Integrate lexical indexing into resource reindexing.
+9. Add hybrid retrieval with BM25 + vector through RRF.
+10. Add file-system raw resource store for `.md` and `.txt`.
+11. Add phrase/proximity over positions.
+12. Add MDBX lexical index with simple posting-list blobs.
+13. Add segmented postings, tombstones, and compaction.
+14. Add BM25F field weighting.
+15. Add fuzzy and n-gram search.
+16. Add graph retrieval integration.
+17. Add optional Unicode backends.
+18. Add optional external search adapters if benchmarks justify them.
