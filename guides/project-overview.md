@@ -17,9 +17,10 @@ The repository is in the project-skeleton stage. The current code provides:
 - dependency-free document, chunk, metadata, and source-kind primitives;
 - dependency-free document storage contract;
 - dependency-free embedding value types, model metadata, and embedder contract;
+- dependency-free vector index value types and index contract;
 - opt-in MDBX dependency wiring for future storage backends;
 - CMake options for tests, examples, warnings, and MDBX wiring;
-- smoke/domain/storage/embedding tests and one basic example.
+- smoke/domain/storage/embedding/index tests and one basic example.
 
 ## Core Scope
 

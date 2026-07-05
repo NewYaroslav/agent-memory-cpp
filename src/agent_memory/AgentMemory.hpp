@@ -12,6 +12,8 @@
 #include "domain/SourceKind.hpp"
 #include "embedding/Embedding.hpp"
 #include "embedding/IEmbedder.hpp"
+#include "index/IVectorIndex.hpp"
+#include "index/VectorIndex.hpp"
 #include "storage/IDocumentStorage.hpp"
 
 #endif
