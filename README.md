@@ -120,6 +120,7 @@ src/agent_memory/
 |   |-- Embedding.hpp
 |   `-- IEmbedder.hpp
 |-- index/
+|   |-- ExactVectorIndex.hpp
 |   |-- VectorIndex.hpp
 |   `-- IVectorIndex.hpp
 |-- infrastructure/
@@ -196,8 +197,8 @@ public:
 
 The index layer starts with dependency-free vector contracts. `IVectorIndex`
 stores chunk embeddings and exposes nearest-neighbour search by query embedding,
-result limit, and exact metadata filters. Concrete exact or approximate indexes
-will be added later behind this contract.
+result limit, and exact metadata filters. `ExactVectorIndex` provides a small
+in-memory baseline implementation for deterministic tests and local use.
 
 ## Project status
 

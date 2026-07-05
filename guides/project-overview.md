@@ -18,6 +18,7 @@ The repository is in the project-skeleton stage. The current code provides:
 - dependency-free document storage contract;
 - dependency-free embedding value types, model metadata, and embedder contract;
 - dependency-free vector index value types and index contract;
+- exact in-memory vector index baseline;
 - opt-in MDBX dependency wiring for future storage backends;
 - optional MDBX-backed document storage adapter;
 - CMake options for tests, examples, warnings, and MDBX wiring;

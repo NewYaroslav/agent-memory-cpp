@@ -31,6 +31,8 @@ src/agent_memory/
         IEmbedder.hpp
         IEmbedder.cpp
     index/
+        ExactVectorIndex.hpp
+        ExactVectorIndex.cpp
         VectorIndex.hpp
         VectorIndex.cpp
         IVectorIndex.hpp
@@ -50,6 +52,7 @@ tests/
         embedding_contracts_test.cpp
     index/
         vector_index_contracts_test.cpp
+        exact_vector_index_test.cpp
     infrastructure/
         mdbx/
             mdbx_document_storage_test.cpp
@@ -138,6 +141,10 @@ Vector index contracts live in `src/agent_memory/index/`:
 
 Concrete exact or approximate vector indexes should implement this contract
 without defining retrieval policy.
+
+`ExactVectorIndex` is the dependency-free in-memory baseline implementation. It
+supports cosine, dot product, and Euclidean scoring, applies exact metadata
+filters, and keeps result ordering deterministic by chunk id when scores tie.
 
 ## Where To Add Code
 
