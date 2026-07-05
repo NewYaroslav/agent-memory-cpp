@@ -32,6 +32,9 @@ src/agent_memory/
         Embedding.cpp
         IEmbedder.hpp
         IEmbedder.cpp
+    ingestion/
+        ResourceIndexer.hpp
+        ResourceIndexer.cpp
     index/
         ExactVectorIndex.hpp
         ExactVectorIndex.cpp
@@ -67,6 +70,8 @@ tests/
         exact_vector_index_test.cpp
     retrieval/
         retrieval_contracts_test.cpp
+    ingestion/
+        resource_indexer_test.cpp
     infrastructure/
         mdbx/
             mdbx_document_storage_test.cpp
@@ -173,6 +178,14 @@ without defining retrieval policy.
 `ExactVectorIndex` is the dependency-free in-memory baseline implementation. It
 supports cosine, dot product, and Euclidean scoring, applies exact metadata
 filters, and keeps result ordering deterministic by chunk id when scores tie.
+
+## Ingestion Direction
+
+Resource indexing lives in `src/agent_memory/ingestion/` and composes
+dependency-free contracts. `ResourceIndexer` currently accepts pre-chunked
+resource snapshots, writes document state, embeds chunks, upserts vector records,
+and stores resource manifests. It does not own parsing, chunking policy, MDBX
+details, or retrieval ranking.
 
 ## Retrieval Contracts
 

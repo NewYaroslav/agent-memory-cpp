@@ -26,6 +26,7 @@ add_library(agent_memory STATIC
     src/agent_memory/domain/SourceKind.cpp
     src/agent_memory/embedding/Embedding.cpp
     src/agent_memory/embedding/IEmbedder.cpp
+    src/agent_memory/ingestion/ResourceIndexer.cpp
     src/agent_memory/index/ExactVectorIndex.cpp
     src/agent_memory/index/IVectorIndex.cpp
     src/agent_memory/index/VectorIndex.cpp
