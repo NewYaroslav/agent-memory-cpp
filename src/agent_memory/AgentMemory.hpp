@@ -18,6 +18,7 @@
 #include "index/IVectorIndex.hpp"
 #include "index/VectorIndex.hpp"
 #include "lexical/ITokenizer.hpp"
+#include "lexical/StandardTokenizer.hpp"
 #include "lexical/Tokenizer.hpp"
 #include "retrieval/IRetriever.hpp"
 #include "retrieval/Retrieval.hpp"

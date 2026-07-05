@@ -25,6 +25,7 @@ The repository is in the project-skeleton stage. The current code provides:
 - dependency-free resource indexer orchestration over storage, embedding, and
   vector index contracts;
 - dependency-free tokenizer value types and tokenizer contract;
+- std-only tokenizer baseline for UTF-8 text, markdown, and code-like text;
 - planned lexical/BM25 retrieval architecture;
 - opt-in MDBX dependency wiring for future storage backends;
 - optional MDBX-backed document storage adapter;

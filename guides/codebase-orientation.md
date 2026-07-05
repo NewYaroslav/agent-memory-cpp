@@ -47,6 +47,8 @@ src/agent_memory/
         Tokenizer.cpp
         ITokenizer.hpp
         ITokenizer.cpp
+        StandardTokenizer.hpp
+        StandardTokenizer.cpp
     retrieval/
         Retrieval.hpp
         Retrieval.cpp
@@ -79,6 +81,7 @@ tests/
         resource_indexer_test.cpp
     lexical/
         tokenizer_contracts_test.cpp
+        standard_tokenizer_test.cpp
     infrastructure/
         mdbx/
             mdbx_document_storage_test.cpp
@@ -204,6 +207,11 @@ Lexical contracts live in `src/agent_memory/lexical/`:
 Tokenizer output uses normalized lookup text, byte ranges into the original
 UTF-8 source text, emitted token positions, and coarse token kinds. Keep this
 layer dependency-free; optional Unicode backends belong behind later adapters.
+
+`StandardTokenizer` is the std-only baseline. It lowercases ASCII when requested,
+keeps non-ASCII UTF-8 bytes intact, recognizes words, numbers, identifiers,
+paths, optional symbols, and can emit searchable parts for code-style
+identifiers.
 
 ## Retrieval Contracts
 
