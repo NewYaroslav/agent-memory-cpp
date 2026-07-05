@@ -121,6 +121,8 @@ src/agent_memory/
 |-- embedding/
 |   |-- Embedding.hpp
 |   `-- IEmbedder.hpp
+|-- ingestion/
+|   `-- ResourceIndexer.hpp
 |-- index/
 |   |-- ExactVectorIndex.hpp
 |   |-- VectorIndex.hpp
@@ -213,6 +215,13 @@ Retrieval contracts stay dependency-free and describe text, embedding, or mixed
 queries with result limits and metadata filters. `IRetriever` returns ordered
 scored chunks; concrete retrieval pipelines can compose embedders, indexes, and
 document storage without leaking backend details into the public contract.
+
+## Ingestion
+
+Resource indexing starts with a small orchestration layer over existing
+contracts. `ResourceIndexer` accepts a pre-chunked resource snapshot, embeds its
+chunks, upserts vector records, stores document state, and writes a resource
+manifest for targeted reindexing.
 
 ## Resource reindexing
 

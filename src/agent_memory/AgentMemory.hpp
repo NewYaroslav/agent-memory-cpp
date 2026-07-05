@@ -13,6 +13,7 @@
 #include "domain/SourceKind.hpp"
 #include "embedding/Embedding.hpp"
 #include "embedding/IEmbedder.hpp"
+#include "ingestion/ResourceIndexer.hpp"
 #include "index/ExactVectorIndex.hpp"
 #include "index/IVectorIndex.hpp"
 #include "index/VectorIndex.hpp"

@@ -1,0 +1,61 @@
+#pragma once
+#ifndef AGENT_MEMORY_HEADER_INGESTION_RESOURCE_INDEXER_HPP_INCLUDED
+#define AGENT_MEMORY_HEADER_INGESTION_RESOURCE_INDEXER_HPP_INCLUDED
+
+/// \file ResourceIndexer.hpp
+/// \brief Resource indexing orchestration over storage, embedding, and index contracts.
+
+#include "../embedding/IEmbedder.hpp"
+#include "../index/IVectorIndex.hpp"
+#include "../storage/IDocumentStorage.hpp"
+#include "../storage/IResourceManifestStorage.hpp"
+
+namespace agent_memory {
+
+    /// \brief Pre-chunked resource state ready to be indexed.
+    struct ResourceIndexSnapshot final {
+        ResourceRevision revision;
+        DocumentSnapshot document_snapshot;
+    };
+
+    /// \brief Dependency-free contract for targeted resource indexing.
+    class IResourceIndexer {
+    public:
+        virtual ~IResourceIndexer();
+
+        /// \brief Inserts or replaces all derived records for one resource.
+        /// \pre `snapshot.revision.resource_id` must not be empty.
+        /// \pre `snapshot.document_snapshot` must contain chunks for its document.
+        virtual void reindex_resource(ResourceIndexSnapshot snapshot) = 0;
+
+        /// \brief Removes all known derived records for one resource.
+        /// \return True when a manifest was found and removed.
+        [[nodiscard]] virtual bool erase_resource(const ResourceId& resource_id) = 0;
+    };
+
+    /// \brief Basic resource indexer composed from dependency-free contracts.
+    class ResourceIndexer final : public IResourceIndexer {
+    public:
+        ResourceIndexer(
+            IDocumentStorage& document_storage,
+            IResourceManifestStorage& manifest_storage,
+            IEmbedder& embedder,
+            IVectorIndex& vector_index
+        );
+
+        void reindex_resource(ResourceIndexSnapshot snapshot) override;
+
+        [[nodiscard]] bool erase_resource(const ResourceId& resource_id) override;
+
+    private:
+        void erase_derived_records(const ResourceManifest& manifest);
+
+        IDocumentStorage* m_document_storage = nullptr;
+        IResourceManifestStorage* m_manifest_storage = nullptr;
+        IEmbedder* m_embedder = nullptr;
+        IVectorIndex* m_vector_index = nullptr;
+    };
+
+} // namespace agent_memory
+
+#endif

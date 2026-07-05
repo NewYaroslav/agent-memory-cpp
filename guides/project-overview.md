@@ -22,6 +22,8 @@ The repository is in the project-skeleton stage. The current code provides:
 - dependency-free vector index value types and index contract;
 - exact in-memory vector index baseline;
 - dependency-free retrieval value types and retriever contract;
+- dependency-free resource indexer orchestration over storage, embedding, and
+  vector index contracts;
 - opt-in MDBX dependency wiring for future storage backends;
 - optional MDBX-backed document storage adapter;
 - optional MDBX-backed resource manifest storage adapter;
