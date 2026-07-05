@@ -24,6 +24,7 @@ The repository is in the project-skeleton stage. The current code provides:
 - dependency-free retrieval value types and retriever contract;
 - dependency-free resource indexer orchestration over storage, embedding, and
   vector index contracts;
+- dependency-free tokenizer value types and tokenizer contract;
 - planned lexical/BM25 retrieval architecture;
 - opt-in MDBX dependency wiring for future storage backends;
 - optional MDBX-backed document storage adapter;

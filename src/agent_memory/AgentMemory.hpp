@@ -17,6 +17,8 @@
 #include "index/ExactVectorIndex.hpp"
 #include "index/IVectorIndex.hpp"
 #include "index/VectorIndex.hpp"
+#include "lexical/ITokenizer.hpp"
+#include "lexical/Tokenizer.hpp"
 #include "retrieval/IRetriever.hpp"
 #include "retrieval/Retrieval.hpp"
 #include "storage/IDocumentStorage.hpp"
