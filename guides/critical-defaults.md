@@ -22,6 +22,10 @@ Mandatory rules for AI coding agents working in `agent-memory-cpp`.
   indexes, or mutable memory features.
 - Prefer targeted resource reindexing over whole-store rebuilds for source
   updates.
+- Persist source and chunk text as UTF-8 by default. Use UTF-32 only as a
+  temporary tokenizer/code point buffer or benchmarked derived artifact.
+- Lexical search results should be addressable by `ChunkId`; lexical postings
+  should preserve `ResourceId` and generation for targeted reindexing.
 - Optional infrastructure adapters must depend inward on core contracts, not the
   other way around.
 - Do not add general agent orchestration, browser automation, participant

@@ -290,6 +290,13 @@ Float rerank remains mandatory for quality-sensitive retrieval.
 
 ## Benchmark Tasks
 
+### Lexical Baselines
+
+- Keep a dependency-free BM25 baseline for hybrid retrieval experiments.
+- Compare hybrid methods against BM25-only and vector-only baselines.
+- Use `guides/lexical-search-roadmap.md` for tokenization, postings, Unicode,
+  phrase/proximity, fuzzy search, BM25F, and raw resource store planning.
+
 ### Exact Baseline
 
 - Keep an exact brute-force float baseline for every approximate experiment.

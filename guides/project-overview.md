@@ -24,6 +24,7 @@ The repository is in the project-skeleton stage. The current code provides:
 - dependency-free retrieval value types and retriever contract;
 - dependency-free resource indexer orchestration over storage, embedding, and
   vector index contracts;
+- planned lexical/BM25 retrieval architecture;
 - opt-in MDBX dependency wiring for future storage backends;
 - optional MDBX-backed document storage adapter;
 - optional MDBX-backed resource manifest storage adapter;
@@ -90,3 +91,9 @@ are tracked in `guides/optimization-roadmap.md`.
 Resource manifests, source revision tracking, targeted reindexing, tombstones,
 and compaction for mutable memory are tracked in
 `guides/resource-reindexing.md`.
+
+## Lexical Search Backlog
+
+BM25, token dictionaries, postings, Unicode tokenization, raw resource stores,
+phrase/proximity, fuzzy search, BM25F, graph retrieval, hybrid retrieval, and
+planner-guided retrieval are tracked in `guides/lexical-search-roadmap.md`.
