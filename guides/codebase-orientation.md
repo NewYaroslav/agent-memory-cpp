@@ -45,6 +45,8 @@ src/agent_memory/
     lexical/
         Tokenizer.hpp
         Tokenizer.cpp
+        Lexical.hpp
+        Lexical.cpp
         ITokenizer.hpp
         ITokenizer.cpp
         StandardTokenizer.hpp
@@ -82,6 +84,7 @@ tests/
     lexical/
         tokenizer_contracts_test.cpp
         standard_tokenizer_test.cpp
+        lexical_value_types_test.cpp
     infrastructure/
         mdbx/
             mdbx_document_storage_test.cpp
@@ -202,6 +205,8 @@ details, or retrieval ranking.
 Lexical contracts live in `src/agent_memory/lexical/`:
 
 - `Token`, `TokenKind`, `TokenizeOptions`, and `TokenizationResult`;
+- `TokenId`, lexical postings, document stats, search queries, and search
+  results;
 - `ITokenizer` for tokenizer backends.
 
 Tokenizer output uses normalized lookup text, byte ranges into the original
