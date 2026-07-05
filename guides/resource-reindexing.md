@@ -41,7 +41,8 @@ symbol, conversation note, profile fact, or memory note can all be resources.
 
 `ResourceRevision`
 : The current version of a resource. The first implementation can model this as
-`resource_id`, `generation`, and an uncompressed content hash.
+`resource_id`, `generation`, an uncompressed content hash, and a pipeline
+configuration hash.
 
 `ResourceManifest`
 : The list of derived keys created from the current resource revision.
@@ -60,6 +61,7 @@ struct ResourceRevision final {
     ResourceId resource_id;
     std::uint64_t generation = 0;
     std::uint64_t content_hash = 0;
+    std::uint64_t pipeline_config_hash = 0;
 };
 
 enum class DerivedRecordKind {
@@ -87,6 +89,17 @@ struct ResourceManifest final {
 
 This is not a final API. It documents the intended contract shape before code is
 introduced.
+
+`pipeline_config_hash` should cover settings that change derived records even
+when source text is unchanged. Examples include chunking settings, parser
+version, embedding model id, normalization policy, signature encoder config,
+and index-specific encoding settings.
+
+`DerivedRecordRef` is intentionally broad at the roadmap stage, but concrete
+code should define field usage precisely. Chunk, embedding, and vector records
+can use `chunk_id`. Bucket postings, lexical postings, graph records, or
+backend-specific records can use `key` plus an optional `ordinal`. Invalid
+combinations should be rejected or impossible once the API is implemented.
 
 ## MDBX Storage Shape
 
@@ -135,7 +148,8 @@ The normal replace flow should be:
 ```
 
 If content hash and ingestion settings did not change, the reindex operation may
-skip expensive work.
+skip expensive work. The skip check must compare both `content_hash` and
+`pipeline_config_hash`.
 
 ## Tombstones And Compaction
 
@@ -156,6 +170,11 @@ bucket entry generation != current resource generation -> stale, skip at query
 A later `compact_index()` operation can rebuild affected buckets and remove
 stale entries in batches. This keeps recall-time updates fast while preserving a
 path to reclaim storage.
+
+Query-time stale filtering must not turn approximate search into many random
+resource-table reads. Implementations should keep current resource generations
+cheap to access, for example through a small in-memory cache, a batch lookup, or
+a bucket posting format that lets stale checks be amortized.
 
 ## Notes As Resources
 
