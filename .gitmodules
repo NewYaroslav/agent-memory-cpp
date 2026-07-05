@@ -1,0 +1,6 @@
+[submodule "external/libmdbx"]
+	path = external/libmdbx
+	url = https://github.com/erthink/libmdbx.git
+[submodule "external/mdbx-containers"]
+	path = external/mdbx-containers
+	url = https://github.com/NewYaroslav/mdbx-containers.git

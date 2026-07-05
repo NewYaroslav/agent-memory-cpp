@@ -2,6 +2,59 @@
 
 set(_AGENT_MEMORY_DEPENDENCIES_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
+function(_agent_memory_has_mdbx_target out_has_target)
+    set(${out_has_target} FALSE PARENT_SCOPE)
+
+    foreach(_target
+        mdbx::mdbx
+        mdbx::mdbx-static
+        mdbx
+        mdbx-static
+        libmdbx::mdbx
+        libmdbx::mdbx-static
+        libmdbx
+        libmdbx-static
+        mdbx_static
+        libmdbx_static
+    )
+        if(TARGET ${_target})
+            set(${out_has_target} TRUE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+endfunction()
+
+function(_agent_memory_try_flat_libmdbx agent_memory_root)
+    if(AGENT_MEMORY_MDBX_DEPS_MODE STREQUAL "SYSTEM")
+        return()
+    endif()
+
+    _agent_memory_has_mdbx_target(_has_mdbx_target)
+    if(_has_mdbx_target)
+        return()
+    endif()
+
+    set(_libmdbx_source_dir "${agent_memory_root}/external/libmdbx")
+    if(NOT EXISTS "${_libmdbx_source_dir}/CMakeLists.txt")
+        return()
+    endif()
+
+    if(WIN32)
+        get_filename_component(_libmdbx_source_dir "${_libmdbx_source_dir}" REALPATH)
+    endif()
+
+    set(MDBX_BUILD_SHARED_LIBRARY OFF CACHE BOOL "Build libmdbx shared library" FORCE)
+    set(MDBX_BUILD_TOOLS OFF CACHE BOOL "Build libmdbx tools" FORCE)
+    set(MDBX_ENABLE_TESTS OFF CACHE BOOL "Build libmdbx tests" FORCE)
+
+    message(STATUS "[agent-memory] Adding flat dependency: external/libmdbx")
+    add_subdirectory(
+        "${_libmdbx_source_dir}"
+        "${CMAKE_BINARY_DIR}/_deps/libmdbx"
+        EXCLUDE_FROM_ALL
+    )
+endfunction()
+
 function(agent_memory_provide_mdbx_containers out_target)
     if(NOT AGENT_MEMORY_MDBX_DEPS_MODE MATCHES "^(AUTO|SYSTEM|BUNDLED)$")
         message(FATAL_ERROR
@@ -32,6 +85,8 @@ function(agent_memory_provide_mdbx_containers out_target)
                 "${_mdbx_containers_source_dir}"
             )
         endif()
+
+        _agent_memory_try_flat_libmdbx("${_agent_memory_root}")
 
         if(NOT DEFINED MDBXC_BUILD_TESTS)
             set(MDBXC_BUILD_TESTS OFF CACHE BOOL "Build mdbx-containers tests")

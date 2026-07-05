@@ -48,10 +48,22 @@ types, templates, and trivial inline helpers.
 
 Storage contracts live under `src/agent_memory/storage/` and stay dependency
 free. MDBX-backed storage is expected to implement those contracts with
-`mdbx-containers` as an adapter detail. The upper project should keep
-dependencies flat: parent projects should be able to provide dependency targets
-when possible.
+`mdbx-containers` as an adapter detail. The upper project should keep source
+dependencies flat under `external/`: `libmdbx` and `mdbx-containers` are sibling
+submodules, not nested dependency checkouts. Parent projects should be able to
+provide dependency targets when possible.
 
 MDBX support is opt-in through `AGENT_MEMORY_ENABLE_MDBX`. The build must reuse
 an existing `mdbx_containers::mdbx_containers` target before adding a local
 source tree or falling back to `find_package(mdbx_containers)`.
+
+## Planned Embedding Direction
+
+Embedding contracts live under `src/agent_memory/embedding/` and stay
+dependency free. Concrete providers such as `llama.cpp`, ONNX Runtime, or
+OpenAI-compatible HTTP APIs must be implemented as optional adapters.
+
+Do not fork chat/generation wrappers such as `cpp-llamalib` to make embeddings
+fit them. The project should expose its own embedding contract with explicit
+model metadata, dimensions, similarity metric, normalization, pooling, and
+query/document purpose semantics.

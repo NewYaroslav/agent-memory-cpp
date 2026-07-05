@@ -106,6 +106,9 @@ LLM or AI agent
 Headers and implementation files live side by side under `src/`:
 
 ```text
+external/
+|-- libmdbx/
+`-- mdbx-containers/
 src/agent_memory/
 |-- AgentMemory.hpp
 |-- domain/
@@ -134,12 +137,18 @@ initial concrete backend is planned around:
 * [libmdbx](https://github.com/erthink/libmdbx)
 * [mdbx-containers](https://github.com/NewYaroslav/mdbx-containers)
 
+These source dependencies are kept flat as Git submodules under `external/`.
+When MDBX support is enabled, the build adds `external/libmdbx` before
+`external/mdbx-containers` so MDBXC can reuse the parent-provided MDBX target.
+
 Storage interfaces are separated from memory and retrieval algorithms so that
 additional backends can be added later.
 
 ## Embeddings
 
 Embedding generation will be exposed through a backend-independent interface.
+The project will provide its own embedding contracts instead of forking
+chat/generation wrappers such as `cpp-llamalib`.
 
 Planned backends:
 
@@ -216,8 +225,9 @@ Available CMake options:
 * `AGENT_MEMORY_MDBX_DEPS_MODE`
 
 `AGENT_MEMORY_ENABLE_MDBX` is `OFF` by default. When enabled, the build reuses
-an existing `mdbx_containers::mdbx_containers` target, adds a local
-`mdbx-containers` source tree, or falls back to `find_package(mdbx_containers)`.
+an existing `mdbx_containers::mdbx_containers` target, adds flat local
+`external/libmdbx` and `external/mdbx-containers` source trees, or falls back to
+`find_package(mdbx_containers)`.
 The public compile definition `AGENT_MEMORY_HAS_MDBX` is always defined as `0`
 or `1`.
 

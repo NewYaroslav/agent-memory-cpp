@@ -4,7 +4,7 @@ option(AGENT_MEMORY_ENABLE_WARNINGS "Enable compiler warnings for agent-memory-c
 option(AGENT_MEMORY_ENABLE_MDBX "Enable MDBX-backed storage dependencies" OFF)
 
 set(AGENT_MEMORY_MDBX_CONTAINERS_SOURCE_DIR "" CACHE PATH
-    "Path to a local mdbx-containers source tree used when AGENT_MEMORY_ENABLE_MDBX is ON")
+    "Optional mdbx-containers source override; defaults to external/mdbx-containers when present")
 
 set(AGENT_MEMORY_MDBX_DEPS_MODE "AUTO" CACHE STRING
     "MDBX dependency mode forwarded to mdbx-containers when added from source: AUTO|SYSTEM|BUNDLED")
