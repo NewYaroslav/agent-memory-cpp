@@ -97,6 +97,12 @@ namespace agent_memory {
     /// \brief Returns true when BM25 options are within the supported range.
     [[nodiscard]] bool is_valid(const Bm25Options& options) noexcept;
 
+    /// \brief Returns true when a tokenized document can be indexed.
+    [[nodiscard]] bool is_valid(const LexicalDocumentRecord& record) noexcept;
+
+    /// \brief Returns true when a lexical query can be executed.
+    [[nodiscard]] bool is_valid(const LexicalSearchQuery& query) noexcept;
+
 } // namespace agent_memory
 
 #endif
