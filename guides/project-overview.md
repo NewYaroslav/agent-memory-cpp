@@ -62,6 +62,8 @@ src/agent_memory/
     embedding/
     index/
     retrieval/
+    compression/
+    math/
     ingestion/
     memory/
     context/
@@ -70,3 +72,9 @@ src/agent_memory/
 
 The layout is expected to grow incrementally. Do not create empty directories or
 placeholder layers unless a PR needs them.
+
+## Optimization Backlog
+
+Detailed follow-up tasks for compression, optional Eigen/SIMD scoring, vector
+encoding, binary signatures, MDBX bucket indexes, and recall/latency benchmarks
+are tracked in `guides/optimization-roadmap.md`.

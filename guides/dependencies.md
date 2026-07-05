@@ -56,3 +56,31 @@ git submodule update --init external/libmdbx external/mdbx-containers
 Use `AGENT_MEMORY_MDBX_CONTAINERS_SOURCE_DIR` only as an override for a custom
 `mdbx-containers` checkout. The default source checkout is
 `external/mdbx-containers` when it exists.
+
+## Planned Optional Dependencies
+
+Future optimization work may add optional dependencies, but each must stay
+behind a CMake option and an adapter boundary:
+
+- Zstd for text/chunk compression and benchmarked bucket compression.
+- Eigen for zero-copy math views and scoring/reranking helpers.
+- Miniz/zlib or LZ4 only as later codec alternatives when justified.
+
+Planned options should be introduced only with corresponding implementation:
+
+```cmake
+AGENT_MEMORY_ENABLE_ZSTD
+AGENT_MEMORY_ENABLE_EIGEN
+```
+
+Planned public feature macros:
+
+```cpp
+AGENT_MEMORY_HAS_ZSTD
+AGENT_MEMORY_HAS_EIGEN
+```
+
+Define feature macros consistently as `0` or `1` once the corresponding option
+exists.
+
+Do not make Eigen or Zstd part of dependency-free public contracts.
