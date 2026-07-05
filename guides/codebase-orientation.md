@@ -37,6 +37,11 @@ src/agent_memory/
         VectorIndex.cpp
         IVectorIndex.hpp
         IVectorIndex.cpp
+    retrieval/
+        Retrieval.hpp
+        Retrieval.cpp
+        IRetriever.hpp
+        IRetriever.cpp
     infrastructure/
         mdbx/
             MdbxDocumentStorage.hpp
@@ -53,6 +58,8 @@ tests/
     index/
         vector_index_contracts_test.cpp
         exact_vector_index_test.cpp
+    retrieval/
+        retrieval_contracts_test.cpp
     infrastructure/
         mdbx/
             mdbx_document_storage_test.cpp
@@ -145,6 +152,16 @@ without defining retrieval policy.
 `ExactVectorIndex` is the dependency-free in-memory baseline implementation. It
 supports cosine, dot product, and Euclidean scoring, applies exact metadata
 filters, and keeps result ordering deterministic by chunk id when scores tie.
+
+## Retrieval Contracts
+
+Retrieval contracts live in `src/agent_memory/retrieval/`:
+
+- `RetrievalQuery`, `RetrievedChunk`, and `RetrievalResult`;
+- `IRetriever` for text, embedding, or mixed retrieval queries.
+
+Concrete retrievers may compose embedding, index, and storage contracts, but
+backend-specific details must stay behind adapter boundaries.
 
 ## Where To Add Code
 

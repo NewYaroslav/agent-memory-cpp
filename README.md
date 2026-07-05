@@ -123,6 +123,9 @@ src/agent_memory/
 |   |-- ExactVectorIndex.hpp
 |   |-- VectorIndex.hpp
 |   `-- IVectorIndex.hpp
+|-- retrieval/
+|   |-- Retrieval.hpp
+|   `-- IRetriever.hpp
 |-- infrastructure/
 |   `-- mdbx/
 |       `-- MdbxDocumentStorage.hpp
@@ -199,6 +202,13 @@ The index layer starts with dependency-free vector contracts. `IVectorIndex`
 stores chunk embeddings and exposes nearest-neighbour search by query embedding,
 result limit, and exact metadata filters. `ExactVectorIndex` provides a small
 in-memory baseline implementation for deterministic tests and local use.
+
+## Retrieval
+
+Retrieval contracts stay dependency-free and describe text, embedding, or mixed
+queries with result limits and metadata filters. `IRetriever` returns ordered
+scored chunks; concrete retrieval pipelines can compose embedders, indexes, and
+document storage without leaking backend details into the public contract.
 
 ## Project status
 
