@@ -1,6 +1,6 @@
 #pragma once
-#ifndef _AGENT_MEMORY_AGENT_MEMORY_HPP_INCLUDED
-#define _AGENT_MEMORY_AGENT_MEMORY_HPP_INCLUDED
+#ifndef AGENT_MEMORY_HEADER_AGENT_MEMORY_HPP_INCLUDED
+#define AGENT_MEMORY_HEADER_AGENT_MEMORY_HPP_INCLUDED
 
 /// \file AgentMemory.hpp
 /// \brief Public aggregate include for Agent Memory C++.

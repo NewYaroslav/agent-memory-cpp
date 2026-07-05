@@ -50,7 +50,8 @@ src/agent_memory/
 ## Style
 
 - All comments and Doxygen text must be in English.
-- Use `#pragma once` and an include guard in public headers.
+- Use `#pragma once` and include guards in the form
+  `AGENT_MEMORY_HEADER_<PATH>_<FILE>_HPP_INCLUDED`.
 - Class, struct, and enum names use `PascalCase`.
 - Methods and free functions use `snake_case`.
 - Private and protected data members use `m_` + `snake_case`.
