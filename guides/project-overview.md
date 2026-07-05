@@ -15,6 +15,7 @@ The repository is in the project-skeleton stage. The current code provides:
 - public aggregate header `agent_memory/AgentMemory.hpp`;
 - `core::LibraryInfo` smoke API;
 - dependency-free document, chunk, metadata, and source-kind primitives;
+- dependency-free resource revision and manifest value types;
 - dependency-free document storage contract;
 - dependency-free embedding value types, model metadata, and embedder contract;
 - dependency-free vector index value types and index contract;

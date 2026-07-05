@@ -4,6 +4,17 @@
 
 namespace agent_memory {
 
+    ResourceId::ResourceId(std::string value)
+        : m_value(std::move(value)) {}
+
+    const std::string& ResourceId::value() const noexcept {
+        return m_value;
+    }
+
+    bool ResourceId::empty() const noexcept {
+        return m_value.empty();
+    }
+
     DocumentId::DocumentId(std::string value)
         : m_value(std::move(value)) {}
 
@@ -24,6 +35,18 @@ namespace agent_memory {
 
     bool ChunkId::empty() const noexcept {
         return m_value.empty();
+    }
+
+    bool operator==(const ResourceId& lhs, const ResourceId& rhs) noexcept {
+        return lhs.value() == rhs.value();
+    }
+
+    bool operator!=(const ResourceId& lhs, const ResourceId& rhs) noexcept {
+        return !(lhs == rhs);
+    }
+
+    bool operator<(const ResourceId& lhs, const ResourceId& rhs) noexcept {
+        return lhs.value() < rhs.value();
     }
 
     bool operator==(const DocumentId& lhs, const DocumentId& rhs) noexcept {

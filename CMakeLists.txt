@@ -22,6 +22,7 @@ add_library(agent_memory STATIC
     src/agent_memory/domain/Document.cpp
     src/agent_memory/domain/Identifiers.cpp
     src/agent_memory/domain/Metadata.cpp
+    src/agent_memory/domain/Resource.cpp
     src/agent_memory/domain/SourceKind.cpp
     src/agent_memory/embedding/Embedding.cpp
     src/agent_memory/embedding/IEmbedder.cpp

@@ -9,6 +9,22 @@
 
 namespace agent_memory {
 
+    /// \brief Stable identifier of an original source resource.
+    class ResourceId final {
+    public:
+        ResourceId() = default;
+        explicit ResourceId(std::string value);
+
+        /// \brief Returns identifier text.
+        [[nodiscard]] const std::string& value() const noexcept;
+
+        /// \brief Checks whether the identifier has no value.
+        [[nodiscard]] bool empty() const noexcept;
+
+    private:
+        std::string m_value;
+    };
+
     /// \brief Stable identifier of an ingested source document.
     class DocumentId final {
     public:
@@ -40,6 +56,10 @@ namespace agent_memory {
     private:
         std::string m_value;
     };
+
+    [[nodiscard]] bool operator==(const ResourceId& lhs, const ResourceId& rhs) noexcept;
+    [[nodiscard]] bool operator!=(const ResourceId& lhs, const ResourceId& rhs) noexcept;
+    [[nodiscard]] bool operator<(const ResourceId& lhs, const ResourceId& rhs) noexcept;
 
     [[nodiscard]] bool operator==(const DocumentId& lhs, const DocumentId& rhs) noexcept;
     [[nodiscard]] bool operator!=(const DocumentId& lhs, const DocumentId& rhs) noexcept;
