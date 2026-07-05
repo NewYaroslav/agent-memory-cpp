@@ -46,6 +46,8 @@ types, templates, and trivial inline helpers.
 
 ## Planned Storage Direction
 
-MDBX-backed storage is expected to use `mdbx-containers` as an adapter detail.
-The upper project should keep dependencies flat: parent projects should be able
-to provide dependency targets when possible.
+Storage contracts live under `src/agent_memory/storage/` and stay dependency
+free. MDBX-backed storage is expected to implement those contracts with
+`mdbx-containers` as an adapter detail. The upper project should keep
+dependencies flat: parent projects should be able to provide dependency targets
+when possible.

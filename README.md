@@ -113,6 +113,8 @@ src/agent_memory/
 |   |-- Identifiers.hpp
 |   |-- Metadata.hpp
 |   `-- SourceKind.hpp
+|-- storage/
+|   `-- IDocumentStorage.hpp
 `-- core/
     |-- LibraryInfo.hpp
     `-- LibraryInfo.cpp
@@ -126,7 +128,8 @@ Consumers include public headers through the `agent_memory` include prefix:
 
 ## Storage
 
-The initial storage backend is planned around:
+The storage layer starts with dependency-free document/chunk contracts. The
+initial concrete backend is planned around:
 
 * [libmdbx](https://github.com/erthink/libmdbx)
 * [mdbx-containers](https://github.com/NewYaroslav/mdbx-containers)
