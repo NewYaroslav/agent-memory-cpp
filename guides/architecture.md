@@ -57,6 +57,10 @@ MDBX support is opt-in through `AGENT_MEMORY_ENABLE_MDBX`. The build must reuse
 an existing `mdbx_containers::mdbx_containers` target before adding a local
 source tree or falling back to `find_package(mdbx_containers)`.
 
+The MDBX document storage adapter lives under
+`src/agent_memory/infrastructure/mdbx/`. It implements `IDocumentStorage` and
+must not define memory strategy, retrieval ranking, or embedding behavior.
+
 ## Planned Embedding Direction
 
 Embedding contracts live under `src/agent_memory/embedding/` and stay

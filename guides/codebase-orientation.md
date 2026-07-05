@@ -35,6 +35,10 @@ src/agent_memory/
         VectorIndex.cpp
         IVectorIndex.hpp
         IVectorIndex.cpp
+    infrastructure/
+        mdbx/
+            MdbxDocumentStorage.hpp
+            MdbxDocumentStorage.cpp
     storage/
         IDocumentStorage.hpp
         IDocumentStorage.cpp
@@ -46,6 +50,9 @@ tests/
         embedding_contracts_test.cpp
     index/
         vector_index_contracts_test.cpp
+    infrastructure/
+        mdbx/
+            mdbx_document_storage_test.cpp
     storage/
         feature_flags_test.cpp
         document_storage_contract_test.cpp
@@ -91,6 +98,9 @@ contract for persisting a `DocumentSnapshot` and loading/removing documents and
 their chunks. Concrete backends, including MDBX, must implement this contract
 outside the domain layer.
 
+`ChunkId` values are globally unique within a storage backend, not scoped only
+to one document.
+
 MDBX dependency wiring lives in `cmake/AgentMemoryDependencies.cmake` and is
 disabled by default. It exposes `AGENT_MEMORY_HAS_MDBX` as a public compile
 definition with value `0` or `1`.
@@ -98,6 +108,11 @@ definition with value `0` or `1`.
 When source dependencies are used, `external/libmdbx` and
 `external/mdbx-containers` are flat sibling submodules. The build adds libmdbx
 first so `mdbx-containers` can reuse the parent-provided MDBX target.
+
+`MdbxDocumentStorage` lives in `src/agent_memory/infrastructure/mdbx/` and is
+compiled only when `AGENT_MEMORY_ENABLE_MDBX=ON`. It implements
+`IDocumentStorage` through `mdbx-containers` tables and stores adapter details
+behind a Pimpl so public storage contracts stay dependency-free.
 
 ## Embedding Direction
 

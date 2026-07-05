@@ -75,6 +75,10 @@ CI also includes a Linux MDBX wiring job. That job initializes only the flat
 checkout for this job; nested dependency checkouts would hide flat-layout
 regressions.
 
+MDBX-enabled test builds register `agent_memory_mdbx_document_storage_test`,
+which opens a temporary MDBX database and validates the document storage
+adapter.
+
 ## Verification Heuristics
 
 - Documentation-only changes: inspect Markdown and run `git diff --check`.

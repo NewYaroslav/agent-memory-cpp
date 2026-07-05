@@ -30,6 +30,7 @@ namespace agent_memory {
     };
 
     /// \brief Chunk derived from a source document.
+    /// \note Chunk ids are globally unique within a storage backend.
     struct DocumentChunk final {
         ChunkId id;
         DocumentId document_id;
