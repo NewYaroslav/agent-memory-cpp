@@ -122,6 +122,9 @@ src/agent_memory/
 |-- index/
 |   |-- VectorIndex.hpp
 |   `-- IVectorIndex.hpp
+|-- infrastructure/
+|   `-- mdbx/
+|       `-- MdbxDocumentStorage.hpp
 |-- storage/
 |   `-- IDocumentStorage.hpp
 `-- core/
@@ -149,6 +152,12 @@ When MDBX support is enabled, the build adds `external/libmdbx` before
 
 Storage interfaces are separated from memory and retrieval algorithms so that
 additional backends can be added later.
+
+When `AGENT_MEMORY_ENABLE_MDBX=ON`, the library also builds
+`agent_memory/infrastructure/mdbx/MdbxDocumentStorage.hpp`, an MDBX-backed
+implementation of `IDocumentStorage`. Optional infrastructure headers are not
+included by the aggregate `AgentMemory.hpp`; include the adapter header
+directly when MDBX support is enabled.
 
 ## Embeddings
 
