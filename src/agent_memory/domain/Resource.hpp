@@ -36,7 +36,13 @@ namespace agent_memory {
 
     /// \brief Reference to one derived record owned by a resource revision.
     /// \note Chunk, embedding, and vector records use `chunk_id`.
+    /// \note Embedding and vector records use `ChunkId` while there is one
+    ///       active representation per chunk and pipeline.
+    /// \note Backends that keep multiple embedding variants should use `key`,
+    ///       `Custom`, or a later composite identifier contract.
     /// \note Document, posting, graph, and custom records use `key`.
+    /// \note `ordinal` is a resource-local order or discriminator, not a stable
+    ///       offset inside compressed bucket storage.
     struct DerivedRecordRef final {
         DerivedRecordKind kind = DerivedRecordKind::Chunk;
         ChunkId chunk_id;

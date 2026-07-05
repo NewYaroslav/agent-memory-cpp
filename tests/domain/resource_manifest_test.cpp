@@ -57,6 +57,10 @@ int main() {
         return fail("derived record kind names must be stable lowercase strings");
     }
 
+    if(agent_memory::parse_derived_record_kind("unknown_kind", parsed_kind)) {
+        return fail("unknown derived record kind must not parse");
+    }
+
     if(!agent_memory::derived_record_kind_uses_chunk_id(
         agent_memory::DerivedRecordKind::VectorRecord
     )) {

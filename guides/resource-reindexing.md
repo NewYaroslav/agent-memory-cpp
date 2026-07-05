@@ -99,8 +99,21 @@ and index-specific encoding settings.
 `DerivedRecordRef` is intentionally broad at the roadmap stage, but concrete
 code should define field usage precisely. Chunk, embedding, and vector records
 can use `chunk_id`. Bucket postings, lexical postings, graph records, or
-backend-specific records can use `key` plus an optional `ordinal`. Invalid
-combinations should be rejected or impossible once the API is implemented.
+backend-specific records can use `key` plus an optional `ordinal`. `ordinal`
+is a resource-local order or discriminator, not a stable offset inside a
+compressed bucket blob.
+
+The first value-type PR should only expose a required-field helper. Strict
+validation, for example rejecting unused fields for a record kind, belongs with
+the storage contract PR where invalid combinations can be defined against real
+persistence semantics.
+
+Do not introduce `EmbeddingId` until the storage model supports multiple
+embeddings per `ChunkId`. The baseline model treats embedding and vector records
+as derived data addressed by `ChunkId` for one active pipeline. If future
+backends keep multiple model, purpose, revision, modality, encoding, or vector
+index variants per chunk, introduce a composite identifier or use `key` /
+`Custom` until that contract is clear.
 
 ## MDBX Storage Shape
 
