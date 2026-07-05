@@ -30,6 +30,11 @@ src/agent_memory/
         Embedding.cpp
         IEmbedder.hpp
         IEmbedder.cpp
+    index/
+        VectorIndex.hpp
+        VectorIndex.cpp
+        IVectorIndex.hpp
+        IVectorIndex.cpp
     storage/
         IDocumentStorage.hpp
         IDocumentStorage.cpp
@@ -39,6 +44,8 @@ tests/
         domain_primitives_test.cpp
     embedding/
         embedding_contracts_test.cpp
+    index/
+        vector_index_contracts_test.cpp
     storage/
         feature_flags_test.cpp
         document_storage_contract_test.cpp
@@ -104,6 +111,18 @@ Embedding code starts with dependency-free contracts in
 Concrete providers such as `llama.cpp`, ONNX Runtime, or HTTP APIs belong
 behind optional adapter boundaries. Do not fork `cpp-llamalib` to turn a
 chat/generation wrapper into the project embedding API.
+
+## Index Contracts
+
+Vector index contracts live in `src/agent_memory/index/`:
+
+- `VectorRecord`, `VectorSearchQuery`, `VectorSearchResult`, and
+  `MetadataFilter`;
+- `matches_metadata_filters()`;
+- `IVectorIndex` for upsert/find/search/erase/clear operations.
+
+Concrete exact or approximate vector indexes should implement this contract
+without defining retrieval policy.
 
 ## Where To Add Code
 

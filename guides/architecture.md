@@ -67,3 +67,11 @@ Do not fork chat/generation wrappers such as `cpp-llamalib` to make embeddings
 fit them. The project should expose its own embedding contract with explicit
 model metadata, dimensions, similarity metric, normalization, pooling, and
 query/document purpose semantics.
+
+## Planned Index Direction
+
+Index contracts live under `src/agent_memory/index/` and stay dependency free.
+Vector indexes store chunk embeddings and expose nearest-neighbour search by
+query vector, result limit, score, and exact metadata filters. Exact in-memory,
+MDBX-backed, or approximate indexes must implement these contracts without
+owning retrieval ranking policy.

@@ -119,6 +119,9 @@ src/agent_memory/
 |-- embedding/
 |   |-- Embedding.hpp
 |   `-- IEmbedder.hpp
+|-- index/
+|   |-- VectorIndex.hpp
+|   `-- IVectorIndex.hpp
 |-- storage/
 |   `-- IDocumentStorage.hpp
 `-- core/
@@ -179,6 +182,13 @@ public:
     );
 };
 ```
+
+## Indexes
+
+The index layer starts with dependency-free vector contracts. `IVectorIndex`
+stores chunk embeddings and exposes nearest-neighbour search by query embedding,
+result limit, and exact metadata filters. Concrete exact or approximate indexes
+will be added later behind this contract.
 
 ## Project status
 
