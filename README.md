@@ -2,9 +2,19 @@
 
 Embedded C++17 toolkit for building memory and retrieval systems for AI agents.
 
-Agent Memory C++ provides modular components for persistent agent memory, retrieval-augmented generation, semantic search, hybrid BM25/vector retrieval, Markdown knowledge bases, and knowledge graphs.
+Agent Memory C++ provides modular components for persistent agent memory,
+retrieval-augmented generation, semantic search, hybrid BM25/vector retrieval,
+Markdown knowledge bases, and knowledge graphs.
 
-The library is designed for local and embedded use. It does not require a separate vector database server.
+The library is designed for local and embedded use. It does not require a
+separate vector database server.
+
+## Current status
+
+The repository is in the project-skeleton stage. The first code PR establishes a
+static C++17 library target, CMake options, a smoke test, and a small example.
+Memory, retrieval, storage, and embedding APIs will be added in focused follow-up
+PRs.
 
 ## Goals
 
@@ -53,56 +63,75 @@ The library is designed for local and embedded use. It does not require a separa
 
 ```text
 Sources
-├── Markdown documents
-├── Chat messages
-├── Code and symbols
-├── Structured records
-└── Agent events
-        │
-        ▼
+|-- Markdown documents
+|-- Chat messages
+|-- Code and symbols
+|-- Structured records
+`-- Agent events
+        |
+        v
 Ingestion
-├── Parsers
-├── Chunkers
-├── Metadata extraction
-├── Entity extraction
-└── Change detection
-        │
-        ▼
+|-- Parsers
+|-- Chunkers
+|-- Metadata extraction
+|-- Entity extraction
+`-- Change detection
+        |
+        v
 Indexes
-├── BM25
-├── Dense vectors
-├── Sparse vectors
-├── Knowledge graph
-└── Temporal indexes
-        │
-        ▼
+|-- BM25
+|-- Dense vectors
+|-- Sparse vectors
+|-- Knowledge graph
+`-- Temporal indexes
+        |
+        v
 Memory strategies
-├── Recent memory
-├── Semantic memory
-├── Summary memory
-├── Episodic memory
-├── Entity memory
-└── Composite memory
-        │
-        ▼
+|-- Recent memory
+|-- Semantic memory
+|-- Summary memory
+|-- Episodic memory
+|-- Entity memory
+`-- Composite memory
+        |
+        v
 Retrieval and context building
-        │
-        ▼
+        |
+        v
 LLM or AI agent
+```
+
+## Source layout
+
+Headers and implementation files live side by side under `src/`:
+
+```text
+src/agent_memory/
+|-- AgentMemory.hpp
+`-- core/
+    |-- LibraryInfo.hpp
+    `-- LibraryInfo.cpp
+```
+
+Consumers include public headers through the `agent_memory` include prefix:
+
+```cpp
+#include <agent_memory/AgentMemory.hpp>
 ```
 
 ## Storage
 
-The initial storage backend is based on:
+The initial storage backend is planned around:
 
 * [libmdbx](https://github.com/erthink/libmdbx)
 * [mdbx-containers](https://github.com/NewYaroslav/mdbx-containers)
 
-Storage interfaces are separated from memory and retrieval algorithms so that additional backends can be added later.
+Storage interfaces are separated from memory and retrieval algorithms so that
+additional backends can be added later.
 
 ## Embeddings
 
-Embedding generation is exposed through a backend-independent interface.
+Embedding generation will be exposed through a backend-independent interface.
 
 Planned backends:
 
@@ -119,56 +148,13 @@ class IEmbedder {
 public:
     virtual ~IEmbedder() = default;
 
-    virtual std::size_t dimension() const noexcept = 0;
+    virtual const EmbeddingModelInfo& info() const noexcept = 0;
 
-    virtual Embedding encode(
+    virtual std::vector<float> encode(
         std::string_view text,
         EmbeddingPurpose purpose
     ) = 0;
 };
-```
-
-`EmbeddingPurpose` distinguishes document, query, classification, and other model-specific input modes.
-
-## Example
-
-```cpp
-#include <agent_memory/memory/semantic_memory.hpp>
-#include <agent_memory/embedding/onnx_embedder.hpp>
-#include <agent_memory/storage/mdbx_storage.hpp>
-
-int main()
-{
-    agent_memory::MdbxStorage storage{"./memory"};
-
-    agent_memory::OnnxEmbedder embedder{
-        "./models/multilingual-e5-small"
-    };
-
-    agent_memory::SemanticMemory memory{
-        storage,
-        embedder
-    };
-
-    memory.remember({
-        .content = "The user is developing a robotic arm.",
-        .scope = "user:42"
-    });
-
-    const auto results = memory.recall({
-        .query = "What robotics project is the user working on?",
-        .scope = "user:42",
-        .limit = 5
-    });
-
-    for (const auto& result : results) {
-        std::cout
-            << result.score
-            << " "
-            << result.content
-            << '\n';
-    }
-}
 ```
 
 ## Project status
@@ -209,8 +195,14 @@ cmake -S . -B build \
     -DAGENT_MEMORY_BUILD_EXAMPLES=ON
 
 cmake --build build --config Release
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --build-config Release --output-on-failure
 ```
+
+Available CMake options:
+
+* `AGENT_MEMORY_BUILD_TESTS`
+* `AGENT_MEMORY_BUILD_EXAMPLES`
+* `AGENT_MEMORY_ENABLE_WARNINGS`
 
 ## Requirements
 
