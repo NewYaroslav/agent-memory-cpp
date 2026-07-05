@@ -51,3 +51,7 @@ free. MDBX-backed storage is expected to implement those contracts with
 `mdbx-containers` as an adapter detail. The upper project should keep
 dependencies flat: parent projects should be able to provide dependency targets
 when possible.
+
+MDBX support is opt-in through `AGENT_MEMORY_ENABLE_MDBX`. The build must reuse
+an existing `mdbx_containers::mdbx_containers` target before adding a local
+source tree or falling back to `find_package(mdbx_containers)`.

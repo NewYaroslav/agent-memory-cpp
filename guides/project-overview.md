@@ -16,6 +16,7 @@ The repository is in the project-skeleton stage. The current code provides:
 - `core::LibraryInfo` smoke API;
 - dependency-free document, chunk, metadata, and source-kind primitives;
 - dependency-free document storage contract;
+- opt-in MDBX dependency wiring for future storage backends;
 - CMake options for tests, examples, and warnings;
 - smoke/domain/storage tests and one basic example.
 

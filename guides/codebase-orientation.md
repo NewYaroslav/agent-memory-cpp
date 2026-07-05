@@ -4,6 +4,7 @@
 
 ```text
 cmake/
+    AgentMemoryDependencies.cmake
     AgentMemoryOptions.cmake
 examples/
     basic_usage.cpp
@@ -29,6 +30,7 @@ tests/
     domain/
         domain_primitives_test.cpp
     storage/
+        feature_flags_test.cpp
         document_storage_contract_test.cpp
     smoke/
         agent_memory_smoke.cpp
@@ -71,6 +73,10 @@ The storage layer currently provides `IDocumentStorage`, a dependency-free
 contract for persisting a `DocumentSnapshot` and loading/removing documents and
 their chunks. Concrete backends, including MDBX, must implement this contract
 outside the domain layer.
+
+MDBX dependency wiring lives in `cmake/AgentMemoryDependencies.cmake` and is
+disabled by default. It exposes `AGENT_MEMORY_HAS_MDBX` as a public compile
+definition with value `0` or `1`.
 
 ## Where To Add Code
 

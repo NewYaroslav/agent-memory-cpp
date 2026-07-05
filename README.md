@@ -211,6 +211,15 @@ Available CMake options:
 * `AGENT_MEMORY_BUILD_TESTS`
 * `AGENT_MEMORY_BUILD_EXAMPLES`
 * `AGENT_MEMORY_ENABLE_WARNINGS`
+* `AGENT_MEMORY_ENABLE_MDBX`
+* `AGENT_MEMORY_MDBX_CONTAINERS_SOURCE_DIR`
+* `AGENT_MEMORY_MDBX_DEPS_MODE`
+
+`AGENT_MEMORY_ENABLE_MDBX` is `OFF` by default. When enabled, the build reuses
+an existing `mdbx_containers::mdbx_containers` target, adds a local
+`mdbx-containers` source tree, or falls back to `find_package(mdbx_containers)`.
+The public compile definition `AGENT_MEMORY_HAS_MDBX` is always defined as `0`
+or `1`.
 
 ## Requirements
 
