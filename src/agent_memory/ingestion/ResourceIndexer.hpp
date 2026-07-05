@@ -25,7 +25,7 @@ namespace agent_memory {
 
         /// \brief Inserts or replaces all derived records for one resource.
         /// \pre `snapshot.revision.resource_id` must not be empty.
-        /// \pre `snapshot.document_snapshot` must contain chunks for its document.
+        /// \pre Each chunk in `snapshot.document_snapshot` must belong to its document.
         virtual void reindex_resource(ResourceIndexSnapshot snapshot) = 0;
 
         /// \brief Removes all known derived records for one resource.
