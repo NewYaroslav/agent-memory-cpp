@@ -64,13 +64,25 @@ behind a CMake option and an adapter boundary:
 
 - Zstd for text/chunk compression and benchmarked bucket compression.
 - Eigen for zero-copy math views and scoring/reranking helpers.
+- simdutf for fast UTF-8 validation and UTF-8/UTF-32 transcoding in tokenizer
+  adapters. It is not a normalization, stemming, or search engine dependency.
+- ICU for Unicode normalization, case folding, locale-aware segmentation, and
+  other heavyweight tokenizer behavior when the std-only tokenizer is not
+  enough.
 - Miniz/zlib or LZ4 only as later codec alternatives when justified.
+- Xapian or PISA only as optional lexical search adapters or optimization
+  references after the project-owned `ILexicalIndex` contract and in-memory BM25
+  baseline exist.
 
 Planned options should be introduced only with corresponding implementation:
 
 ```cmake
 AGENT_MEMORY_ENABLE_ZSTD
 AGENT_MEMORY_ENABLE_EIGEN
+AGENT_MEMORY_ENABLE_SIMDUTF
+AGENT_MEMORY_ENABLE_ICU
+AGENT_MEMORY_ENABLE_XAPIAN
+AGENT_MEMORY_ENABLE_PISA
 ```
 
 Planned public feature macros:
@@ -78,9 +90,18 @@ Planned public feature macros:
 ```cpp
 AGENT_MEMORY_HAS_ZSTD
 AGENT_MEMORY_HAS_EIGEN
+AGENT_MEMORY_HAS_SIMDUTF
+AGENT_MEMORY_HAS_ICU
+AGENT_MEMORY_HAS_XAPIAN
+AGENT_MEMORY_HAS_PISA
 ```
 
 Define feature macros consistently as `0` or `1` once the corresponding option
 exists.
 
-Do not make Eigen or Zstd part of dependency-free public contracts.
+Do not make Eigen, Zstd, Unicode backends, or external lexical engines part of
+dependency-free public contracts.
+
+Persist source and chunk text as UTF-8 by default. UTF-32/code point buffers are
+allowed as temporary tokenizer internals or benchmarked derived artifacts, not
+as the default storage representation.
