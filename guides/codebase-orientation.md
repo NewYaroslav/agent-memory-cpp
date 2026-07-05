@@ -4,9 +4,13 @@
 
 ```text
 cmake/
+    AgentMemoryDependencies.cmake
     AgentMemoryOptions.cmake
 examples/
     basic_usage.cpp
+external/
+    libmdbx/
+    mdbx-containers/
 src/agent_memory/
     AgentMemory.hpp
     core/
@@ -29,6 +33,7 @@ tests/
     domain/
         domain_primitives_test.cpp
     storage/
+        feature_flags_test.cpp
         document_storage_contract_test.cpp
     smoke/
         agent_memory_smoke.cpp
@@ -71,6 +76,22 @@ The storage layer currently provides `IDocumentStorage`, a dependency-free
 contract for persisting a `DocumentSnapshot` and loading/removing documents and
 their chunks. Concrete backends, including MDBX, must implement this contract
 outside the domain layer.
+
+MDBX dependency wiring lives in `cmake/AgentMemoryDependencies.cmake` and is
+disabled by default. It exposes `AGENT_MEMORY_HAS_MDBX` as a public compile
+definition with value `0` or `1`.
+
+When source dependencies are used, `external/libmdbx` and
+`external/mdbx-containers` are flat sibling submodules. The build adds libmdbx
+first so `mdbx-containers` can reuse the parent-provided MDBX target.
+
+## Embedding Direction
+
+Embedding code should start with dependency-free contracts in
+`src/agent_memory/embedding/`. Concrete providers such as `llama.cpp`, ONNX
+Runtime, or HTTP APIs belong behind optional adapter boundaries. Do not fork
+`cpp-llamalib` to turn a chat/generation wrapper into the project embedding
+API.
 
 ## Where To Add Code
 

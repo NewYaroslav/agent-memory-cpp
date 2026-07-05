@@ -20,6 +20,9 @@ All project options use the `AGENT_MEMORY_` prefix.
 | `AGENT_MEMORY_BUILD_TESTS` | top-level build only | Build tests and register them with CTest. |
 | `AGENT_MEMORY_BUILD_EXAMPLES` | `OFF` | Build examples from `examples/`. |
 | `AGENT_MEMORY_ENABLE_WARNINGS` | `ON` | Enable project compiler warnings. |
+| `AGENT_MEMORY_ENABLE_MDBX` | `OFF` | Enable MDBX-backed storage dependencies. |
+| `AGENT_MEMORY_MDBX_CONTAINERS_SOURCE_DIR` | empty | Optional override for a local `mdbx-containers` source tree. Defaults to `external/mdbx-containers` when present. |
+| `AGENT_MEMORY_MDBX_DEPS_MODE` | `AUTO` | MDBX dependency mode forwarded to `mdbx-containers` source builds: `AUTO`, `SYSTEM`, or `BUNDLED`. |
 
 ## Baseline Commands
 
@@ -36,6 +39,24 @@ cmake --build tmp/build-cpp17 --parallel
 ctest --test-dir tmp/build-cpp17 --output-on-failure
 ```
 
+Configure with flat MDBX submodules:
+
+```bash
+git submodule update --init external/libmdbx external/mdbx-containers
+
+cmake -S . -B tmp/build-mdbx \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DAGENT_MEMORY_ENABLE_MDBX=ON \
+    -DAGENT_MEMORY_MDBX_DEPS_MODE=BUNDLED \
+    -DAGENT_MEMORY_BUILD_TESTS=ON
+
+cmake --build tmp/build-mdbx --parallel
+ctest --test-dir tmp/build-mdbx --output-on-failure
+```
+
+Use `AGENT_MEMORY_MDBX_CONTAINERS_SOURCE_DIR=/path/to/mdbx-containers` only
+when testing a custom checkout outside `external/`.
+
 On multi-config generators, pass the configuration to build and test commands:
 
 ```bash
@@ -45,13 +66,22 @@ ctest --test-dir tmp/build-cpp17 --build-config Release --output-on-failure
 
 ## CI Expectations
 
-GitHub Actions builds on Windows, Linux, and macOS. CI should configure, build,
-and run CTest with examples and tests enabled.
+GitHub Actions builds the default configuration on Windows, Linux, and macOS.
+CI should configure, build, and run CTest with examples and tests enabled.
+
+CI also includes a Linux MDBX wiring job. That job initializes only the flat
+`external/libmdbx` and `external/mdbx-containers` submodules, configures with
+`AGENT_MEMORY_ENABLE_MDBX=ON`, and runs CTest. Do not use recursive submodule
+checkout for this job; nested dependency checkouts would hide flat-layout
+regressions.
 
 ## Verification Heuristics
 
 - Documentation-only changes: inspect Markdown and run `git diff --check`.
 - CMake changes: configure and build at least one clean build directory.
+- MDBX dependency wiring changes: configure once with `AGENT_MEMORY_ENABLE_MDBX=OFF`
+  and once with `AGENT_MEMORY_ENABLE_MDBX=ON` using flat `external/libmdbx` and
+  `external/mdbx-containers` submodules or an installed package.
 - Public header changes: build tests and examples.
 - Behavior changes: add or update tests, then run the relevant CTest subset or
   the full suite when the affected area is shared.

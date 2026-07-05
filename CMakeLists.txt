@@ -15,6 +15,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 include(cmake/AgentMemoryOptions.cmake)
+include(cmake/AgentMemoryDependencies.cmake)
 
 add_library(agent_memory STATIC
     src/agent_memory/core/LibraryInfo.cpp
@@ -34,6 +35,11 @@ target_include_directories(agent_memory
         $<INSTALL_INTERFACE:include>
 )
 
+target_compile_definitions(agent_memory
+    PUBLIC
+        AGENT_MEMORY_HAS_MDBX=$<BOOL:${AGENT_MEMORY_ENABLE_MDBX}>
+)
+
 set_target_properties(agent_memory PROPERTIES
     OUTPUT_NAME agent_memory
 )
@@ -44,6 +50,14 @@ if(AGENT_MEMORY_ENABLE_WARNINGS)
     else()
         target_compile_options(agent_memory PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+endif()
+
+if(AGENT_MEMORY_ENABLE_MDBX)
+    agent_memory_provide_mdbx_containers(AGENT_MEMORY_MDBX_CONTAINERS_TARGET)
+    target_link_libraries(agent_memory
+        PRIVATE
+            ${AGENT_MEMORY_MDBX_CONTAINERS_TARGET}
+    )
 endif()
 
 if(AGENT_MEMORY_BUILD_EXAMPLES)

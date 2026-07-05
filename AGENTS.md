@@ -22,6 +22,10 @@ agent framework.
   map and extension points.
 - [Build and test](guides/build-and-test.md) - CMake options, local checks, and
   CI expectations.
+- [Dependencies](guides/dependencies.md) - flat `external/` submodules and
+  optional dependency wiring.
+- [Embeddings](guides/embedding.md) - embedding contracts and backend adapter
+  direction.
 - [Coding style](guides/coding-style.md) - naming, file layout, comments, and
   include guards.
 - [Commit conventions](guides/commit-conventions.md) - commit format when the
@@ -36,6 +40,10 @@ agent framework.
   header-only library unless the user explicitly changes that direction.
 - Keep public headers and `.cpp` files side by side under `src/`.
 - Isolate optional dependencies behind implementation files and adapter layers.
+- Keep source dependencies flat as Git submodules under `external/` when the
+  project owns the dependency checkout.
+- Keep embedding APIs backend-independent. Do not fork chat/generation wrappers
+  just to add embeddings.
 - Keep storage, indexing, retrieval, memory strategies, ingestion, and context
   formatting as separate concerns.
 - Do not add agent orchestration, browser automation, participant simulation,

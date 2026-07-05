@@ -32,3 +32,29 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --build-config Release --output-on-failure
+
+  mdbx:
+    name: MDBX wiring
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init flat MDBX submodules
+        run: git submodule update --init external/libmdbx external/mdbx-containers
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-mdbx
+          -DCMAKE_BUILD_TYPE=Release
+          -DAGENT_MEMORY_ENABLE_MDBX=ON
+          -DAGENT_MEMORY_MDBX_DEPS_MODE=BUNDLED
+          -DAGENT_MEMORY_BUILD_TESTS=ON
+          -DAGENT_MEMORY_BUILD_EXAMPLES=OFF
+
+      - name: Build
+        run: cmake --build build-mdbx --config Release
+
+      - name: Test
+        run: ctest --test-dir build-mdbx --build-config Release --output-on-failure

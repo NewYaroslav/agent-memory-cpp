@@ -12,6 +12,10 @@ Mandatory rules for AI coding agents working in `agent-memory-cpp`.
   code in `.cpp` files or isolated adapters.
 - Keep headers and implementation files side by side under `src/`.
 - Keep public includes under the `agent_memory/` prefix.
+- Keep project-owned source dependencies as flat Git submodules under
+  `external/`; do not hide them as nested dependency checkouts.
+- Keep embedding contracts backend-independent. Add concrete embedding backends
+  as optional adapters, not as forks of chat/generation wrappers.
 - Separate storage, embedding, indexing, retrieval, memory strategies, ingestion,
   and context assembly. Do not collapse behavior into a single facade.
 - Optional infrastructure adapters must depend inward on core contracts, not the
