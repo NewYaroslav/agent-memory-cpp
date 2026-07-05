@@ -23,6 +23,8 @@ src/agent_memory/
         Identifiers.cpp
         Metadata.hpp
         Metadata.cpp
+        Resource.hpp
+        Resource.cpp
         SourceKind.hpp
         SourceKind.cpp
     embedding/
@@ -53,6 +55,7 @@ tests/
     CMakeLists.txt
     domain/
         domain_primitives_test.cpp
+        resource_manifest_test.cpp
     embedding/
         embedding_contracts_test.cpp
     index/
@@ -97,9 +100,12 @@ The domain layer currently provides dependency-free value objects for the first
 storage and indexing steps:
 
 - `DocumentId` and `ChunkId`;
+- `ResourceId`;
 - `Metadata`;
 - `SourceKind`;
 - `Document`, `DocumentChunk`, and `TextRange`.
+- `ResourceRevision`, `DerivedRecordKind`, `DerivedRecordRef`, and
+  `ResourceManifest`.
 
 ## Storage Contracts
 

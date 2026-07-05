@@ -116,6 +116,7 @@ src/agent_memory/
 |   |-- Document.hpp
 |   |-- Identifiers.hpp
 |   |-- Metadata.hpp
+|   |-- Resource.hpp
 |   `-- SourceKind.hpp
 |-- embedding/
 |   |-- Embedding.hpp

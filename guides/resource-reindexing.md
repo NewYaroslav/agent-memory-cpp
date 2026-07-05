@@ -71,7 +71,8 @@ enum class DerivedRecordKind {
     VectorRecord,
     BinaryBucketPosting,
     LexicalPosting,
-    GraphRecord
+    GraphRecord,
+    Custom
 };
 
 struct DerivedRecordRef final {
