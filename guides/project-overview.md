@@ -14,8 +14,9 @@ The repository is in the project-skeleton stage. The current code provides:
 - public alias `agent_memory::agent_memory`;
 - public aggregate header `agent_memory/AgentMemory.hpp`;
 - `core::LibraryInfo` smoke API;
+- dependency-free document, chunk, metadata, and source-kind primitives;
 - CMake options for tests, examples, and warnings;
-- one smoke test and one basic example.
+- smoke/domain tests and one basic example.
 
 ## Core Scope
 

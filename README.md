@@ -11,10 +11,10 @@ separate vector database server.
 
 ## Current status
 
-The repository is in the project-skeleton stage. The first code PR establishes a
+The repository is in the early foundation stage. The first PR established a
 static C++17 library target, CMake options, a smoke test, and a small example.
-Memory, retrieval, storage, and embedding APIs will be added in focused follow-up
-PRs.
+Follow-up PRs are adding stable domain primitives before storage, retrieval, and
+embedding integrations.
 
 ## Goals
 
@@ -108,6 +108,11 @@ Headers and implementation files live side by side under `src/`:
 ```text
 src/agent_memory/
 |-- AgentMemory.hpp
+|-- domain/
+|   |-- Document.hpp
+|   |-- Identifiers.hpp
+|   |-- Metadata.hpp
+|   `-- SourceKind.hpp
 `-- core/
     |-- LibraryInfo.hpp
     `-- LibraryInfo.cpp

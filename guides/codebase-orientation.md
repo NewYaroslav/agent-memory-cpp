@@ -12,8 +12,19 @@ src/agent_memory/
     core/
         LibraryInfo.hpp
         LibraryInfo.cpp
+    domain/
+        Document.hpp
+        Document.cpp
+        Identifiers.hpp
+        Identifiers.cpp
+        Metadata.hpp
+        Metadata.cpp
+        SourceKind.hpp
+        SourceKind.cpp
 tests/
     CMakeLists.txt
+    domain/
+        domain_primitives_test.cpp
     smoke/
         agent_memory_smoke.cpp
 ```
@@ -38,6 +49,16 @@ initial smoke test and example:
 - `library_version()`.
 
 Do not treat this class as the future application facade.
+
+## Domain Primitives
+
+The domain layer currently provides dependency-free value objects for the first
+storage and indexing steps:
+
+- `DocumentId` and `ChunkId`;
+- `Metadata`;
+- `SourceKind`;
+- `Document`, `DocumentChunk`, and `TextRange`.
 
 ## Where To Add Code
 

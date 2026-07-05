@@ -18,6 +18,10 @@ include(cmake/AgentMemoryOptions.cmake)
 
 add_library(agent_memory STATIC
     src/agent_memory/core/LibraryInfo.cpp
+    src/agent_memory/domain/Document.cpp
+    src/agent_memory/domain/Identifiers.cpp
+    src/agent_memory/domain/Metadata.cpp
+    src/agent_memory/domain/SourceKind.cpp
 )
 add_library(agent_memory::agent_memory ALIAS agent_memory)
 
