@@ -42,6 +42,11 @@ src/agent_memory/
         VectorIndex.cpp
         IVectorIndex.hpp
         IVectorIndex.cpp
+    lexical/
+        Tokenizer.hpp
+        Tokenizer.cpp
+        ITokenizer.hpp
+        ITokenizer.cpp
     retrieval/
         Retrieval.hpp
         Retrieval.cpp
@@ -72,6 +77,8 @@ tests/
         retrieval_contracts_test.cpp
     ingestion/
         resource_indexer_test.cpp
+    lexical/
+        tokenizer_contracts_test.cpp
     infrastructure/
         mdbx/
             mdbx_document_storage_test.cpp
@@ -187,6 +194,17 @@ resource snapshots, writes document state, embeds chunks, upserts vector records
 and stores resource manifests. It does not own parsing, chunking policy, MDBX
 details, or retrieval ranking.
 
+## Lexical Contracts
+
+Lexical contracts live in `src/agent_memory/lexical/`:
+
+- `Token`, `TokenKind`, `TokenizeOptions`, and `TokenizationResult`;
+- `ITokenizer` for tokenizer backends.
+
+Tokenizer output uses normalized lookup text, byte ranges into the original
+UTF-8 source text, emitted token positions, and coarse token kinds. Keep this
+layer dependency-free; optional Unicode backends belong behind later adapters.
+
 ## Retrieval Contracts
 
 Retrieval contracts live in `src/agent_memory/retrieval/`:
@@ -205,6 +223,7 @@ backend-specific details must stay behind adapter boundaries.
 - Storage contracts and neutral types: `src/agent_memory/storage/`.
 - MDBX-specific implementation details: future infrastructure/storage area.
 - Embedding contracts: `src/agent_memory/embedding/`.
+- Lexical search contracts and implementations: `src/agent_memory/lexical/`.
 - Retrieval/ranking behavior: `src/agent_memory/retrieval/`.
 - Resource ownership and targeted reindexing: start with domain/storage
   contracts, then add infrastructure adapters.
