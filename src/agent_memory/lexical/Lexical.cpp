@@ -1,5 +1,7 @@
 #include "Lexical.hpp"
 
+#include <cmath>
+
 namespace agent_memory {
 
     TokenId::TokenId(const std::uint64_t value)
@@ -34,7 +36,11 @@ namespace agent_memory {
     }
 
     bool is_valid(const Bm25Options& options) noexcept {
-        return options.k1 > 0.0F && options.b >= 0.0F && options.b <= 1.0F;
+        return std::isfinite(options.k1)
+            && options.k1 > 0.0F
+            && std::isfinite(options.b)
+            && options.b >= 0.0F
+            && options.b <= 1.0F;
     }
 
 } // namespace agent_memory

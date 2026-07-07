@@ -1,7 +1,6 @@
 #include "Tokenizer.hpp"
 
 #include <array>
-#include <cctype>
 #include <string_view>
 
 namespace agent_memory {
@@ -20,6 +19,13 @@ namespace {
         {TokenKind::Symbol, "symbol"},
         {TokenKind::Custom, "custom"}
     }};
+
+    [[nodiscard]] constexpr char ascii_to_lower(char c) noexcept {
+        const auto uc = static_cast<unsigned char>(c);
+        return (uc >= 'A' && uc <= 'Z')
+            ? static_cast<char>(uc + static_cast<unsigned char>('a' - 'A'))
+            : c;
+    }
 
 } // namespace
 
@@ -51,13 +57,7 @@ namespace {
             }
             bool match = true;
             for(std::size_t i = 0; i < text.size(); ++i) {
-                const auto lc = static_cast<unsigned char>(
-                    std::tolower(static_cast<unsigned char>(text[i]))
-                );
-                const auto rc = static_cast<unsigned char>(
-                    std::tolower(static_cast<unsigned char>(item.name[i]))
-                );
-                if(lc != rc) {
+                if(ascii_to_lower(text[i]) != item.name[i]) {
                     match = false;
                     break;
                 }

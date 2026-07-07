@@ -51,8 +51,8 @@ int main() {
     };
 
     agent_memory::LexicalDocumentRecord record{
-        revision,
         agent_memory::ChunkId{"chunk:alpha:0"},
+        revision,
         {
             agent_memory::Token{
                 "agent",

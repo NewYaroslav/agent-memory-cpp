@@ -50,8 +50,8 @@ namespace agent_memory {
 
     /// \brief Tokenized document chunk ready for lexical indexing.
     struct LexicalDocumentRecord final {
-        ResourceRevision revision;
         ChunkId chunk_id;
+        ResourceRevision revision;
         std::vector<Token> tokens;
         Metadata metadata;
 
