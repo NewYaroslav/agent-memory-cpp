@@ -10,6 +10,20 @@ namespace {
         return 1;
     }
 
+    int test_matches_metadata_filters_accepts_matching() {
+        agent_memory::Metadata record;
+        record.set("language", "en");
+        record.set("category", "docs");
+
+        if(!agent_memory::matches_metadata_filters(record, {{"language", "en"}})) {
+            return fail("matches_metadata_filters must accept matching metadata");
+        }
+        if(agent_memory::matches_metadata_filters(record, {{"category", "src"}})) {
+            return fail("matches_metadata_filters must reject mismatched metadata");
+        }
+        return 0;
+    }
+
 } // namespace
 
 int main() {
@@ -121,6 +135,8 @@ int main() {
     if(result.score <= 0.0F || result.chunk_id != record.chunk_id) {
         return fail("lexical search result must expose chunk id and higher-is-better score");
     }
+
+    test_matches_metadata_filters_accepts_matching();
 
     return 0;
 }
