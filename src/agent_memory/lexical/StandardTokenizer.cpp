@@ -31,7 +31,9 @@ namespace {
     }
 
     [[nodiscard]] bool is_token_start(const unsigned char value) noexcept {
-        return is_ascii_alpha(value) || is_ascii_digit(value) || is_non_ascii(value);
+        return is_ascii_alpha(value) || is_ascii_digit(value) || is_non_ascii(value) ||
+            value == '_' || value == '-' || value == '.' || value == '/' ||
+            value == '\\';
     }
 
     [[nodiscard]] bool is_token_body(const unsigned char value) noexcept {
@@ -42,6 +44,18 @@ namespace {
 
     [[nodiscard]] bool is_identifier_delimiter(const unsigned char value) noexcept {
         return value == '_' || value == '-' || value == '.' || value == ':';
+    }
+
+    [[nodiscard]] bool is_trailing_punctuation_byte(const unsigned char value) noexcept {
+        return value == '.' || value == ':' || value == ',' ||
+            value == ';' || value == '!' || value == '?';
+    }
+
+    [[nodiscard]] bool is_cli_flag_like(const std::string_view text) noexcept {
+        if(text.size() < 2) return false;
+        if(text[0] != '-') return false;
+        return text[1] == '-' ||
+            !is_ascii_digit(static_cast<unsigned char>(text[1]));
     }
 
     [[nodiscard]] char ascii_lower(const unsigned char value) noexcept {
@@ -74,9 +88,15 @@ namespace {
     [[nodiscard]] bool is_number_text(const std::string_view text) noexcept {
         bool has_digit = false;
         bool has_dot = false;
+        std::size_t index = 0;
 
-        for(const char raw : text) {
-            const auto value = static_cast<unsigned char>(raw);
+        if(!text.empty() && (text[0] == '-' || text[0] == '+')) {
+            ++index;
+        }
+        if(index >= text.size()) return false;
+
+        for(; index < text.size(); ++index) {
+            const auto value = static_cast<unsigned char>(text[index]);
             if(is_ascii_digit(value)) {
                 has_digit = true;
                 continue;
@@ -107,15 +127,29 @@ namespace {
         return false;
     }
 
-    [[nodiscard]] bool has_camel_boundary(const std::string_view text) noexcept {
+    [[nodiscard]] std::vector<std::size_t> find_camel_boundaries(
+        const std::string_view text
+    ) noexcept {
+        std::vector<std::size_t> boundaries;
         for(std::size_t index = 1; index < text.size(); ++index) {
             const auto previous = static_cast<unsigned char>(text[index - 1]);
             const auto current = static_cast<unsigned char>(text[index]);
             if((is_ascii_lower(previous) || is_ascii_digit(previous)) && is_ascii_upper(current)) {
-                return true;
+                boundaries.push_back(index);
+                continue;
+            }
+            if(index >= 2) {
+                const auto prev_prev = static_cast<unsigned char>(text[index - 2]);
+                if(is_ascii_upper(prev_prev) && is_ascii_upper(previous) && is_ascii_lower(current)) {
+                    boundaries.push_back(index - 1);
+                }
             }
         }
-        return false;
+        return boundaries;
+    }
+
+    [[nodiscard]] bool has_camel_boundary(const std::string_view text) noexcept {
+        return !find_camel_boundaries(text).empty();
     }
 
     [[nodiscard]] TokenKind classify_token(const std::string_view text) noexcept {
@@ -162,6 +196,8 @@ namespace {
     ) {
         std::size_t part_begin = 0;
         std::size_t emitted_parts = 0;
+        std::size_t boundary_index = 0;
+        const auto boundaries = find_camel_boundaries(text);
 
         const auto flush_part = [&](const std::size_t part_end) {
             if(part_end <= part_begin) {
@@ -188,13 +224,10 @@ namespace {
             }
 
             if(index > part_begin) {
-                const auto previous = static_cast<unsigned char>(text[index - 1]);
-                if(
-                    (is_ascii_lower(previous) || is_ascii_digit(previous)) &&
-                    is_ascii_upper(value)
-                ) {
+                if(boundary_index < boundaries.size() && boundaries[boundary_index] == index) {
                     flush_part(index);
                     part_begin = index;
+                    ++boundary_index;
                 }
             }
         }
@@ -229,10 +262,42 @@ namespace {
 
                 const auto token_text = text.substr(begin, index - begin);
                 const auto kind = classify_token(token_text);
-                append_token(result, token_text, begin, kind, options);
 
-                if(kind == TokenKind::Identifier && options.emit_identifier_parts) {
-                    append_identifier_parts(result, token_text, begin, options);
+                std::string_view body = token_text;
+                std::size_t trim_count = 0;
+                if(kind != TokenKind::Number) {
+                    while(!body.empty()) {
+                        const auto last = static_cast<unsigned char>(body.back());
+                        if(is_trailing_punctuation_byte(last)) {
+                            body.remove_suffix(1);
+                            ++trim_count;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                append_token(result, body, begin, kind, options);
+
+                if(trim_count > 0 && options.emit_symbol_tokens) {
+                    const auto symbol_begin = begin + body.size();
+                    for(std::size_t s = 0; s < trim_count; ++s) {
+                        const auto pos = symbol_begin + s;
+                        append_token(
+                            result,
+                            text.substr(pos, 1),
+                            pos,
+                            TokenKind::Symbol,
+                            options
+                        );
+                    }
+                }
+
+                if(!body.empty() &&
+                   kind == TokenKind::Identifier &&
+                   options.emit_identifier_parts &&
+                   !is_cli_flag_like(body)) {
+                    append_identifier_parts(result, body, begin, options);
                 }
                 continue;
             }
@@ -248,10 +313,6 @@ namespace {
             }
 
             ++index;
-        }
-
-        for(std::size_t position = 0; position < result.tokens.size(); ++position) {
-            result.tokens[position].position = position;
         }
 
         return result;
