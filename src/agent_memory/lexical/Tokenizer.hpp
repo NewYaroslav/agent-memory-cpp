@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace agent_memory {
@@ -59,10 +60,10 @@ namespace agent_memory {
     };
 
     /// \brief Returns stable lowercase token-kind name.
-    [[nodiscard]] std::string to_string(TokenKind kind);
+    [[nodiscard]] std::string_view to_string(TokenKind kind) noexcept;
 
     /// \brief Parses a stable token-kind name.
-    [[nodiscard]] bool parse_token_kind(const std::string& text, TokenKind& out_kind);
+    [[nodiscard]] bool parse_token_kind(std::string_view text, TokenKind& out_kind) noexcept;
 
 } // namespace agent_memory
 

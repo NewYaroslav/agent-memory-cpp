@@ -9,6 +9,7 @@
 #include "domain/Document.hpp"
 #include "domain/Identifiers.hpp"
 #include "domain/Metadata.hpp"
+#include "domain/MetadataFilter.hpp"
 #include "domain/Resource.hpp"
 #include "domain/SourceKind.hpp"
 #include "embedding/Embedding.hpp"

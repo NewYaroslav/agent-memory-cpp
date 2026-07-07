@@ -1,24 +1,25 @@
 #include "Tokenizer.hpp"
 
-#include <algorithm>
+#include <array>
+#include <cctype>
+#include <string_view>
 
 namespace agent_memory {
 namespace {
 
-    [[nodiscard]] std::string ascii_lowercase(std::string text) {
-        std::transform(
-            text.begin(),
-            text.end(),
-            text.begin(),
-            [](const unsigned char value) -> char {
-                if(value >= 'A' && value <= 'Z') {
-                    return static_cast<char>(value - 'A' + 'a');
-                }
-                return static_cast<char>(value);
-            }
-        );
-        return text;
-    }
+    struct TokenKindName final {
+        TokenKind kind = TokenKind::Word;
+        std::string_view name;
+    };
+
+    constexpr std::array<TokenKindName, 6> TOKEN_KIND_NAMES{{
+        {TokenKind::Word, "word"},
+        {TokenKind::Number, "number"},
+        {TokenKind::Identifier, "identifier"},
+        {TokenKind::Path, "path"},
+        {TokenKind::Symbol, "symbol"},
+        {TokenKind::Custom, "custom"}
+    }};
 
 } // namespace
 
@@ -34,58 +35,38 @@ namespace {
         return tokens.size();
     }
 
-    std::string to_string(const TokenKind kind) {
-        switch(kind) {
-        case TokenKind::Word:
-            return "word";
-        case TokenKind::Number:
-            return "number";
-        case TokenKind::Identifier:
-            return "identifier";
-        case TokenKind::Path:
-            return "path";
-        case TokenKind::Symbol:
-            return "symbol";
-        case TokenKind::Custom:
-            return "custom";
+    std::string_view to_string(const TokenKind kind) noexcept {
+        for(const auto& item : TOKEN_KIND_NAMES) {
+            if(item.kind == kind) {
+                return item.name;
+            }
         }
-
         return "custom";
     }
 
-    bool parse_token_kind(const std::string& text, TokenKind& out_kind) {
-        const auto normalized = ascii_lowercase(text);
-
-        if(normalized == "word") {
-            out_kind = TokenKind::Word;
-            return true;
+    bool parse_token_kind(std::string_view text, TokenKind& out_kind) noexcept {
+        for(const auto& item : TOKEN_KIND_NAMES) {
+            if(text.size() != item.name.size()) {
+                continue;
+            }
+            bool match = true;
+            for(std::size_t i = 0; i < text.size(); ++i) {
+                const auto lc = static_cast<unsigned char>(
+                    std::tolower(static_cast<unsigned char>(text[i]))
+                );
+                const auto rc = static_cast<unsigned char>(
+                    std::tolower(static_cast<unsigned char>(item.name[i]))
+                );
+                if(lc != rc) {
+                    match = false;
+                    break;
+                }
+            }
+            if(match) {
+                out_kind = item.kind;
+                return true;
+            }
         }
-
-        if(normalized == "number") {
-            out_kind = TokenKind::Number;
-            return true;
-        }
-
-        if(normalized == "identifier") {
-            out_kind = TokenKind::Identifier;
-            return true;
-        }
-
-        if(normalized == "path") {
-            out_kind = TokenKind::Path;
-            return true;
-        }
-
-        if(normalized == "symbol") {
-            out_kind = TokenKind::Symbol;
-            return true;
-        }
-
-        if(normalized == "custom") {
-            out_kind = TokenKind::Custom;
-            return true;
-        }
-
         return false;
     }
 

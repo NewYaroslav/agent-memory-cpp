@@ -6,8 +6,8 @@
 /// \brief Dependency-free lexical search value types.
 
 #include "../domain/Metadata.hpp"
+#include "../domain/MetadataFilter.hpp"
 #include "../domain/Resource.hpp"
-#include "../index/VectorIndex.hpp"
 #include "Tokenizer.hpp"
 
 #include <cstddef>

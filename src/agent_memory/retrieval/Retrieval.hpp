@@ -6,8 +6,8 @@
 /// \brief Dependency-free retrieval query and result value types.
 
 #include "../domain/Document.hpp"
+#include "../domain/MetadataFilter.hpp"
 #include "../embedding/Embedding.hpp"
-#include "../index/VectorIndex.hpp"
 
 #include <cstddef>
 #include <optional>
