@@ -18,6 +18,7 @@ include(cmake/AgentMemoryOptions.cmake)
 include(cmake/AgentMemoryDependencies.cmake)
 
 add_library(agent_memory STATIC
+    src/agent_memory/chat/Message.cpp
     src/agent_memory/core/LibraryInfo.cpp
     src/agent_memory/domain/Document.cpp
     src/agent_memory/domain/Identifiers.cpp
@@ -27,18 +28,25 @@ add_library(agent_memory STATIC
     src/agent_memory/domain/SourceKind.cpp
     src/agent_memory/embedding/Embedding.cpp
     src/agent_memory/embedding/IEmbedder.cpp
+    src/agent_memory/facts/Fact.cpp
     src/agent_memory/ingestion/ResourceIndexer.cpp
     src/agent_memory/index/ExactVectorIndex.cpp
     src/agent_memory/index/IVectorIndex.cpp
     src/agent_memory/index/VectorIndex.cpp
     src/agent_memory/lexical/ExactLexicalIndex.cpp
+    src/agent_memory/lexical/IChunkEnricher.cpp
     src/agent_memory/lexical/ILexicalIndex.cpp
+    src/agent_memory/lexical/IQueryAnalyzer.cpp
+    src/agent_memory/lexical/IReranker.cpp
     src/agent_memory/lexical/ITokenDictionary.cpp
     src/agent_memory/lexical/ITokenizer.cpp
     src/agent_memory/lexical/Lexical.cpp
     src/agent_memory/lexical/StandardTokenizer.cpp
     src/agent_memory/lexical/TokenDictionary.cpp
     src/agent_memory/lexical/Tokenizer.cpp
+    src/agent_memory/memory/MemoryObject.cpp
+    src/agent_memory/retrieval/HybridRetrievalEngine.cpp
+    src/agent_memory/retrieval/IRetrievalEngine.cpp
     src/agent_memory/retrieval/IRetriever.cpp
     src/agent_memory/retrieval/Retrieval.cpp
     src/agent_memory/storage/IDocumentStorage.cpp
