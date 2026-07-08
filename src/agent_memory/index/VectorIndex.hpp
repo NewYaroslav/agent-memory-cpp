@@ -6,6 +6,7 @@
 /// \brief Dependency-free vector index value types.
 
 #include "../domain/Identifiers.hpp"
+#include "../domain/MetadataFilter.hpp"
 #include "../domain/Metadata.hpp"
 #include "../embedding/Embedding.hpp"
 
@@ -14,12 +15,6 @@
 #include <vector>
 
 namespace agent_memory {
-
-    /// \brief Exact metadata equality filter used by vector search queries.
-    struct MetadataFilter final {
-        std::string key;
-        std::string value;
-    };
 
     /// \brief Vector payload stored for one chunk.
     struct VectorRecord final {
@@ -44,12 +39,6 @@ namespace agent_memory {
         float score = 0.0F;
         Metadata metadata;
     };
-
-    /// \brief Returns true when metadata satisfies all exact filters.
-    [[nodiscard]] bool matches_metadata_filters(
-        const Metadata& metadata,
-        const std::vector<MetadataFilter>& filters
-    );
 
 } // namespace agent_memory
 

@@ -22,6 +22,7 @@ add_library(agent_memory STATIC
     src/agent_memory/domain/Document.cpp
     src/agent_memory/domain/Identifiers.cpp
     src/agent_memory/domain/Metadata.cpp
+    src/agent_memory/domain/MetadataFilter.cpp
     src/agent_memory/domain/Resource.cpp
     src/agent_memory/domain/SourceKind.cpp
     src/agent_memory/embedding/Embedding.cpp
@@ -31,6 +32,7 @@ add_library(agent_memory STATIC
     src/agent_memory/index/IVectorIndex.cpp
     src/agent_memory/index/VectorIndex.cpp
     src/agent_memory/lexical/ITokenizer.cpp
+    src/agent_memory/lexical/Lexical.cpp
     src/agent_memory/lexical/StandardTokenizer.cpp
     src/agent_memory/lexical/Tokenizer.cpp
     src/agent_memory/retrieval/IRetriever.cpp
