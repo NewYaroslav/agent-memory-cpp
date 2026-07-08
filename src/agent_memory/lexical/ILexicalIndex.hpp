@@ -12,6 +12,26 @@
 namespace agent_memory {
 
     /// \brief Contract implemented by lexical search indexes.
+    ///
+    /// Thread-safety:
+    ///   Implementations are not required to be thread-safe. The intended
+    ///   pattern is single-writer (during ingestion) and many-readers
+    ///   (during query). Concurrent calls have unspecified behavior.
+    ///
+    /// Exception contract:
+    ///   - Mutating methods (upsert, erase, erase_resource, clear) may
+    ///     throw std::bad_alloc on allocation failure or std::invalid_argument
+    ///     when a precondition is violated (e.g. is_valid(record) is false).
+    ///   - I/O backends (e.g. MDBX) may also throw std::system_error for
+    ///     storage failures.
+    ///   - Query methods (size, find_stats, search) are noexcept where the
+    ///     implementation permits it.
+    ///
+    /// Document-frequency ownership:
+    ///   ILexicalIndex is responsible for incrementing document frequency
+    ///   in ITokenDictionary (via increment_document_frequency) on each
+    ///   upsert of a new chunk and decrementing on erase. df survives
+    ///   clear() -- clear() does not reset df in ITokenDictionary.
     class ILexicalIndex {
     public:
         virtual ~ILexicalIndex();
@@ -21,6 +41,7 @@ namespace agent_memory {
 
         /// \brief Inserts or replaces one tokenized chunk.
         /// \pre `is_valid(record)` must be true.
+        /// \throws std::invalid_argument if !is_valid(record).
         virtual void upsert(LexicalDocumentRecord record) = 0;
 
         /// \brief Finds stored lexical stats by chunk id.
@@ -31,19 +52,26 @@ namespace agent_memory {
         /// \brief Searches indexed chunks with normalized query terms.
         /// \pre `is_valid(query)` must be true unless `query.limit == 0`.
         /// \return Scored hits ordered with higher scores first.
+        /// \note search() returns up to `limit` results, ordered by descending
+        ///       score. Ties (equal scores) are broken deterministically by
+        ///       chunk_id ascending. Implementations must not return results
+        ///       in unspecified order.
         [[nodiscard]] virtual std::vector<LexicalSearchResult> search(
             const LexicalSearchQuery& query
         ) const = 0;
 
         /// \brief Removes one indexed chunk.
+        /// \return true if the chunk was present and removed, false if it was
+        ///         already absent (idempotent).
         [[nodiscard]] virtual bool erase(const ChunkId& chunk_id) = 0;
 
         /// \brief Removes all chunks owned by one resource.
-        /// \return Number of removed chunks.
+        /// \return the number of chunks removed (0 if the resource was not
+        ///         indexed). Idempotent on repeated calls.
         [[nodiscard]] virtual std::size_t erase_resource(const ResourceId& resource_id) = 0;
 
         /// \brief Removes all indexed chunks and token statistics.
-        virtual void clear() = 0;
+        [[nodiscard]] virtual void clear() = 0;
     };
 
 } // namespace agent_memory

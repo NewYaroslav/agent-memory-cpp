@@ -28,8 +28,23 @@ namespace {
             const bool removed_existing = erase(chunk_id);
             (void)removed_existing;
 
-            m_chunks_by_resource[resource_id].insert(chunk_id);
-            m_records.emplace(chunk_id, std::move(record));
+            const auto inserted = m_chunks_by_resource[resource_id].insert(chunk_id);
+            try {
+                m_records.emplace(chunk_id, std::move(record));
+            } catch(...) {
+                if(inserted.second) {
+                    m_chunks_by_resource[resource_id].erase(chunk_id);
+                }
+                throw;
+            }
+        }
+
+        [[nodiscard]] bool debug_check_invariant() const noexcept {
+            std::size_t sum = 0;
+            for(const auto& entry : m_chunks_by_resource) {
+                sum += entry.second.size();
+            }
+            return m_records.size() == sum;
         }
 
         [[nodiscard]] std::optional<agent_memory::LexicalDocumentStats> find_stats(
@@ -235,8 +250,17 @@ int main() {
     }
 
     const auto stats = index.find_stats(agent_memory::ChunkId{"chunk:a"});
-    if(!stats || stats->token_count != 3 || stats->unique_token_count != 2) {
+    if(!stats
+        || stats->token_count != 3
+        || stats->unique_token_count != 2
+        || stats->chunk_id != agent_memory::ChunkId{"chunk:a"}
+    ) {
         return fail("lexical index must expose document stats");
+    }
+
+    const auto stats_b = index.find_stats(agent_memory::ChunkId{"chunk:b"});
+    if(!stats_b || stats_b->chunk_id == agent_memory::ChunkId{"chunk:a"}) {
+        return fail("find_stats must return the requested chunk id");
     }
 
     const auto results = index.search(agent_memory::LexicalSearchQuery{
@@ -309,6 +333,14 @@ int main() {
         return fail("erase_resource must remove all chunks for a resource");
     }
 
+    if(index.erase_resource(agent_memory::ResourceId{"resource:alpha"}) != 0) {
+        return fail("erase_resource must be idempotent for unknown resources");
+    }
+
+    if(index.erase(agent_memory::ChunkId{"chunk:b"})) {
+        return fail("erase must report missing chunks after resource removal");
+    }
+
     if(index.size() != 1 || index.find_stats(agent_memory::ChunkId{"chunk:b"})) {
         return fail("erase_resource must remove indexed stats");
     }
@@ -332,6 +364,71 @@ int main() {
         (void)index.search(agent_memory::LexicalSearchQuery{});
         return fail("lexical index must reject invalid non-zero-limit queries");
     } catch(const std::invalid_argument&) {
+    }
+
+    {
+        InMemoryLexicalIndex moved;
+
+        moved.upsert(make_record(
+            "chunk:m",
+            "resource:alpha",
+            {make_token("agent", 0), make_token("memory", 1)},
+            "public"
+        ));
+        moved.upsert(make_record(
+            "chunk:m",
+            "resource:beta",
+            {make_token("updated", 0)},
+            "public"
+        ));
+
+        if(moved.size() != 1) {
+            return fail("replacing chunk_id with a new resource must keep a single record");
+        }
+        if(moved.erase_resource(agent_memory::ResourceId{"resource:alpha"}) != 0) {
+            return fail("replacing chunk_id must remove stale resource membership");
+        }
+        if(moved.erase_resource(agent_memory::ResourceId{"resource:beta"}) != 1) {
+            return fail("replaced chunk must belong to the new resource only");
+        }
+    }
+
+    {
+        InMemoryLexicalIndex invariants;
+        invariants.upsert(make_record(
+            "chunk:1",
+            "resource:r1",
+            {make_token("a", 0), make_token("b", 1)},
+            "public"
+        ));
+        invariants.upsert(make_record(
+            "chunk:2",
+            "resource:r2",
+            {make_token("a", 0)},
+            "public"
+        ));
+        invariants.upsert(make_record(
+            "chunk:3",
+            "resource:r1",
+            {make_token("c", 0)},
+            "private"
+        ));
+        (void)invariants.erase(agent_memory::ChunkId{"chunk:2"});
+        invariants.upsert(make_record(
+            "chunk:3",
+            "resource:r3",
+            {make_token("c", 0), make_token("d", 1)},
+            "private"
+        ));
+
+        if(!invariants.debug_check_invariant()) {
+            return fail("internal record/index invariant must hold after mixed operations");
+        }
+
+        invariants.clear();
+        if(!invariants.debug_check_invariant() || invariants.size() != 0) {
+            return fail("debug invariant must hold after clear");
+        }
     }
 
     return 0;
