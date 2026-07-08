@@ -49,13 +49,13 @@ namespace {
         metadata.set("scope", scope);
 
         return agent_memory::LexicalDocumentRecord{
+            agent_memory::ChunkId{chunk_id},
             agent_memory::ResourceRevision{
                 agent_memory::ResourceId{resource_id},
                 1,
                 11,
                 17
             },
-            agent_memory::ChunkId{chunk_id},
             std::move(tokens),
             metadata
         };
