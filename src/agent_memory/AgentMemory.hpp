@@ -21,6 +21,7 @@
 #include "lexical/ITokenDictionary.hpp"
 #include "lexical/ITokenizer.hpp"
 #include "lexical/Lexical.hpp"
+#include "lexical/LexicalHash.hpp"
 #include "lexical/StandardTokenizer.hpp"
 #include "lexical/TokenDictionary.hpp"
 #include "lexical/Tokenizer.hpp"
