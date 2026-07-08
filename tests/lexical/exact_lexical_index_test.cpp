@@ -189,12 +189,32 @@ int main() {
         return fail("erase_resource must remove all chunks owned by the resource");
     }
 
+    if(index.erase_resource(agent_memory::ResourceId{"resource:alpha"}) != 0) {
+        return fail("erase_resource must be idempotent (return 0 on second call)");
+    }
+
     if(index.find_stats(agent_memory::ChunkId{"chunk:b"})) {
         return fail("erase_resource must remove stats for owned chunks");
     }
 
     if(!index.erase(agent_memory::ChunkId{"chunk:c"}) || index.erase(agent_memory::ChunkId{"chunk:c"})) {
         return fail("erase must report removed and missing chunks");
+    }
+
+    index.upsert(make_record(
+        "chunk:idem",
+        "resource:idem",
+        make_tokens({"alpha"}),
+        "public"
+    ));
+    if(!index.erase(agent_memory::ChunkId{"chunk:idem"})) {
+        return fail("first erase must return true");
+    }
+    if(index.erase(agent_memory::ChunkId{"chunk:idem"})) {
+        return fail("second erase must return false (idempotent)");
+    }
+    if(index.erase_resource(agent_memory::ResourceId{"resource:idem"}) != 0) {
+        return fail("erase_resource on idempotency-test chunk must return 0");
     }
 
     index.clear();

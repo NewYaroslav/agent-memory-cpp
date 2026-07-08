@@ -191,9 +191,12 @@ namespace agent_memory {
         const StoredRecord& record,
         const LexicalSearchQuery& query
     ) const {
+        const Bm25Options& bm25 = query.bm25.is_default()
+            ? m_options.bm25
+            : query.bm25;
         float score = 0.0F;
         for(const auto& term : query.terms) {
-            score += score_term(record, term, query.bm25);
+            score += score_term(record, term, bm25);
         }
         return score;
     }

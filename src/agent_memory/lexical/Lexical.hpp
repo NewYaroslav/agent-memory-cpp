@@ -38,6 +38,9 @@ namespace agent_memory {
     struct Bm25Options final {
         float k1 = 1.5F;
         float b = 0.75F;
+
+        /// \brief Returns true when both fields match the default BM25 configuration.
+        [[nodiscard]] bool is_default() const noexcept;
     };
 
     /// \brief Token occurrence list for one chunk.
@@ -75,6 +78,9 @@ namespace agent_memory {
         std::vector<std::string> terms;
         /// \brief Maximum number of chunks to return. Zero requests no chunks.
         std::size_t limit = 10;
+        /// \brief metadata_filters are combined with AND semantics: a chunk is
+        ///         considered matching only when its metadata satisfies ALL listed
+        ///         filters. An empty metadata_filters vector matches any chunk.
         std::vector<MetadataFilter> metadata_filters;
         Bm25Options bm25;
 
@@ -96,6 +102,10 @@ namespace agent_memory {
 
     /// \brief Returns true when BM25 options are within the supported range.
     [[nodiscard]] bool is_valid(const Bm25Options& options) noexcept;
+
+    /// \brief Returns true when a posting is well-formed (non-default token id
+    ///         and term_frequency matches positions size).
+    [[nodiscard]] bool is_valid(const LexicalPosting& posting) noexcept;
 
     /// \brief Returns true when a tokenized document can be indexed.
     [[nodiscard]] bool is_valid(const LexicalDocumentRecord& record) noexcept;

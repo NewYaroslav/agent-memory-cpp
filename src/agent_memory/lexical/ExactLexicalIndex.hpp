@@ -19,6 +19,11 @@ namespace agent_memory {
     };
 
     /// \brief Deterministic in-memory BM25 lexical index.
+    ///
+    /// IDF formula: BM25+ variant idf = log(1 + (N - df + 0.5) / (df + 0.5)),
+    /// matching Lucene / Elasticsearch behavior. This is the smoothed
+    /// variant; not the canonical Robertson/Sparck-Jones BM25 IDF.
+    /// Per-token scoring saturating TF: tf / (tf + k1 * (1 - b + b * |D|/avgdl)).
     class ExactLexicalIndex final : public ILexicalIndex {
     public:
         ExactLexicalIndex();

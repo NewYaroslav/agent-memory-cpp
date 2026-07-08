@@ -35,12 +35,21 @@ namespace agent_memory {
         return lhs.value() < rhs.value();
     }
 
+    bool Bm25Options::is_default() const noexcept {
+        return k1 == 1.5F && b == 0.75F;
+    }
+
     bool is_valid(const Bm25Options& options) noexcept {
         return std::isfinite(options.k1)
             && options.k1 > 0.0F
             && std::isfinite(options.b)
             && options.b >= 0.0F
             && options.b <= 1.0F;
+    }
+
+    bool is_valid(const LexicalPosting& posting) noexcept {
+        return !posting.token_id.empty()
+            && posting.term_frequency == posting.positions.size();
     }
 
     bool is_valid(const LexicalDocumentRecord& record) noexcept {
