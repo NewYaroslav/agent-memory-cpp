@@ -43,4 +43,32 @@ namespace agent_memory {
             && options.b <= 1.0F;
     }
 
+    bool is_valid(const LexicalDocumentRecord& record) noexcept {
+        if(record.revision.resource_id.empty() || record.chunk_id.empty() || record.tokens.empty()) {
+            return false;
+        }
+
+        for(const auto& token : record.tokens) {
+            if(token.empty()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool is_valid(const LexicalSearchQuery& query) noexcept {
+        if(query.terms.empty() || !is_valid(query.bm25)) {
+            return false;
+        }
+
+        for(const auto& term : query.terms) {
+            if(term.empty()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
 } // namespace agent_memory

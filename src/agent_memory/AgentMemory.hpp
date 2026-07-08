@@ -18,6 +18,7 @@
 #include "index/ExactVectorIndex.hpp"
 #include "index/IVectorIndex.hpp"
 #include "index/VectorIndex.hpp"
+#include "lexical/ILexicalIndex.hpp"
 #include "lexical/ITokenDictionary.hpp"
 #include "lexical/ITokenizer.hpp"
 #include "lexical/Lexical.hpp"
