@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,9 +39,6 @@ namespace agent_memory {
     struct Bm25Options final {
         float k1 = 1.5F;
         float b = 0.75F;
-
-        /// \brief Returns true when both fields match the default BM25 configuration.
-        [[nodiscard]] bool is_default() const noexcept;
     };
 
     /// \brief Token occurrence list for one chunk.
@@ -82,7 +80,12 @@ namespace agent_memory {
         ///         considered matching only when its metadata satisfies ALL listed
         ///         filters. An empty metadata_filters vector matches any chunk.
         std::vector<MetadataFilter> metadata_filters;
-        Bm25Options bm25;
+        /// \brief Optional BM25 parameter override. When empty, the index
+        ///         falls back to its own configured Bm25Options. Setting an
+        ///         explicit value (even one numerically equal to the library
+        ///         defaults) signals "use these specific values", distinct
+        ///         from "fall back to index options".
+        std::optional<Bm25Options> bm25;
 
         /// \brief Returns true when there are no normalized query terms.
         [[nodiscard]] bool empty() const noexcept;

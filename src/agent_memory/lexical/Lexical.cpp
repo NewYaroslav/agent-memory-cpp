@@ -35,10 +35,6 @@ namespace agent_memory {
         return lhs.value() < rhs.value();
     }
 
-    bool Bm25Options::is_default() const noexcept {
-        return k1 == 1.5F && b == 0.75F;
-    }
-
     bool is_valid(const Bm25Options& options) noexcept {
         return std::isfinite(options.k1)
             && options.k1 > 0.0F
@@ -67,7 +63,11 @@ namespace agent_memory {
     }
 
     bool is_valid(const LexicalSearchQuery& query) noexcept {
-        if(query.terms.empty() || !is_valid(query.bm25)) {
+        if(query.terms.empty()) {
+            return false;
+        }
+
+        if(query.bm25.has_value() && !is_valid(*query.bm25)) {
             return false;
         }
 

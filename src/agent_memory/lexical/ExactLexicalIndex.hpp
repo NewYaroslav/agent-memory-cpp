@@ -20,10 +20,17 @@ namespace agent_memory {
 
     /// \brief Deterministic in-memory BM25 lexical index.
     ///
-    /// IDF formula: BM25+ variant idf = log(1 + (N - df + 0.5) / (df + 0.5)),
-    /// matching Lucene / Elasticsearch behavior. This is the smoothed
-    /// variant; not the canonical Robertson/Sparck-Jones BM25 IDF.
-    /// Per-token scoring saturating TF: tf / (tf + k1 * (1 - b + b * |D|/avgdl)).
+    /// Per-token scoring (BM25):
+    ///   idf = log(1 + (N - df + 0.5) / (df + 0.5))   // BM25+ variant
+    ///   numerator   = tf * (k1 + 1)
+    ///   denominator = tf + k1 * (1 - b + b * |D| / avgdl)
+    ///   score = idf * (numerator / denominator)
+    ///
+    /// Architectural note: this in-memory reference implementation owns
+    /// its own token -> document_frequency map (m_dictionary_by_text) and
+    /// does NOT route through ITokenDictionary. ITokenDictionary
+    /// integration is the responsibility of future persistent backends;
+    /// see the contract spec in ILexicalIndex.hpp.
     class ExactLexicalIndex final : public ILexicalIndex {
     public:
         ExactLexicalIndex();

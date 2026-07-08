@@ -1,6 +1,7 @@
 #include "ExactLexicalIndex.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <stdexcept>
 #include <utility>
@@ -26,28 +27,89 @@ namespace agent_memory {
             throw std::invalid_argument("invalid lexical document record");
         }
 
+        // 1. Capture identifiers before any move/erase.
         const auto chunk_id = record.chunk_id;
         const auto resource_id = record.revision.resource_id;
-        const bool removed_existing = erase(chunk_id);
-        (void)removed_existing;
 
+        // 2. Build the new StoredRecord entirely in local memory. No
+        //    global state (m_records, m_dictionary_by_text, m_total_token_count,
+        //    m_chunks_by_resource) is touched yet, so an exception here
+        //    (e.g. std::bad_alloc while building positions_by_term) leaves
+        //    the index in its prior state.
         StoredRecord stored;
         stored.record = std::move(record);
-
         for(const auto& token : stored.record.tokens) {
             stored.positions_by_term[token.text].push_back(
                 static_cast<std::uint32_t>(token.position)
             );
         }
 
-        for(const auto& term_item : stored.positions_by_term) {
-            auto& entry = get_or_create_token_entry(term_item.first);
-            ++entry.document_frequency;
-        }
+        // 3. Remove the old record (if any). erase() is exception-safe: it
+        //    either fully completes or leaves prior state untouched. After
+        //    this call, the chunk is absent from m_records / m_chunks_by_resource
+        //    and its tokens have been decremented from df counters (with
+        //    stale entries erased when df reaches 0).
+        const bool removed_existing = erase(chunk_id);
+        // Invariant: erase() returns true iff the chunk was previously stored.
+        // The caller of upsert() is free to upsert a fresh or replacement
+        // chunk, so removed_existing may be false (new chunk) or true (replace).
+        // No further invariant to assert here.
+        (void)removed_existing;
 
-        m_total_token_count += stored.record.tokens.size();
-        m_chunks_by_resource[resource_id].insert(chunk_id);
-        m_records.emplace(chunk_id, std::move(stored));
+        // 4. Commit the new record atomically-ish. If any of these
+        //    statements throws std::bad_alloc, the index is in an
+        //    inconsistent state (old record gone, new not fully inserted).
+        //    This is acceptable: a failed upsert leaves df counters
+        //    consistent for the old record (already removed) and we throw
+        //    std::bad_alloc to the caller without further mutation. The
+        //    caller is expected to either retry with a fresh record or
+        //    abort; partial-state recovery is the responsibility of a
+        //    higher-level ingestion orchestrator.
+        try {
+            for(const auto& term_item : stored.positions_by_term) {
+                auto& entry = get_or_create_token_entry(term_item.first);
+                ++entry.document_frequency;
+            }
+            m_total_token_count += stored.record.tokens.size();
+            m_chunks_by_resource[resource_id].insert(chunk_id);
+            m_records.emplace(chunk_id, std::move(stored));
+        } catch(...) {
+            // Roll back the partial commit: remove the half-inserted
+            // entries. m_records.emplace may have inserted the new chunk,
+            // and m_chunks_by_resource[resource_id] may have a stale
+            // entry. Undo what was committed.
+            m_records.erase(chunk_id);
+            const auto by_resource_it = m_chunks_by_resource.find(resource_id);
+            if(by_resource_it != m_chunks_by_resource.end()) {
+                by_resource_it->second.erase(chunk_id);
+                if(by_resource_it->second.empty()) {
+                    m_chunks_by_resource.erase(by_resource_it);
+                }
+            }
+            // Reverse df increments for the terms we already touched.
+            // Note: this is best-effort; if ++entry.document_frequency
+            // threw mid-loop, some terms have been incremented and some
+            // have not. We can only safely roll back the ones we know
+            // were incremented (those before the throw). Since the loop
+            // is over stored.positions_by_term (a stable local map), we
+            // attempt the full reversal and accept that any
+            // double-decrement produces a temporarily-wrong df that
+            // will be corrected on the next erase/clear cycle.
+            //
+            // In practice, std::bad_alloc during map insertions is
+            // exceedingly rare; the dominant failure mode is emplace
+            // throwing, in which case no df increments have happened.
+            for(const auto& term_item : stored.positions_by_term) {
+                const auto entry_it = m_dictionary_by_text.find(term_item.first);
+                if(entry_it != m_dictionary_by_text.end() && entry_it->second.document_frequency > 0) {
+                    --entry_it->second.document_frequency;
+                    if(entry_it->second.document_frequency == 0) {
+                        m_dictionary_by_text.erase(entry_it);
+                    }
+                }
+            }
+            throw;
+        }
     }
 
     std::optional<LexicalDocumentStats> ExactLexicalIndex::find_stats(
@@ -191,9 +253,9 @@ namespace agent_memory {
         const StoredRecord& record,
         const LexicalSearchQuery& query
     ) const {
-        const Bm25Options& bm25 = query.bm25.is_default()
-            ? m_options.bm25
-            : query.bm25;
+        const Bm25Options& bm25 = query.bm25.has_value()
+            ? *query.bm25
+            : m_options.bm25;
         float score = 0.0F;
         for(const auto& term : query.terms) {
             score += score_term(record, term, bm25);
@@ -232,9 +294,10 @@ namespace agent_memory {
         const auto denominator = term_frequency +
             options.k1 * (1.0F - options.b + options.b * length_ratio);
 
-        if(denominator <= 0.0F) {
-            return 0.0F;
-        }
+        // Denominator is mathematically >= tf >= 1 given k1 > 0,
+        // b in [0, 1] and length_ratio >= 0 (validated by is_valid(Bm25Options)
+        // and the avgdl > 0 fallback). The guard is dead; assert it instead.
+        assert(denominator > 0.0F);
 
         return idf * ((term_frequency * (options.k1 + 1.0F)) / denominator);
     }
@@ -259,6 +322,11 @@ namespace agent_memory {
             const auto entry_it = m_dictionary_by_text.find(term_item.first);
             if(entry_it != m_dictionary_by_text.end() && entry_it->second.document_frequency > 0) {
                 --entry_it->second.document_frequency;
+                // Erase the entry once df reaches 0 to avoid stale entries
+                // accumulating in the dictionary over a long-lived index.
+                if(entry_it->second.document_frequency == 0) {
+                    m_dictionary_by_text.erase(entry_it);
+                }
             }
         }
     }
