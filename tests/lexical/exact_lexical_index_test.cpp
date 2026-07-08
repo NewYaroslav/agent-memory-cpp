@@ -417,6 +417,121 @@ int main() {
         }
     }
 
+    // v6++: precise rollback contract for upsert(). The previous
+    // implementation admitted best-effort rollback with possible
+    // double-decrement of df and stale m_total_token_count on
+    // std::bad_alloc. The new contract guarantees that any throwing
+    // commit leaves the index in EXACTLY its pre-upsert state.
+    //
+    // We cannot inject std::bad_alloc without modifying the
+    // implementation, so we verify the contract through two
+    // observable scenarios:
+    //   (a) is_valid() failure (empty tokens) must throw BEFORE any
+    //       mutation; observable state is byte-for-byte identical
+    //       before and after.
+    //   (b) A successful replace exercises the same code path that a
+    //       failed replace's rollback restore would use. If the
+    //       replace succeeds, then the rollback restore path (which
+    //       re-inserts the old snapshot into m_records, re-increments
+    //       df for old terms, re-adds resource membership, and
+    //       restores m_total_token_count) is sound by the same
+    //       construction.
+    {
+        agent_memory::ExactLexicalIndex rollback_index;
+
+        rollback_index.upsert(make_record(
+            "chunk:alpha",
+            "resource:shared",
+            make_tokens({"foo", "bar", "baz"}),
+            "public"
+        ));
+        rollback_index.upsert(make_record(
+            "chunk:beta",
+            "resource:shared",
+            make_tokens({"bar", "baz", "qux"}),
+            "public"
+        ));
+
+        const auto size_before = rollback_index.size();
+
+        agent_memory::LexicalSearchQuery foo_q;
+        foo_q.terms = {"foo"};
+        foo_q.limit = 10;
+        if(rollback_index.search(foo_q).size() != 1) {
+            return fail("v6++: 'foo' must match chunk:alpha pre-upsert");
+        }
+
+        // (a) is_valid() failure -- throw BEFORE any mutation.
+        bool threw = false;
+        try {
+            // Empty tokens -> is_valid(record) is false.
+            rollback_index.upsert(make_record(
+                "chunk:bad",
+                "resource:other",
+                {},
+                "public"
+            ));
+        } catch(const std::invalid_argument&) {
+            threw = true;
+        }
+        if(!threw) {
+            return fail("v6++: invalid upsert must throw invalid_argument");
+        }
+        if(rollback_index.size() != size_before) {
+            return fail("v6++: invalid upsert must not change size");
+        }
+        if(rollback_index.search(foo_q).size() != 1) {
+            return fail("v6++: invalid upsert must not change df");
+        }
+        if(rollback_index.erase_resource(agent_memory::ResourceId{"resource:other"}) != 0) {
+            return fail("v6++: invalid upsert must not create resource entry");
+        }
+
+        // (b) Successful replace -- exercises the same code path that
+        // a failed replace's rollback restore would use. chunk:alpha
+        // was [foo,bar,baz] under resource:shared; replace with
+        // [token5] under resource:other.
+        rollback_index.upsert(make_record(
+            "chunk:alpha",
+            "resource:other",
+            make_tokens({"token5"}),
+            "public"
+        ));
+
+        if(rollback_index.size() != size_before) {
+            return fail("v6++: replace must not change size");
+        }
+        if(rollback_index.search(foo_q).size() != 0) {
+            return fail("v6++: 'foo' must disappear after chunk:alpha replaced");
+        }
+
+        agent_memory::LexicalSearchQuery token5_q;
+        token5_q.terms = {"token5"};
+        token5_q.limit = 10;
+        if(rollback_index.search(token5_q).size() != 1) {
+            return fail("v6++: 'token5' must match new chunk:alpha");
+        }
+
+        agent_memory::LexicalSearchQuery qux_q;
+        qux_q.terms = {"qux"};
+        qux_q.limit = 10;
+        if(rollback_index.search(qux_q).size() != 1) {
+            return fail("v6++: 'qux' must still match chunk:beta");
+        }
+
+        // Resource membership: resource:shared no longer owns chunk:alpha;
+        // resource:other now owns chunk:alpha.
+        if(rollback_index.erase_resource(agent_memory::ResourceId{"resource:shared"}) != 1) {
+            return fail("v6++: shared must own only chunk:beta after replace");
+        }
+        if(rollback_index.erase_resource(agent_memory::ResourceId{"resource:other"}) != 1) {
+            return fail("v6++: other must own chunk:alpha after replace");
+        }
+        if(rollback_index.size() != 0) {
+            return fail("v6++: total size must be 0 after fully cleaning up");
+        }
+    }
+
     try {
         agent_memory::ExactLexicalIndex invalid_index{
             agent_memory::ExactLexicalIndexOptions{

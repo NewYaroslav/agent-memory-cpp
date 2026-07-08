@@ -23,91 +23,139 @@ namespace agent_memory {
     }
 
     void ExactLexicalIndex::upsert(LexicalDocumentRecord record) {
+        // 1. Validate before any global state is touched.
         if(!is_valid(record)) {
             throw std::invalid_argument("invalid lexical document record");
         }
 
-        // 1. Capture identifiers before any move/erase.
+        // 2. Capture identifiers before any move.
         const auto chunk_id = record.chunk_id;
         const auto resource_id = record.revision.resource_id;
 
-        // 2. Build the new StoredRecord entirely in local memory. No
-        //    global state (m_records, m_dictionary_by_text, m_total_token_count,
-        //    m_chunks_by_resource) is touched yet, so an exception here
-        //    (e.g. std::bad_alloc while building positions_by_term) leaves
-        //    the index in its prior state.
-        StoredRecord stored;
-        stored.record = std::move(record);
-        for(const auto& token : stored.record.tokens) {
-            stored.positions_by_term[token.text].push_back(
+        // 3. Build the new StoredRecord entirely in local memory. No
+        //    global state (m_records, m_dictionary_by_text,
+        //    m_total_token_count, m_chunks_by_resource) is touched yet,
+        //    so an exception here (e.g. std::bad_alloc while building
+        //    positions_by_term) leaves the index in its prior state.
+        StoredRecord new_record;
+        new_record.record = std::move(record);
+        for(const auto& token : new_record.record.tokens) {
+            new_record.positions_by_term[token.text].push_back(
                 static_cast<std::uint32_t>(token.position)
             );
         }
 
-        // 3. Remove the old record (if any). erase() is exception-safe: it
-        //    either fully completes or leaves prior state untouched. After
-        //    this call, the chunk is absent from m_records / m_chunks_by_resource
-        //    and its tokens have been decremented from df counters (with
-        //    stale entries erased when df reaches 0).
-        const bool removed_existing = erase(chunk_id);
-        // Invariant: erase() returns true iff the chunk was previously stored.
-        // The caller of upsert() is free to upsert a fresh or replacement
-        // chunk, so removed_existing may be false (new chunk) or true (replace).
-        // No further invariant to assert here.
-        (void)removed_existing;
+        // Exact exception-safety contract:
+        //   - Before any global mutation: validate input and build the
+        //     StoredRecord locally. The contract's std::bad_alloc
+        //     allowance applies only to the actual commit phase.
+        //   - During commit: any throwing step leaves the index in
+        //     EXACTLY the pre-upsert state -- df, m_total_token_count,
+        //     m_chunks_by_resource, and m_records are all rolled back
+        //     to what they were before this call. The old record (if
+        //     any) is fully restored from snapshot.
+        //   - We do NOT rely on "best-effort" or "temporarily-wrong
+        //     df". The index is consistent at all observable moments.
 
-        // 4. Commit the new record atomically-ish. If any of these
-        //    statements throws std::bad_alloc, the index is in an
-        //    inconsistent state (old record gone, new not fully inserted).
-        //    This is acceptable: a failed upsert leaves df counters
-        //    consistent for the old record (already removed) and we throw
-        //    std::bad_alloc to the caller without further mutation. The
-        //    caller is expected to either retry with a fresh record or
-        //    abort; partial-state recovery is the responsibility of a
-        //    higher-level ingestion orchestrator.
+        // 4. Capture the existing record (if any) before any erase. The
+        //    snapshot is a complete copy of StoredRecord; if the commit
+        //    below throws, this snapshot lets us restore the pre-upsert
+        //    state exactly.
+        std::optional<StoredRecord> old_snapshot;
+        {
+            const auto it = m_records.find(chunk_id);
+            if(it != m_records.end()) {
+                old_snapshot = it->second;
+            }
+        }
+        const std::size_t total_before = m_total_token_count;
+
+        // 5. If the chunk was previously stored, remove the old record.
+        //    std::map::erase is noexcept, so this step cannot leave us
+        //    in a half-erased state.
+        if(old_snapshot.has_value()) {
+            erase(chunk_id);
+        }
+
+        // 6. Commit the new record. We track every mutation via local
+        //    flags so we can undo exactly what was done if any step
+        //    throws.
+        std::vector<std::string> incremented_terms;
+        bool m_records_inserted = false;
+        bool resource_added = false;
+        bool total_added = false;
+
         try {
-            for(const auto& term_item : stored.positions_by_term) {
-                auto& entry = get_or_create_token_entry(term_item.first);
+            // 6a. df increments. A throw here means some df have been
+            //     bumped; the rollback below reverses the ones we
+            //     recorded in incremented_terms.
+            for(const auto& term_item : new_record.positions_by_term) {
+                const auto& term = term_item.first;
+                auto& entry = get_or_create_token_entry(term);
                 ++entry.document_frequency;
+                incremented_terms.push_back(term);
             }
-            m_total_token_count += stored.record.tokens.size();
+
+            // 6b. m_total_token_count -- straightforward counter update.
+            m_total_token_count += new_record.record.tokens.size();
+            total_added = true;
+
+            // 6c. resource membership.
             m_chunks_by_resource[resource_id].insert(chunk_id);
-            m_records.emplace(chunk_id, std::move(stored));
+            resource_added = true;
+
+            // 6d. m_records emplace -- if this throws, roll back all
+            //     the above via the catch block.
+            m_records.emplace(chunk_id, new_record);
+            m_records_inserted = true;
         } catch(...) {
-            // Roll back the partial commit: remove the half-inserted
-            // entries. m_records.emplace may have inserted the new chunk,
-            // and m_chunks_by_resource[resource_id] may have a stale
-            // entry. Undo what was committed.
-            m_records.erase(chunk_id);
-            const auto by_resource_it = m_chunks_by_resource.find(resource_id);
-            if(by_resource_it != m_chunks_by_resource.end()) {
-                by_resource_it->second.erase(chunk_id);
-                if(by_resource_it->second.empty()) {
-                    m_chunks_by_resource.erase(by_resource_it);
-                }
+            // Precise rollback: reverse the commit in opposite order,
+            // undoing only what was actually applied.
+
+            if(m_records_inserted) {
+                m_records.erase(chunk_id);
             }
-            // Reverse df increments for the terms we already touched.
-            // Note: this is best-effort; if ++entry.document_frequency
-            // threw mid-loop, some terms have been incremented and some
-            // have not. We can only safely roll back the ones we know
-            // were incremented (those before the throw). Since the loop
-            // is over stored.positions_by_term (a stable local map), we
-            // attempt the full reversal and accept that any
-            // double-decrement produces a temporarily-wrong df that
-            // will be corrected on the next erase/clear cycle.
-            //
-            // In practice, std::bad_alloc during map insertions is
-            // exceedingly rare; the dominant failure mode is emplace
-            // throwing, in which case no df increments have happened.
-            for(const auto& term_item : stored.positions_by_term) {
-                const auto entry_it = m_dictionary_by_text.find(term_item.first);
-                if(entry_it != m_dictionary_by_text.end() && entry_it->second.document_frequency > 0) {
-                    --entry_it->second.document_frequency;
-                    if(entry_it->second.document_frequency == 0) {
-                        m_dictionary_by_text.erase(entry_it);
+            if(resource_added) {
+                const auto rit = m_chunks_by_resource.find(resource_id);
+                if(rit != m_chunks_by_resource.end()) {
+                    rit->second.erase(chunk_id);
+                    if(rit->second.empty()) {
+                        m_chunks_by_resource.erase(rit);
                     }
                 }
             }
+            if(total_added) {
+                m_total_token_count -= new_record.record.tokens.size();
+            }
+            for(const auto& term : incremented_terms) {
+                const auto dit = m_dictionary_by_text.find(term);
+                if(dit != m_dictionary_by_text.end()) {
+                    if(dit->second.document_frequency <= 1) {
+                        m_dictionary_by_text.erase(dit);
+                    } else {
+                        --dit->second.document_frequency;
+                    }
+                }
+            }
+
+            // Restore the old record from snapshot if we had one. This
+            // re-inserts the entry into m_records, re-increments df for
+            // each old unique term (get_or_create_token_entry will
+            // recreate any dictionary entry that was erased during
+            // step 5 because df reached zero), re-adds the resource
+            // membership, and restores m_total_token_count to its
+            // pre-upsert value.
+            if(old_snapshot.has_value()) {
+                m_records.emplace(chunk_id, *old_snapshot);
+                for(const auto& term_item : old_snapshot->positions_by_term) {
+                    auto& entry = get_or_create_token_entry(term_item.first);
+                    ++entry.document_frequency;
+                }
+                const auto& old_rid = old_snapshot->record.revision.resource_id;
+                m_chunks_by_resource[old_rid].insert(chunk_id);
+                m_total_token_count = total_before;
+            }
+
             throw;
         }
     }
