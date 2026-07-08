@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -75,8 +76,16 @@ namespace agent_memory {
         std::vector<std::string> terms;
         /// \brief Maximum number of chunks to return. Zero requests no chunks.
         std::size_t limit = 10;
+        /// \brief metadata_filters are combined with AND semantics: a chunk is
+        ///         considered matching only when its metadata satisfies ALL listed
+        ///         filters. An empty metadata_filters vector matches any chunk.
         std::vector<MetadataFilter> metadata_filters;
-        Bm25Options bm25;
+        /// \brief Optional BM25 parameter override. When empty, the index
+        ///         falls back to its own configured Bm25Options. Setting an
+        ///         explicit value (even one numerically equal to the library
+        ///         defaults) signals "use these specific values", distinct
+        ///         from "fall back to index options".
+        std::optional<Bm25Options> bm25;
 
         /// \brief Returns true when there are no normalized query terms.
         [[nodiscard]] bool empty() const noexcept;
@@ -96,6 +105,10 @@ namespace agent_memory {
 
     /// \brief Returns true when BM25 options are within the supported range.
     [[nodiscard]] bool is_valid(const Bm25Options& options) noexcept;
+
+    /// \brief Returns true when a posting is well-formed (non-default token id
+    ///         and term_frequency matches positions size).
+    [[nodiscard]] bool is_valid(const LexicalPosting& posting) noexcept;
 
     /// \brief Returns true when a tokenized document can be indexed.
     [[nodiscard]] bool is_valid(const LexicalDocumentRecord& record) noexcept;

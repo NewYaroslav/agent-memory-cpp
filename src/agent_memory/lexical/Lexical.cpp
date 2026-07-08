@@ -43,6 +43,11 @@ namespace agent_memory {
             && options.b <= 1.0F;
     }
 
+    bool is_valid(const LexicalPosting& posting) noexcept {
+        return !posting.token_id.empty()
+            && posting.term_frequency == posting.positions.size();
+    }
+
     bool is_valid(const LexicalDocumentRecord& record) noexcept {
         if(record.revision.resource_id.empty() || record.chunk_id.empty() || record.tokens.empty()) {
             return false;
@@ -58,7 +63,11 @@ namespace agent_memory {
     }
 
     bool is_valid(const LexicalSearchQuery& query) noexcept {
-        if(query.terms.empty() || !is_valid(query.bm25)) {
+        if(query.terms.empty()) {
+            return false;
+        }
+
+        if(query.bm25.has_value() && !is_valid(*query.bm25)) {
             return false;
         }
 

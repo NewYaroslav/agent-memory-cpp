@@ -31,6 +31,7 @@ add_library(agent_memory STATIC
     src/agent_memory/index/ExactVectorIndex.cpp
     src/agent_memory/index/IVectorIndex.cpp
     src/agent_memory/index/VectorIndex.cpp
+    src/agent_memory/lexical/ExactLexicalIndex.cpp
     src/agent_memory/lexical/ILexicalIndex.cpp
     src/agent_memory/lexical/ITokenDictionary.cpp
     src/agent_memory/lexical/ITokenizer.cpp

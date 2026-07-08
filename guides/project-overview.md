@@ -31,6 +31,7 @@ The repository is in the project-skeleton stage. The current code provides:
 - dependency-free token dictionary contract for token-id allocation and
   document-frequency stats;
 - dependency-free lexical index contract for tokenized chunk search;
+- exact in-memory BM25 lexical index baseline;
 - planned lexical/BM25 retrieval architecture;
 - opt-in MDBX dependency wiring for future storage backends;
 - optional MDBX-backed document storage adapter;
