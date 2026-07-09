@@ -103,9 +103,21 @@ double apply_post_filters(
 
 ### 2.4. Anti-loop Cooldown
 
-После retrieval unit получает SoftSuppressed state на `cooldown_ms`. В течение cooldown unit:
-- Исключается из default retrieval (если `AntiLoopCooldown` retriever включён).
-- Применяется `apply_post_filters`: если cooldown активен → `score *= cooldown_factor`; если own-speech (`SpeakerId == agent_self_id`) → `score *= self_echo_suppression`.
+Cooldown реализуется через `UsageStatsComponent`, не через `LifecycleState`. После успешного retrieval вызывается post-hook, который обновляет runtime-метрики без перехода FSM:
+
+```cpp
+// Post-retrieval hook (после успешного retrieval):
+usage.cooldown_until_ms = now_ms + policy.cooldown_ms;
+usage.use_count += 1;
+usage.last_used_at_ms = now_ms;
+// LifecycleState НЕ меняется.
+// envelope.revision НЕ инкрементится (runtime state, не content-bearing).
+```
+
+В течение cooldown (`usage.cooldown_until_ms > now_ms`):
+- `AntiLoopCooldown` filter пропускает unit'ы с активным cooldown.
+- `apply_post_filters` применяет `score *= policy.cooldown_factor` (default 0.1).
+- Self-echo suppression применяется через `apply_post_filters` если `SpeakerId == agent_self_id` → `score *= self_echo_suppression` (default 0.3).
 
 ### 2.5. Tier-specific decay (future)
 

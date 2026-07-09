@@ -32,7 +32,7 @@ Non-goals: BM25F scoring details, embedding model адаптеры, per-kind pay
 - **ADR-005**: Search text в envelope ограничен `primary_text` (256-1024 байт), остальное через `SearchProjection`s.
 - **ADR-007**: `embedding_meta` + `embedding_vectors` поддерживают multi-projection/multi-model (M2).
 - **ADR-008**: Decay/anti-loop меняет retrieval score, не удаляет записи. Defaults для `AgentLongTermMemory`: half_life=7d, use_boost=0.35, cooldown=60s, self_echo=0.3.
-- **ADR-011**: Lifecycle FSM — `Active` / `SoftSuppressed` / `Superseded` / `Deprecated` / `Erased`.
+- **ADR-011**: Lifecycle FSM — `Active` / `Superseded` / `Deprecated` / `Erased`. Anti-loop cooldown реализован через `UsageStatsComponent.cooldown_until_ms` (runtime state, не lifecycle).
 - **ADR-013**: Runtime services (PromptCache, CompactionWorker, WriteGate, AsyncIndexer) — ортогональный слой, не встроены в retrieval.
 
 ## 3. KnowledgeUnitEnvelope (lean contract)
@@ -46,7 +46,7 @@ struct KnowledgeUnitEnvelope {
     ScopeId scope_id;               // multi-tenancy namespace
     std::string primary_text;       // 256-1024 байт, retrieval seed
     std::string display_text;       // LLM-friendly formatted text
-    LifecycleState lifecycle_state; // Active / SoftSuppressed / Superseded / Deprecated / Erased
+    LifecycleState lifecycle_state; // Active / Superseded / Deprecated / Erased
     std::vector<SourceRefSummary> sources; // inline provenance summary, max 3 per unit, ≤256 байт каждое
     int64_t created_at_ms;
     int64_t updated_at_ms;
@@ -105,15 +105,18 @@ std::string generate_primary_text(KnowledgeUnitKind kind, const ComponentView& c
 - `display_text` changed (если retrieval-relevant)
 - `sources` changed
 - `payload` changed (QAPayload, FactPayload, и т.д.)
-- `lifecycle_state` changed
+- `lifecycle_state` changed (только durable transitions):
+  - `Active -> Superseded`, `Active -> Deprecated`, `Active -> Erased`
+  - `Superseded -> Deprecated`, `Superseded -> Erased`
 - `projections` regeneration
 
 `revision` НЕ инкрементится на:
 
-- `UsageStatsComponent` changes (use_count, cooldown, и т.д.)
+- `UsageStatsComponent` changes (`use_count`, `last_used_at_ms`, `cooldown_until_ms`, `soft_suppression_until_ms`) — runtime state, не content-bearing
 - `Decay` scoring metadata changes
 - `priority_weight` изменения (scoring metadata)
 - `EmbeddingMetaComponent` changes (производные данные; используется `unit_revision_at_compute` для stale-check)
+- Anti-loop cooldown state (`UsageStatsComponent.cooldown_until_ms`) — runtime, не content-bearing
 
 `DecayAwareRetriever` / `HybridRetriever` stale-filter:
 
@@ -132,9 +135,11 @@ struct UsageStatsComponent {
     int64_t last_used_at_ms;
     int64_t last_injected_at_ms;
     uint64_t injection_count;
-    int64_t cooldown_until_ms;        // anti-loop guard
-    int64_t soft_suppression_until_ms;
+    int64_t cooldown_until_ms;        // anti-loop guard (runtime state)
+    int64_t soft_suppression_until_ms; // runtime state
 };
+// UsageStatsComponent — runtime state. НЕ content-bearing, НЕ инкрементирует envelope.revision.
+// Lifecycle FSM transitions не затрагивают UsageStatsComponent.
 
 struct SpeakerComponent {
     std::string speaker_id;           // agent / user / cohost id

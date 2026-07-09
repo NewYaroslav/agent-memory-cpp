@@ -40,7 +40,7 @@ Non-goals документа:
 | ADR-008 | Decay/anti-loop | Меняет retrieval score, не удаляет записи; defaults для AgentLTM |
 | ADR-009 | Compaction strategy | Hybrid: on-write cheap ops + on-schedule heavy jobs |
 | ADR-010 | MDBX environment | Один env, много DBI. Multi-env — только при обоснованной потребности |
-| ADR-011 | Lifecycle FSM | Active / SoftSuppressed / Superseded / Deprecated / Erased |
+| ADR-011 | Lifecycle FSM | 4 durable states: Active / Superseded / Deprecated / Erased (SoftSuppressed — runtime state в UsageStatsComponent.cooldown_until_ms) |
 | ADR-012 | Multi-tenancy | Все secondary indexes — scope-aware |
 | ADR-013 | Runtime services | PromptPrefixCache + optional ResponseCache, CompactionWorker, WriteGate, AsyncIndexer — отдельный слой |
 | ADR-014 | CLI | Отдельный target `agent-memory-cli`, не core library |
@@ -766,7 +766,7 @@ schema_info
 - primary_text + display_text в envelope; sources — inline `vector<SourceRefSummary>` (max ~3 на unit, <=256 байт excerpt preview каждый).
 - KnowledgeUnitId монотонный, opaque (`uint64_t`). `KnowledgeUnitKey = (kind, ScopeId, ContentHash)` и content-key secondary index (`content_key_to_unit_id`) — для dedupe/supersedence готов с M0.
 - SearchProjection::Original создаётся с самого начала (минимальный: unit_id → primary_text). BM25F работает через projection model с M0 (не flat fallback).
-- Lifecycle FSM с состояниями Active / SoftSuppressed / Superseded / Deprecated / Erased.
+- Lifecycle FSM с состояниями Active / Superseded / Deprecated / Erased (4 durable states). SoftSuppressed/cooldown — runtime state в UsageStatsComponent, не durable lifecycle.
 - Минимальный QAPayload (только canonical_question + answer + optional category + last_verified_at_ms) для QAKnowledgeBaseStack с M0.
 - Расширенный QAPayload (question_variants, frequency ranking, bi-temporal) — M1.
 - ChunkPayload (minimal) для BasicRagStack с M0. Остальные per-kind payloads (FactPayload, ConversationEpisodePayload, CompiledArticlePayload) — M1.
@@ -780,7 +780,7 @@ Ship-it критерии:
 
 - BasicRag retrieve+write на 10k unit работает с p95 latency ≤ 50 ms.
 - Все unit-тесты на envelope serialization проходят.
-- Lifecycle FSM покрыт тестами для всех 5 состояний.
+- Lifecycle FSM покрыт тестами для всех 4 durable states.
 
 ### 13.2. M1 — Production
 
@@ -914,11 +914,11 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 - MDBX DBI: `knowledge_units`, `knowledge_units_by_kind`, `schema_info`.
 - Сериализация envelope через flat binary (msgpack или custom).
 - `MemoryStack::open()` для пустой spec (только envelope + lexical).
-- Lifecycle FSM с 5 состояниями.
+- Lifecycle FSM с 4 durable states (Active, Superseded, Deprecated, Erased). SoftSuppressed/cooldown — runtime state в UsageStatsComponent, не durable lifecycle.
 
 ### Шаг 1.5: Revision semantics + stale-filter
 
-- Определить revision++ правила (на content-bearing changes: primary_text, display_text, sources, payload, lifecycle, projections regeneration). НЕ инкрементить на UsageStats / Decay / priority_weight / EmbeddingMeta.
+- Определить revision++ правила (на content-bearing changes: primary_text, display_text (если retrieval-relevant), sources, payload, projections regeneration, lifecycle_state (только durable transitions)). НЕ инкрементить на UsageStats / Decay / priority_weight / EmbeddingMeta / soft suppression / cooldown. Explicit list durable lifecycle transitions, инкрементящих revision: Active→Superseded, Active→Deprecated, Active→Erased, Superseded→Erased, Superseded→Deprecated.
 - `LexicalPosting` хранит `unit_revision` (envelope.revision на момент постинга).
 - `EmbeddingMetaComponent` хранит `unit_revision_at_compute`.
 - Retrieval-time: skip posting if `posting.unit_revision < envelope.revision`; recompute/skip embedding if `embedding.unit_revision_at_compute < envelope.revision`.
@@ -1137,6 +1137,7 @@ double apply_filters(
 ## 18. Glossary
 
 - **Envelope** — минимальный lookup-critical набор полей KnowledgeUnit (id, kind, scope, primary_text, display_text, lifecycle, sources, timestamps, priority_weight).
+- **LifecycleState** — durable state of a KnowledgeUnit. Values: Active, Superseded, Deprecated, Erased. Changes increment envelope.revision. SoftSuppressed/cooldown НЕ является LifecycleState value — хранится в UsageStatsComponent.cooldown_until_ms.
 - **Component** — optional typed payload, прикреплённый к unit (operational или per-kind).
 - **SearchProjection** — отдельное текстовое представление unit для конкретного retrieval method.
 - **MemoryProfileSpec** — декларативная спецификация capabilities + policies.
@@ -1145,7 +1146,7 @@ double apply_filters(
 - **Profile** — см. MemoryProfileSpec.
 - **Stack** — см. MemoryStack.
 - **Maturity Level** — M0/M1/M2, определяет ship-it критерии и scope функциональности.
-- **Revision** — per-unit version, monotonically increasing per UnitId. Поле `KnowledgeUnitEnvelope.revision` (`uint64_t`). Инкрементится на content-bearing changes (primary_text, display_text, sources, payload, lifecycle, projections regeneration). НЕ инкрементится на UsageStats / Decay / priority_weight / EmbeddingMeta changes.
+- **Revision** — per-unit version, monotonically increasing per UnitId. Поле `KnowledgeUnitEnvelope.revision` (`uint64_t`). Инкрементится на content-bearing changes: primary_text, display_text (если retrieval-relevant), sources, payload, projections regeneration, lifecycle_state changed (только durable transitions: Active→Superseded, Active→Deprecated, Active→Erased, Superseded→Erased, Superseded→Deprecated). НЕ инкрементится на UsageStats / Decay / priority_weight / EmbeddingMeta / soft suppression / cooldown.
 - **Generation** — per-resource / per-derived-record version, НЕ часть `KnowledgeUnitEnvelope`. Живёт в `ResourceManifest.generation` и per-record metadata (`LexicalPosting.resource_generation`, `EmbeddingMetaComponent.unit_revision_at_compute`). Envelope-level versioning — это `revision`, не `generation`.
 - **Stale filter** — per-record check: `LexicalPosting.unit_revision < envelope.revision` → skip; `EmbeddingMetaComponent.unit_revision_at_compute < envelope.revision` → recompute или skip. M0: inline в retrieval pipeline; M2: `unit_revision_index` DBI для batch reindex (см. §17.11).
 - **Profile signature** — hash от MemoryProfileSpec, используется для drift detection.

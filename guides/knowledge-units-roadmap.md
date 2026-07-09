@@ -14,7 +14,7 @@
 - Per-kind правила генерации `primary_text` и `SearchProjection`.
 - `SourceRef` contract и migration mapping.
 - `KnowledgeUnitId` monotonic-uint64 scheme (opaque, никогда не reused; content-addressing через отдельный `KnowledgeUnitKey`).
-- Lifecycle FSM (включая `SoftSuppressed` state) и anti-loop подсвинок.
+- Lifecycle FSM (4 durable states: Active / Superseded / Deprecated / Erased) и anti-loop подсвинок через `UsageStatsComponent.cooldown_until_ms`.
 - Manifest integration через `DerivedRecordKind`.
 - Storage pattern: per-component DBI allocation и capability-aware DBI creation.
 - Migration plan от старого монолитного `KnowledgeUnit` к новой envelope + components модели.
@@ -538,52 +538,127 @@ DBI `compiled_article_payloads`. Включается через `enable_compile
 
 ## 6. Lifecycle FSM
 
-Lifecycle FSM определён в `memory-stacks-roadmap.md` ADR-011 и расширен здесь с детальной семантикой `SoftSuppressed`.
+Lifecycle FSM определён в `memory-stacks-roadmap.md` ADR-011 и расширен здесь детальной семантикой durable transitions и anti-loop подсвинка (через `UsageStatsComponent`).
 
 ### 6.1. States
 
+Lifecycle FSM имеет **4 durable states**. `SoftSuppressed` НЕ является LifecycleState — это runtime/usage state, хранится в `UsageStatsComponent.cooldown_until_ms` / `soft_suppression_until_ms`.
+
 ```cpp
 enum class LifecycleState : uint8_t {
-    Active = 0,           // active, retrieval-eligible
-    SoftSuppressed = 1,   // пониженный приоритет (anti-loop подсвинок; длительность — DecayPolicy::cooldown_ms)
-    Superseded = 2,       // заменён другим unit (bi-temporal chain)
-    Deprecated = 3,       // помечен на удаление (compaction candidate)
-    Erased = 4,           // физически удалён (или logical erase)
+    Active = 0,       // active, retrieval-eligible
+    Superseded = 1,   // заменён другим unit (bi-temporal chain)
+    Deprecated = 2,   // помечен на удаление (compaction candidate)
+    Erased = 3,       // физически удалён (или logical erase)
+    // SoftSuppressed УДАЛЁН — это runtime state в UsageStatsComponent, не durable lifecycle.
 };
 ```
 
 ### 6.2. Transitions
 
+Только **durable transitions**. Anti-loop / cooldown / soft_suppression — runtime state в `UsageStatsComponent`, не FSM transitions (см. §6.4).
+
 | From | To | Trigger | Action |
 |---|---|---|---|
 | (new) | Active | write | initial state |
-| Active | SoftSuppressed | retrieval retrieves this unit + DecayPolicy::self_echo_suppression | priority умножается на self_echo_suppression (default 0.3) на DecayPolicy::cooldown_ms |
-| SoftSuppressed | Active | DecayPolicy::cooldown_ms elapsed | priority восстанавливается |
 | Active | Superseded | supersede operation (newer unit supersedes older) | старый unit помечается Superseded, новый становится Active |
-| Superseded | Deprecated | compaction review | после N дней в Superseded |
 | Active | Deprecated | manual deprecation | авторский сигнал через WriteRequest |
+| Active | Erased | manual erase | физическое удаление или logical remove (single-shot, минует Deprecated) |
+| Superseded | Deprecated | compaction review | после N дней в Superseded |
+| Superseded | Erased | compaction cleanup | cleanup Superseded chains (без Deprecated stage) |
 | Deprecated | Erased | compaction job | физическое удаление или logical remove |
+
+Durable lifecycle transitions инкрементят `envelope.revision` (см. `memory-stacks-roadmap.md` §16 Step 1.5, §18 Glossary).
 
 ### 6.3. Retrieval semantics
 
-- **Active**: применяется full scoring (BM25F + decay + boost). Участвует в RRF fusion с полным весом.
-- **SoftSuppressed**: применяется full scoring, но с пониженным приоритетом в fusion (RRF multiplier или scoring weight умножается на `DecayPolicy::self_echo_suppression`). Длительность подавления определяется `DecayPolicy::cooldown_ms`.
+- **Active** + `usage.cooldown_until_ms <= now_ms` + не в `soft_suppression_until_ms`: применяется full scoring (BM25F + decay + boost). Участвует в RRF fusion с полным весом.
+- **Active** + `usage.cooldown_until_ms > now_ms`: filtered out или score умножается на `cooldown_factor` (через `AntiLoopCooldown` filter) — runtime adjustment, не FSM transition.
 - **Superseded**: filtered out by default, доступен только через явный filter (bi-temporal query).
 - **Deprecated**: filtered out, доступен только через audit dump.
 - **Erased**: не возвращается ни в одном retrieval; id не reuse'ится.
 
-### 6.4. Anti-loop подсвинок
+`SoftSuppressed` НЕ является retrieval-level state — это runtime attribute в `UsageStatsComponent`. Cooldown/soft_suppression проверяется через `UsageStatsComponent.cooldown_until_ms` / `soft_suppression_until_ms` в `DecayAwareRetriever` и `AntiLoopCooldown` filter.
 
-Поведение `SoftSuppressed` используется в `AgentLongTermMemory` stack для предотвращения "только что использованный факт снова в retrieval":
+### 6.4. Anti-loop подсвинок (runtime, не lifecycle)
 
-- Cooldown определяется **в `DecayPolicy::cooldown_ms`**, не в Lifecycle FSM (FSM описывает только состояния и переходы, длительность подавления — параметр policy).
-- После успешного retrieval unit переводится в `SoftSuppressed` через `DecayPolicy::self_echo_suppression` (применяется **после** retrieval как runtime adjustment, не как персистентный lifecycle transition обязательно).
-- `priority_weight` (или RRF contribution) умножается на `self_echo_suppression` (default 0.3) на время `cooldown_ms` (default 60s).
-- По истечении `cooldown_ms` unit автоматически возвращается в `Active`.
-- Используется в `DecayAwareRetriever` (см. `knowledge-base-roadmap.md` секция 7.4).
-- Усиливается фильтром `AntiLoopCooldown` для строгого respect cooldown (hard filter — полностью исключает unit из выдачи до истечения cooldown).
+Anti-loop реализуется через runtime state в `UsageStatsComponent`, НЕ через `LifecycleState`:
+
+```cpp
+struct UsageStatsComponent {
+    uint64_t use_count = 0;
+    uint64_t last_used_at_ms = 0;
+    uint64_t last_injected_at_ms = 0;
+    uint64_t injection_count = 0;
+
+    // Anti-loop runtime state (NOT content-bearing, no revision++)
+    uint64_t cooldown_until_ms = 0;
+    // Optional: длинная soft-suppression при высокой частоте использования. M2+ feature.
+    uint64_t soft_suppression_until_ms = 0;
+};
+```
+
+Ключевые инварианты:
+
+- `cooldown_until_ms` / `soft_suppression_until_ms` — runtime/usage state, **НЕ** `LifecycleState` value.
+- Изменения этих полей **НЕ инкрементят** `envelope.revision`. Постинги/эмбеддинги остаются валидными.
+- Anti-loop реализуется в `DecayAwareRetriever` + `AntiLoopCooldown` filter (см. `memory-stacks-roadmap.md` §16 Step 10).
+
+### 6.4.1. DecayAwareRetriever + AntiLoopCooldown filter
+
+```cpp
+// В DecayAwareRetriever:
+double apply_decay_and_boost(
+    double base_score,
+    const UsageStatsComponent& usage,
+    const DecayPolicy& policy,
+    uint64_t now_ms,
+    uint64_t last_used_at_ms) {
+    double elapsed = double(now_ms - last_used_at_ms);
+    double factor = std::exp(-elapsed / policy.half_life_ms);
+    return base_score * factor + policy.use_boost * std::log1p(double(usage.use_count));
+}
+
+// В AntiLoopCooldown filter (применяется ПОСЛЕ apply_decay_and_boost):
+double apply_filters(
+    double score,
+    const UsageStatsComponent& usage,
+    const SpeakerComponent* speaker,
+    SpeakerId agent_self_id,
+    uint64_t now_ms,
+    const DecayPolicy& policy) {
+    if (usage.cooldown_until_ms > now_ms) {
+        return score * policy.cooldown_factor;        // default 0.1
+    }
+    if (usage.soft_suppression_until_ms > now_ms) {
+        return score * policy.self_echo_suppression;  // default 0.3
+    }
+    if (speaker && speaker->speaker_id == agent_self_id) {
+        return score * policy.self_echo_suppression;  // default 0.3
+    }
+    return score;
+}
+```
+
+### 6.4.2. После успешного retrieval
+
+```cpp
+// В post-retrieval hook (НЕ FSM transition):
+usage.cooldown_until_ms = now_ms + policy.cooldown_ms;
+usage.use_count += 1;
+usage.last_used_at_ms = now_ms;
+// LifecycleState НЕ меняется.
+// envelope.revision НЕ инкрементится.
+// Постинги/эмбеддинги остаются валидными.
+```
 
 Подсвинок активируется при `SpeakerComponent.speaker_id == agent_self_id` (см. `memory-stacks-roadmap.md` ADR-008).
+
+### 6.4.3. Миграция с FSM SoftSuppressed
+
+- Раньше: `LifecycleState::SoftSuppressed` value, изменение FSM state → `revision++` → stale postings/embeddings → система не стабилизируется.
+- Теперь: `UsageStatsComponent.cooldown_until_ms` / `soft_suppression_until_ms` — runtime state, изменения не инкрементят revision. Postings/embeddings остаются валидными.
+- Миграция: при `open_existing()` все units с `lifecycle_state == SoftSuppressed` (legacy) → `lifecycle_state = Active` + `usage.cooldown_until_ms = max(now_ms, legacy_soft_suppression_until_ms)`. После миграции FSM имеет только 4 durable states.
 
 ## 7. Manifest Integration
 
@@ -758,8 +833,8 @@ Round-trip test обязателен: `basic_rag` → `agent_ltm` → `basic_rag
 | 5.5 | KnowledgeUnitKey DBI | `content_key_to_unit_id` DBI + `KnowledgeUnitKey`/`ContentHash` structs + monotonic `KnowledgeUnitId::allocate()` (см. секцию 4) |
 | 5.6 | SourceRefSummary inline + source_refs DBI (M1) | `SourceRefSummary` в envelope (≤3 на unit) + `source_refs` DBI для полных цитат (см. секцию 3) |
 | 6 | Payload components per kind | QAPayload, FactPayload, ChunkPayload, ConversationEpisodePayload, CompiledArticlePayload |
-| 9 | SoftSuppressed state в Lifecycle FSM | lifecycle extension с anti-loop подсвинком; cooldown через DecayPolicy::cooldown_ms (см. секцию 6) |
-| 9.1 | Anti-loop подсвинок | self_echo_suppression в DecayAwareRetriever + AntiLoopCooldown фильтр |
+| 9 | Lifecycle FSM (4 durable states) | Active / Superseded / Deprecated / Erased; lifecycle extension с anti-loop подсвинком через `UsageStatsComponent.cooldown_until_ms` (см. секцию 6) |
+| 9.1 | Anti-loop подсвинок | self_echo_suppression в DecayAwareRetriever + AntiLoopCooldown фильтр; cooldown/soft_suppression хранятся в UsageStatsComponent (НЕ LifecycleState, НЕ инкрементит revision) |
 | 12 | Round-trip тесты для default stacks | все payloads (write → close → reopen → verify) |
 
 Дополнительные шаги (M2+): EventPayload (если потребуется), Task/Decision payloads.
