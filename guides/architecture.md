@@ -8,13 +8,18 @@ should not leak into core APIs.
 
 ## Dependency Direction
 
-Dependencies should point inward:
+Dependencies should point inward (DDD layering):
 
 ```text
 infrastructure/adapters -> storage/index/embedding implementations
 retrieval/memory/context -> domain contracts and value objects
 domain/core -> standard library and stable internal primitives only
 ```
+
+The 4-layer model (Layer 4 applications to Layer 3 memory stacks to Layer 2
+retrieval primitives to Layer 1 storage primitives) refines this layering; see
+"Layer Architecture" below. Runtime services are orthogonal and may be
+invoked from any layer without violating the directionality of dependencies.
 
 Rules:
 
@@ -29,6 +34,9 @@ Rules:
   public retrieval contracts.
 - Context assembly consumes retrieval results and memory policies; it should not
   perform storage-specific queries directly.
+- Runtime services (PromptCache, CompactionWorker, WriteGate, AsyncIndexer)
+  depend only on Layer 1 + Layer 2 contracts; they never reach into a concrete
+  MemoryStack to read profile-specific state.
 
 ## Static Library Bias
 
@@ -46,6 +54,47 @@ types, templates, and trivial inline helpers.
 - Avoid one large facade that hides all behavior.
 - Avoid speculative plugin systems before at least two real implementations
   require the same extension point.
+
+## Layer Architecture
+
+The system is organized as four layers plus an orthogonal runtime-services
+layer. The description mirrors the canonical layer diagram in
+[`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) (section 11).
+
+```text
+Layer 4: Applications (examples/, apps/)
+  ChatBotApp, WikiMaintainerApp, StreamMemoryApp, ...
+
+Layer 3: Memory Stacks (memory/)
+  MemoryStack — runtime object with handles to storage/retrieval
+  MemoryProfileSpec — declarative specification
+
+Layer 2: Retrieval Primitives (retrieval/)
+  ILexicalIndex, IDenseIndex, IGraphIndex, ITemporalIndex,
+  HybridRetriever, RRF, ContextBuilder, IntentRouter,
+  RetrievalTrace, DecayAwareRetriever, AntiLoopCooldown
+
+Layer 1: Storage Primitives (storage/)
+  EnvelopeStore, ComponentStore, ProjectionStore,
+  MDBX tables, MultiTableWriter, ReverseIndexTable,
+  RangeIndexTable, TypeDiscriminatedTable, CompositeKey
+
+Cross-cutting Runtime Services (runtime/) — orthogonal
+  PromptCache, CompactionWorker, WriteGate, AsyncIndexer
+  Use Layer 1 + Layer 2 through interfaces
+```
+
+Invariants:
+
+- Layer 4 does not depend on Layer 1 (only through Layer 2 and Layer 3).
+- Layer 3 does not depend on Layer 4.
+- Layer 2 does not depend on Layer 3 (can be used directly).
+- Runtime services may be invoked from any layer, but they do not depend on a
+  specific `MemoryStack` instance.
+
+The layering reinforces the DDD dependency direction above: lower layers know
+nothing about upper layers, and the application boundary never reaches past
+Layer 2 for raw storage or index access.
 
 ## Planned Storage Direction
 
@@ -83,6 +132,78 @@ before physical compaction.
 
 Detailed tasks are tracked in `guides/resource-reindexing.md`.
 
+## Planned Knowledge Base Direction
+
+The knowledge base is the unified retrieval layer over heterogeneous
+knowledge units: text chunks, QAPairs, facts, events, entities,
+relations, sections, summaries, conversation episodes, and notes. It
+is not a RAG library and not an LLM framework. Contracts stay
+dependency-free, evaluation is a primary citizen, and adapters live
+outside core.
+
+The architecture has six parts:
+
+- A discriminated `KnowledgeUnit` value type that generalizes over
+  the existing `DocumentChunk`, `MemoryObject`, `chat::Message`, and
+  `facts::Fact` types. See
+  [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md) for
+  per-kind specifications and migration helpers.
+- A `SourceRef` first-class provenance value type lifted into the
+  domain layer. Every unit kind that needs citation, every
+  `RetrievalHit`, and every retrieval trace entry references
+  `SourceRef`.
+- A retriever graph built on `RetrievalPlan`, `IUnitRetriever`, and
+  `RetrievalHit` with `KnowledgeUnitId` as the unified key. `ChunkId`
+  is one of many unit kinds, not the only key.
+- Per-kind domain stores (`IKnowledgeUnitStore`, `IQAKnowledgeBase`,
+  `IFactStore`, `ITemporalIndex`, `IGraphStore`, `IEntityStore`,
+  `IRelationStore`) that share a primary-table-plus-secondary-index
+  pattern. The pattern is described in
+  [`guides/optimization-roadmap.md`](optimization-roadmap.md) under
+  "Secondary & Reverse Indexes" and in
+  [`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md)
+  under "Domain Stores".
+- A budgeted `IContextBuilder` with per-block budgets, mandatory final
+  context logging through `IRetrievalTrace`, and a deterministic
+  trim order.
+- An evaluation pipeline (`RetrievalTrace`, `RetrievalDataset`,
+  `RetrievalMetrics`) with a golden dataset of at least 50 cases
+  spanning at least three intents, and a hybrid lift target of
+  `Recall@10 >= 1.20 * Recall@10(BM25-only)`.
+
+Detailed contracts, MDBX layouts, per-kind field blocks, the QA
+knowledge base, the temporal index, the typed graph, the typed
+metadata, and the cross-encoder / HyDE / corrective RAG adapter
+slots are all tracked in
+[`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md).
+
+The knowledge base roadmap sits on top of the existing roadmaps and
+does not replace them:
+
+- Lexical retrieval contracts and the BM25 baseline remain in
+  [`guides/lexical-search-roadmap.md`](lexical-search-roadmap.md); the
+  knowledge base roadmap adds fielded BM25F storage on top.
+- Optimization contracts (compression, binary signature index, Eigen
+  rerank, secondary indexes) remain in
+  [`guides/optimization-roadmap.md`](optimization-roadmap.md); the
+  knowledge base roadmap references the secondary index pattern.
+- Resource ownership and targeted reindexing remain in
+  [`guides/resource-reindexing.md`](resource-reindexing.md); the
+  knowledge base roadmap extends the manifest with new
+  `DerivedRecordKind` variants for the new unit kinds.
+
+LLM contextualization, cross-encoder rerank, hybrid chunkers, ASR,
+VLM document parsing, hosted vector databases, Python bindings, and
+agent framework bridges stay in `adapters/` and `examples/`. They do
+not enter the core contract.
+
+The canonical, currently normative specification of the data model,
+profiles, stacks, capability matrix, validation rules, and MDBX
+layout lives in
+[`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md). See
+also the short cross-reference in "Knowledge Base Direction
+(cross-reference)" below.
+
 ## Planned Embedding Direction
 
 Embedding contracts live under `src/agent_memory/embedding/` and stay
@@ -105,6 +226,149 @@ owning retrieval ranking policy.
 `ExactVectorIndex` is allowed in the index layer because it is dependency-free
 and acts as the deterministic baseline for tests and small local workloads.
 
+## Maturity Levels (M0/M1/M2)
+
+Краткое описание уровней зрелости из
+[`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) секция 13. Каждый
+уровень определяет набор включённых возможностей и явные ship-it критерии;
+прогресс между ними additive.
+
+### M0 — MVP
+
+- Lean envelope (13 полей) + scope-aware keys + BM25F + lifecycle FSM
+  (Active / SoftSuppressed / Superseded / Deprecated / Erased).
+- Готовые стеки: `BasicRagStack`, `QAKnowledgeBaseStack`.
+- Один MDBX env, ~10-15 DBI. In-memory prompt cache (M0 opt).
+- Без Components, Payloads per kind, SearchProjections, Decay/Write Policy,
+  Compaction.
+
+Ship-it:
+
+- `BasicRag` retrieve+write на 10k units с p95 latency ≤ 50 ms.
+- Все unit-тесты на envelope serialization проходят.
+- Lifecycle FSM покрыт тестами для всех 5 состояний.
+
+### M1 — Production
+
+- Все components (UsageStats, Speaker, Temporal, EmbeddingMeta,
+  CompactionMeta) + все payload-компоненты (QA, Fact, ConversationEpisode,
+  CompiledArticle, Chunk).
+- SearchProjections DBI с 4 стандартными kinds: Original, QAQuestion,
+  QAAnswer, Summary.
+- BM25F по projections (projection_kind в posting keys).
+- DecayPolicy + WritePolicy + SpeakerScopePolicy.
+- 7 готовых MemoryStacks (BasicRag, QAKB, AgentLTM, SpeakerChat,
+  CompiledWiki, TemporalFact, FullResearch).
+- `CompactionWorker` (async): Decay, Dedupe, ArchiveCold + handoff.
+- `PromptCache` (LRU + AnthropicCacheControlAdapter).
+- Eval pipeline с golden dataset.
+
+Ship-it:
+
+- Все 7 MemoryStacks открываются и проходят round-trip write/read.
+- `AgentLongTermMemory` retrieve с decay: Recall@10(hybrid) ≥
+  1.20 × Recall@10(BM25-only) на golden dataset.
+- Cooldown-фильтр работает (fact не возвращается в течение `cooldown_ms`
+  после retrieval).
+- Compaction worker crash-safe (write-ahead job state).
+- Anti-loop подсвинок (`self_echo_suppression`) применяется в
+  `DecayAwareRetriever`.
+
+### M2 — Advanced
+
+- Полный набор projection kinds (DenseContextual, Bm25Fields, CodeSymbols).
+- Multi-vector embeddings (multi-model, multi-projection) с cross-model RRF.
+- Compaction jobs: Merge, SummaryPromotion, EmbeddingRecompute.
+- CLI tool `agent-memory-cli` (inspect / stats / check / vacuum / reindex /
+  profile-info / profile-migrate).
+- Distributed scope routing (multi-process / multi-host scope namespaces).
+- Compaction metrics и self-tuning.
+- Embedding recompute migration с progress tracking.
+
+Ship-it:
+
+- 50+ golden test cases покрывают все intent-классы (TemporalPointLookup,
+  SupersedenceChain, CooldownRespect, SpeakerFilter, CompactionHandoff).
+- p95 latency ≤ 2× baseline BM25 для всех профилей.
+- Migration script `basic_rag → agent_ltm` работает без потери данных.
+- CLI tool покрывает inspect / stats / check / vacuum / reindex /
+  profile-info / profile-migrate.
+
+## Cross-cutting Runtime Services
+
+Per
+[`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) ADR-013
+и секция 11. Ортогональны profile: одна и та же реализация сервиса
+обслуживает любой `MemoryStack` через интерфейсы Layer 1 и Layer 2.
+
+- **PromptCache** (LRU + AnthropicCacheControlAdapter) — кэширует
+  prompt-prefix → response. Экономия 60-90% токенов при стабильном system
+  prompt. Scope-aware ключ (cache key включает `scope_id`).
+- **CompactionWorker** (async) — выполняет `ICompactionJob`-ы:
+  Decay, Dedupe, ArchiveCold (M1); Merge, SummaryPromotion,
+  EmbeddingRecompute (M2). Хранит состояние jobs и handoff в
+  `compaction_jobs` / `compaction_handoffs` DBI.
+- **AsyncIndexer** (background) — батчит inserts в lexical / vector /
+  projection индексы. Default: 1000 units или 50 MB, whichever first.
+- **WriteGate** — применяет `WritePolicy` к входящим записям:
+  importance threshold, dedupe distance, supersede/merge/episode-compaction
+  разрешения, flush trigger.
+
+Доступны через интерфейсы (`IPromptCache`, `ICompactionWorker`,
+`IAsyncIndexer`, `IWriteGate`). Сервисы не зависят от конкретного
+`MemoryStack` и не имеют права лезть в profile-specific state напрямую —
+только через публичные контракты.
+
+## Knowledge Base Direction (cross-reference)
+
+См. [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) для
+центральной спецификации envelope, components, projections, capability
+matrix и validation rules.
+
+Состав knowledge base:
+
+- Envelope (13 полей lean): id, kind, scope_id, primary_text, display_text,
+  lifecycle_state, sources, timestamps, generation, priority_weight,
+  supersedes/superseded_by.
+- Components (operational + per-kind payloads): UsageStats, Speaker,
+  Temporal, EmbeddingMeta, CompactionMeta + QAPayload, FactPayload,
+  ConversationEpisodePayload, CompiledArticlePayload, ChunkPayload.
+- SearchProjections (multi-projection retrieval): Original,
+  DenseContextual, Bm25Body/Title/Heading/Symbols, QAQuestion, QAAnswer,
+  Summary, CodeSymbols.
+- 7 default MemoryStacks: `BasicRagStack`, `QAKnowledgeBaseStack`,
+  `AgentLongTermMemoryStack`, `SpeakerAwareChatStack`, `CompiledWikiStack`,
+  `TemporalFactStoreStack`, `FullResearchMemoryStack`.
+- Policies: DecayPolicy, WritePolicy, SpeakerScopePolicy, HybridRetrievalConfig.
+- Capability matrix (LexicalBm25F / DenseVectors / QAPairs / TemporalValidity /
+  UsageStats / Decay / SpeakerAttribution / Compaction / PromptCache /
+  GraphRelations / EmbeddingMigration / CompiledArticles / ConversationMemory).
+- Validation rules при `MemoryStack::open()` (Decay → UsageStats и т.д.).
+
+Per-kind payloads и lifecycle FSM: см.
+[`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md).
+Retrieval flow и evaluation: см.
+[`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md).
+
+## Profile Migration Strategy
+
+In-place minor upgrade (additive capability) vs major migration (новая БД).
+Подробности в
+[`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) секция 14.
+
+Краткая сводка:
+
+- **Minor (in-place)**: добавление одной capability к существующему
+  профилю. Новая DBI создаётся, существующие данные не трогаются,
+  `profile_signature` в `schema_info` обновляется.
+- **Major (новая БД)**: смена профиля с существенными изменениями
+  (например, `BasicRag` → `AgentLongTermMemory`). Требует export/import
+  через CLI: `agent-memory-cli profile-migrate`.
+- **Schema versioning**: `envelope_schema_version` и
+  `component_schema_versions[]` хранятся в `schema_info`. При
+  `open_existing()` проверяется версия и сравнивается `profile_signature`
+  для drift detection.
+
 ## Planned Lexical Search Direction
 
 Lexical search contracts should stay dependency free and use `ChunkId` as the
@@ -120,7 +384,15 @@ Canonical persisted source and chunk text is UTF-8. UTF-32/code point buffers
 are allowed only as temporary tokenizer internals or benchmarked derived
 artifacts.
 
-Detailed tasks are tracked in `guides/lexical-search-roadmap.md`.
+Detailed tasks are tracked in `guides/lexical-search-roadmap.md`. The
+fielded BM25F storage layout and the migration path from flat text to
+fielded text are tracked in
+[`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md) under
+"Fielded Lexical Storage (BM25F)" and in
+[`guides/lexical-search-roadmap.md`](lexical-search-roadmap.md) under
+the BM25F subsection. The lexical index returns
+`KnowledgeUnitId`-keyed hits, not only `ChunkId`-keyed hits, so it
+participates in the unified retrieval pipeline.
 
 ## Planned Retrieval Direction
 
@@ -151,3 +423,42 @@ Binary signature and bucket indexes are approximate candidate filters. They
 must be benchmarked against exact float search by recall@K, latency, candidate
 count, storage size, read amplification, and decompression time before being
 treated as production defaults.
+
+The knowledge base layers (lexical field postings, graph edges, temporal
+events, metadata filters) share a common primary-table-plus-secondary-index
+pattern. The pattern, the index catalog, the cross-table transaction
+semantics, and the schema versioning rules are tracked in
+[`guides/optimization-roadmap.md`](optimization-roadmap.md) under
+"Secondary & Reverse Indexes" and in
+[`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md) under
+"Domain Stores", "Graph Storage", "Temporal Index", and "Metadata
+Filters".
+
+## References
+
+- [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) —
+  центральный манифест: ADR'ы, Envelope/Components/Projections,
+  `MemoryProfileSpec`, `MemoryStack`, default profiles, capability matrix,
+  validation rules, MDBX layout, Maturity Levels (M0/M1/M2), Profile
+  Migration.
+- [`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md) —
+  retrieval flow, ContextBuilder, evaluation pipeline, cross-stack contracts.
+- [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md) —
+  per-kind payload-компоненты (QAPayload, FactPayload, ConversationEpisode,
+  CompiledArticle, Chunk), lifecycle FSM.
+- [`guides/lexical-search-roadmap.md`](lexical-search-roadmap.md) —
+  BM25F, postings, tokenization.
+- [`guides/optimization-roadmap.md`](optimization-roadmap.md) —
+  vector/binary storage, scope-aware secondary indexes, compression.
+- [`guides/mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) —
+  TypeDiscriminatedTable, MultiTableWriter, ReverseIndexTable.
+- [`guides/policies-roadmap.md`](policies-roadmap.md) (future) —
+  детальная спецификация DecayPolicy / WritePolicy / SpeakerScopePolicy
+  с диапазонами и defaults.
+- [`guides/compaction-roadmap.md`](compaction-roadmap.md) (future) —
+  `CompactionWorker`, job types, handoff structure.
+- [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md) (future) —
+  PromptCache, AsyncIndexer, WriteGate.
+- [`guides/cli-roadmap.md`](cli-roadmap.md) (future) —
+  `agent-memory-cli` target (inspect / stats / check / vacuum / reindex /
+  profile-info / profile-migrate).
