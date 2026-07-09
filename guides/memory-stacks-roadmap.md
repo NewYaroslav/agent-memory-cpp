@@ -212,6 +212,25 @@ struct ContextBudget {
     size_t summary_tokens = 512;
     size_t evidence_tokens = 256;
 };
+
+enum class DenseIndexMode : uint8_t {
+    Exact = 0,                      // brute-force float, ground truth
+    BinaryCandidateFilter = 1,      // binary filter + float rerank (default production)
+    BinaryOnly = 2,                 // binary only, Hamming ranking (experimental/compact)
+    ApproximateVector = 3,          // binary + decoder -> approx vector -> rerank (experimental)
+};
+
+struct DenseIndexConfig {
+    DenseIndexMode mode = DenseIndexMode::Exact;
+
+    // Binary modes (mode != Exact):
+    uint32_t bit_count = 128;
+    std::string encoder_id = "random_hyperplane_lsh_v1";
+
+    // ApproximateVector mode only:
+    bool store_decoder = true;
+    bool store_float_fallback = false;
+};
 ```
 
 ### 6.3. Полная спецификация
@@ -243,6 +262,7 @@ struct MemoryProfileSpec {
     std::optional<HybridRetrievalConfig> hybrid_config;
     std::optional<ContextBudget> context_budget;
     std::optional<RetrievalMode> default_retrieval_mode;
+    std::optional<DenseIndexConfig> dense_index_config;
 
     uint32_t envelope_schema_version = 1;
     uint32_t component_schema_versions[kNumComponentKinds] = {};
@@ -349,6 +369,8 @@ struct RetrievalPlan {
     std::optional<ContextBudget> context_budget;
 
     std::optional<DecayPolicy> decay_policy_override;
+    std::optional<DenseIndexMode> dense_index_mode_override;
+    // Если задан — retrieval использует указанный mode вместо профильного default.
 };
 
 struct RetrievalResult {
@@ -388,6 +410,7 @@ inline MemoryProfileSpec BasicRag() {
         /*rrf_k_constant=*/60.0,
         /*retriever_weights=*/std::vector<double>{1.0, 1.0},
         /*candidate_pool_size=*/200);
+    // dense_index_config: not set (default DenseIndexMode::Exact).
     return s;
 }
 ```
@@ -411,6 +434,8 @@ inline MemoryProfileSpec QAKnowledgeBase() {
         /*graph_tokens=*/0,
         /*summary_tokens=*/0,
         /*evidence_tokens=*/256);
+    s.dense_index_config = DenseIndexConfig(
+        DenseIndexMode::Exact);
     return s;
 }
 ```
@@ -461,6 +486,10 @@ inline MemoryProfileSpec AgentLongTermMemory() {
         /*retriever_weights=*/std::vector<double>{1.0, 1.0, 1.5, 0.5, 1.0},
         /*candidate_pool_size=*/200);
     s.default_retrieval_mode = RetrievalMode::Hybrid;
+    s.dense_index_config = DenseIndexConfig(
+        DenseIndexMode::BinaryCandidateFilter,
+        /*bit_count=*/128,
+        /*encoder_id=*/"autoencoder_binarizer_v1");
     return s;
 }
 ```
@@ -499,6 +528,7 @@ inline MemoryProfileSpec SpeakerAwareChat() {
         /*allow_supersede=*/true,
         /*allow_merge=*/true,
         /*allow_episode_compaction=*/true);
+    // dense_index_config: not set (default DenseIndexMode::Exact) — keyword-heavy профиль.
     return s;
 }
 ```
@@ -522,6 +552,10 @@ inline MemoryProfileSpec CompiledWiki() {
         /*graph_tokens=*/0,
         /*summary_tokens=*/2000,
         /*evidence_tokens=*/512);
+    s.dense_index_config = DenseIndexConfig(
+        DenseIndexMode::BinaryCandidateFilter,
+        /*bit_count=*/256,
+        /*encoder_id=*/"autoencoder_binarizer_v1");
     return s;
 }
 ```
@@ -544,6 +578,7 @@ inline MemoryProfileSpec TemporalFactStore() {
         /*graph_tokens=*/800,
         /*summary_tokens=*/0,
         /*evidence_tokens=*/256);
+    // dense_index_config: not set (default DenseIndexMode::Exact) — smaller corpus, recency-based.
     return s;
 }
 ```
@@ -558,6 +593,10 @@ inline MemoryProfileSpec FullResearchMemory() {
     s.enable_qa_payload = true;
     s.enable_conversation_episode = true;
     s.enable_compiled_article = true;
+    s.dense_index_config = DenseIndexConfig(
+        DenseIndexMode::BinaryCandidateFilter,
+        /*bit_count=*/128,
+        /*encoder_id=*/"autoencoder_binarizer_v1");
     return s;
 }
 ```
@@ -754,6 +793,29 @@ schema_info
 
 Целевой максимум — 64 DBI на один MemoryStack (расширение `max_dbs` 16→64 в `mdbx-containers`). При M1-профилях типичный usage — 18-22 DBI. При FullResearch — до 30 DBI. Headroom есть.
 
+### 12.7. Mode-aware DBI creation (DenseIndexConfig → DBI set)
+
+Выбор `DenseIndexConfig.mode` напрямую определяет набор обязательных DB dense-индексов. Capability-aware логика в `MemoryStack::open(spec)`:
+
+```
+Exact mode (DenseIndexConfig.mode == Exact):
+  embedding_vectors DBI — обязательна.
+
+BinaryCandidateFilter (BinaryCandidateFilter):
+  embedding_vectors DBI + binary_bucket_index DBI.
+
+BinaryOnly (BinaryOnly):
+  только binary_bucket_index DBI (embedding_vectors НЕ открывается).
+
+ApproximateVector Safe (ApproximateVector + store_float_fallback == true):
+  embedding_vectors + binary_bucket_index + decoder (в registry, не DBI).
+
+ApproximateVector Compact (ApproximateVector + store_float_fallback == false):
+  binary_bucket_index + decoder (embedding_vectors НЕ открывается).
+```
+
+Таким образом выбор `mode` сужает или расширяет dense-набор DBI. `MemoryStack::open()` валидирует согласованность между `enable_dense_vectors` capability и `dense_index_config.mode` (например, `mode == BinaryOnly` с `enable_dense_vectors == false` допустим, но log-warn: float index будет lazy-built при первом Exact-mode retrieval).
+
 ## 13. Maturity Levels
 
 ### 13.1. M0 — MVP
@@ -947,6 +1009,20 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 - Binary signature index (optimization-roadmap).
 - BasicRagStack расширен.
 
+### Шаг 4.5: Multi-mode IDenseIndex backends
+
+- `DenseIndexConfig` (см. §6.2) и `DenseIndexMode` enum как часть MemoryProfileSpec.
+- `IDenseIndex` расширен на 4 backend-а:
+  - `ExactVectorIndex` (baseline, brute-force float).
+  - `BinaryCandidateFilterIndex` (default production: binary filter + float rerank).
+  - `BinaryOnlyIndex` (experimental, compact, Hamming ranking).
+  - `ApproximateVectorIndex` (experimental, decoder support для binary → approx vector rerank).
+- Mode-specific DBI creation в `MemoryStack::open(spec, mode)` с capability-aware логикой (см. §12.7).
+- `RetrievalPlan.dense_index_mode_override` для runtime override (см. §7.3).
+- Storage tradeoffs и capacity estimates документированы (см. §17.12).
+- Quality benchmarks per mode на golden dataset (Recall@10, p95 latency).
+- Per-stack default в `MemoryProfiles::*` фабриках (см. §8).
+
 ### Шаг 5: Component infrastructure
 
 - `TypeDiscriminatedTable` в mdbx-containers (если ещё не реализован).
@@ -1134,12 +1210,45 @@ double apply_filters(
 - Реализация M2 (при >1M units): `unit_revision_index` DBI для batch reindex.
 - `generation_index` (старая схема) УДАЛЁН; заменён на per-posting `unit_revision` + retrieval-time check (см. §18 Glossary).
 
+### 17.12. Mode-aware storage estimates
+
+Storage footprint существенно зависит от `DenseIndexConfig.mode` (см. §6.2, §12.7). Для corpus в 1M units с 768-мерными float32 embeddings:
+
+```
+Baseline (без dense index):
+  N/A — pure lexical/keyword профиль.
+
+Exact mode (DenseIndexMode::Exact):
+  embedding_vectors: 1M × 768 × 4 bytes ≈ 3 GB.
+
+BinaryCandidateFilter (default production):
+  embedding_vectors: ~3 GB.
+  binary_bucket_index (128-bit): 1M × 16 bytes ≈ 16 MB.
+
+BinaryOnly (compact):
+  binary_bucket_index (128-bit): ~16 MB.
+  embedding_vectors: НЕ открывается.
+
+ApproximateVector Safe (store_float_fallback == true):
+  embedding_vectors: ~3 GB.
+  binary_bucket_index: ~16 MB.
+  decoder (~128-bit): ~400 KB (shared, in registry).
+
+ApproximateVector Compact (store_float_fallback == false):
+  embedding_vectors: НЕ открывается.
+  binary_bucket_index: ~16 MB.
+  decoder: ~400 KB.
+```
+
+Per-mode подробные таблицы см. в `optimization-roadmap.md` секция "Dense Index Modes". При планировании capacity mode selection — primary driver.
+
 ## 18. Glossary
 
 - **Envelope** — минимальный lookup-critical набор полей KnowledgeUnit (id, kind, scope, primary_text, display_text, lifecycle, sources, timestamps, priority_weight).
 - **LifecycleState** — durable state of a KnowledgeUnit. Values: Active, Superseded, Deprecated, Erased. Changes increment envelope.revision. SoftSuppressed/cooldown НЕ является LifecycleState value — хранится в UsageStatsComponent.cooldown_until_ms.
 - **Component** — optional typed payload, прикреплённый к unit (operational или per-kind).
 - **SearchProjection** — отдельное текстовое представление unit для конкретного retrieval method.
+- **DenseIndexMode** — backend selection для dense vector retrieval (см. §6.2). Values: `Exact` (brute-force float, ground truth), `BinaryCandidateFilter` (binary filter + float rerank, default production), `BinaryOnly` (binary only, Hamming ranking, experimental/compact), `ApproximateVector` (binary + decoder → approx vector → rerank, experimental). Default per stack и mode-aware DBI mapping — см. §8 и §12.7.
 - **MemoryProfileSpec** — декларативная спецификация capabilities + policies.
 - **MemoryStack** — runtime-объект, открытый через `MemoryStack::open(path, spec)`.
 - **ScopeId** — namespace identifier для multi-tenancy.

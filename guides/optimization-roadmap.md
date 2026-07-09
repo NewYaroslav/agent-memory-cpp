@@ -673,19 +673,24 @@ BinarySignatureEncoderFile (.bse):
 Loaded через `MemoryStack::open(...)` — registry читает `.bse` файлы из
 stack config dir.
 
-Per-stack default encoder (см. §11 Memory Stacks Integration, рекомендация):
+Per-stack default encoder (см. §11 Memory Stacks Integration, рекомендация;
+расширен до per-stack default mode + encoder — полная таблица и quality
+targets живут в §"Dense Index Modes (Backend Selection)" ниже):
 
 ```text
-BasicRag:          random_hyperplane_lsh_64bit
-QAKnowledgeBase:   random_hyperplane_lsh_64bit
-AgentLTM:          autoencoder_binarizer_128bit (если обучен,
-                   иначе random_hyperplane_128bit)
-SpeakerAwareChat:  random_hyperplane_lsh_64bit (chat keyword-heavy,
-                   не semantic-heavy)
-CompiledWiki:      autoencoder_binarizer_256bit (quality-oriented)
-TemporalFactStore: random_hyperplane_lsh_64bit
-FullResearch:      autoencoder_binarizer_128bit
+BasicRag:          Exact (encoder n/a)
+QAKnowledgeBase:   Exact или BinaryCandidateFilter (random_hyperplane_lsh_128bit)
+AgentLTM:          BinaryCandidateFilter (autoencoder_binarizer_128bit,
+                   ежели обучен; иначе random_hyperplane_lsh_128bit)
+SpeakerAwareChat:  Exact (encoder n/a; chat keyword-heavy, не semantic-heavy)
+CompiledWiki:      BinaryCandidateFilter (autoencoder_binarizer_256bit,
+                   quality-oriented)
+TemporalFactStore: Exact (encoder n/a)
+FullResearch:      BinaryCandidateFilter (autoencoder_binarizer_128bit)
 ```
+
+Encoder ID в скобках — это `DenseIndexConfig::encoder_id`; mode —
+`DenseIndexConfig::mode`. Для mode = Exact binary encoder не активен.
 
 Per (unit, encoder) signatures (для migration):
 
@@ -702,6 +707,174 @@ Multi-encoder migration flow:
 3. Phase 3: bg-reindex (background job переписывает signatures под новый
    encoder).
 4. Phase 4: compaction-delete-old (compaction удаляет старые signatures).
+
+## Dense Index Modes (Backend Selection)
+
+`IDenseIndex` interface расширен с одной реализации до 4 backend стратегий,
+выбираемых через `DenseIndexMode`:
+
+```cpp
+enum class DenseIndexMode : uint8_t {
+    Exact = 0,                      // brute-force float cosine, ground truth
+    BinaryCandidateFilter = 1,      // binary filter + float rerank (default production)
+    BinaryOnly = 2,                 // binary only, Hamming ranking (experimental/compact)
+    ApproximateVector = 3,          // binary + decoder → approx vector → rerank (experimental)
+};
+
+class IDenseIndex {
+public:
+    virtual ~IDenseIndex() = default;
+    virtual std::vector<VectorHit> search(
+        const Embedding& query,
+        const DenseSearchOptions& options) = 0;
+    virtual DenseIndexMode mode() const = 0;
+};
+
+// 1. Brute-force float baseline. Ground truth для всех quality benchmarks.
+class ExactVectorIndex final : public IDenseIndex {
+    // Linear scan, batch cosine по (scope_id, projection_kind, model_id).
+};
+
+// 2. Binary filter + float rerank. Default production.
+class BinaryCandidateFilterIndex final : public IDenseIndex {
+    // Hamming bucket lookup → candidate set → float cosine rerank.
+};
+
+// 3. Binary only, Hamming ranking. Experimental/compact storage.
+class BinaryOnlyIndex final : public IDenseIndex {
+    // Hamming bucket lookup → Hamming rank (no rerank).
+};
+
+// 4. Binary + decoder → approx vector → rerank. Experimental.
+class ApproximateVectorIndex final : public IDenseIndex {
+    // Hamming bucket lookup → decoder → approx vector → cosine rerank.
+    // Два варианта: Safe (binary + float + decoder) vs Compact (binary + decoder only).
+};
+```
+
+Mode + encoder + bit count spec хранятся в `DenseIndexConfig` внутри
+`MemoryProfileSpec`:
+
+```cpp
+struct DenseIndexConfig {
+    DenseIndexMode mode = DenseIndexMode::Exact;
+    // Binary modes (mode != Exact):
+    uint32_t bit_count = 128;                       // 64 / 128 / 256
+    std::string encoder_id = "random_hyperplane_lsh_v1";
+    // ApproximateVector mode only:
+    bool store_decoder = true;                      // хранить decoder matrix
+    bool store_float_fallback = false;              // дополнительно хранить float для safe-rerank
+};
+```
+
+Cross-link: encoder_id в DenseIndexConfig резолвится через
+`BinarySignatureEncoderRegistry` (см. §"Encoder Registry и Versioning" выше).
+Encoder ID taxonomy (parallel enum) живёт в §"Future Encodings" выше:
+`RandomHyperplaneLSH = 0`, `AutoencoderBinarizer = 1`,
+`HaarLikeExperimental = 2`.
+
+### Storage Estimates Per Mode (1M units × 768-dim)
+
+```text
+| Mode                          | Storage                  | Notes                                    |
+|-------------------------------|--------------------------|------------------------------------------|
+| Exact                         | ~3 GB                    | float32 baseline, ground truth           |
+| BinaryCandidateFilter         | ~3.02 GB                 | float + binary для rerank                |
+| BinaryOnly                    | ~16 MB                   | binary only, ~190x compression vs float |
+| ApproximateVector (Safe)      | ~3.02 GB + 400 KB decoder| float + binary + decoder                 |
+| ApproximateVector (Compact)   | ~16 MB + 400 KB decoder  | binary + decoder only, no float          |
+```
+
+Decoder matrix shared across stack (one per encoder registry): ~400 KB
+для 128-bit × 768-dim. См. `.bse` file format в §"Encoder Registry и
+Versioning" выше.
+
+### Quality Targets Per Mode (Recall@10 vs Exact baseline)
+
+Значения нормированы против `Recall@10(ExactVectorIndex) = 1.00`:
+
+```text
+ExactVectorIndex:                            = 1.00 (baseline).
+
+BinaryCandidateFilter + RH-64:               >= 0.85 of Exact.
+BinaryCandidateFilter + RH-128:              >= 0.90 of Exact.
+BinaryCandidateFilter + AE-64:               >= 0.90 of Exact.
+BinaryCandidateFilter + AE-128:              >= 0.95 of Exact.  // production target
+BinaryCandidateFilter + AE-256:              >= 0.97 of Exact.
+
+BinaryOnly + RH-128:                         >= 0.80 of Exact.  // experimental
+BinaryOnly + AE-128:                         >= 0.85 of Exact.  // experimental
+BinaryOnly + AE-256:                         >= 0.90 of Exact.  // experimental, quality
+
+ApproximateVector + AE-128 (Compact):        >= 0.90 of Exact.
+ApproximateVector + AE-128 (Safe):           >= 0.95 of Exact.
+ApproximateVector + AE-256 (Compact):        >= 0.93 of Exact.
+ApproximateVector + AE-256 (Safe):           >= 0.97 of Exact.
+```
+
+Эти targets — самостоятельные per-mode targets, не заменяют existing
+Per-Bit-Size targets в §"Per-Bit-Size Recall Targets" (которые нормированы
+на `Recall@10(binary_only)`). Cross-link обязателен.
+
+### Per-Stack Default Mode + Encoder
+
+Полная таблица (mode + encoder); legacy encoder-only таблица в §"Encoder
+Registry и Versioning" остаётся для обратной совместимости:
+
+```text
+BasicRag:           Exact (encoder n/a)
+QAKnowledgeBase:    Exact или BinaryCandidateFilter (RH-128)
+AgentLTM:           BinaryCandidateFilter (AE-128)   // production default
+SpeakerAwareChat:   Exact (n/a)                       // keyword-heavy
+CompiledWiki:       BinaryCandidateFilter (AE-256)    // quality
+TemporalFactStore:  Exact (n/a)
+FullResearch:       BinaryCandidateFilter (AE-128)
+```
+
+Решение принимается на основании: corpus size, recall target, hardware
+budget, latency budget. См. §"Quality Targets Per Mode" выше для production
+target values.
+
+### Multi-Mode Migration
+
+Mode change = major migration (новая БД + transfer), не silent in-place
+rewrite:
+
+```text
+Old: ExactVectorIndex
+New: BinaryCandidateFilter
+Migration:
+  1. Сканировать все unit'ы в scope.
+  2. Для каждого: compute binary signature через указанный encoder.
+  3. Write to binary_bucket_index.
+  4. Float embeddings НЕ удаляются (используются для rerank).
+  5. Validate Recall@10 через golden dataset против mode target.
+
+Old: BinaryCandidateFilter
+New: BinaryOnly
+Migration:
+  1. Drop float embeddings (storage savings: ~3 GB → ~16 MB на 1M units).
+  2. Keep binary + bucket.
+  3. Quality risk accepted by user (mode = experimental).
+  4. Validate Recall@10 через golden dataset против mode target.
+```
+
+Migration тесты обязательны: golden dataset assertion, Recall@10 against
+mode-specific target, storage delta validation.
+
+### RetrievalPlan Integration
+
+```cpp
+struct RetrievalPlan {
+    // ... existing fields ...
+    std::optional<DenseIndexMode> dense_index_mode_override;
+};
+// Если задан, retrieval использует указанный mode вместо профильного default.
+// None / nullopt = использовать per-stack default mode.
+```
+
+Override полезен для A/B evaluation, миграций, debug queries, per-query
+fallback paths.
 
 ## Secondary & Reverse Indexes
 
@@ -990,6 +1163,43 @@ random_hyperplane_lsh_128bit (baseline):
 - index size (binary codes только vs binary + float)
 ```
 
+### Per-Mode Recall Targets
+
+Targets для `IDenseIndex` mode x encoder x bit_size (Recall@10 против
+`Recall@10(ExactVectorIndex)` baseline = 1.00). Полная таблица и
+mode-specific storage estimates живут в §"Dense Index Modes (Backend
+Selection)" выше; здесь — benchmark matrix scope.
+
+```text
+ExactVectorIndex:                                1.00 (baseline).
+
+BinaryCandidateFilter:
+  RH-64:                                         >= 0.85
+  RH-128:                                        >= 0.90
+  AE-64:                                         >= 0.90
+  AE-128:                                        >= 0.95   // production target
+  AE-256:                                        >= 0.97
+
+BinaryOnly (experimental):
+  RH-128:                                        >= 0.80
+  AE-128:                                        >= 0.85
+  AE-256:                                        >= 0.90
+
+ApproximateVector:
+  AE-128 Compact:                                >= 0.90
+  AE-128 Safe:                                   >= 0.95
+  AE-256 Compact:                                >= 0.93
+  AE-256 Safe:                                   >= 0.97
+```
+
+Bench harness расширен matrix ниже дополнительной осью `dense_index_mode`
+с 4 значениями (Exact / BinaryCandidateFilter / BinaryOnly /
+ApproximateVector). Recall@10 assertion проверяется per
+`(mode, encoder, bit_size)` tuple. Все experimental modes (BinaryOnly,
+ApproximateVector) тегнуты отдельно от production matrix и не блокируют
+ship-it criteria для BinaryCandidateFilter — см. `memory-stacks-roadmap.md`
+Section 13.
+
 ### Matrix
 
 Benchmark:
@@ -1153,6 +1363,45 @@ add projection-aware benchmarks.
       Targets".
     - Stack config dir loading через `MemoryStack::open(...)`.
 
+### Steps 23-25: Multi-Mode IDenseIndex (M2 → M3)
+
+Шаги 23-25 вводят `IDenseIndex` с 4 backend стратегиями
+(см. §"Dense Index Modes (Backend Selection)" выше для интерфейсов,
+storage estimates, quality targets и per-stack defaults).
+
+23. **Step 23: BinaryCandidateFilter mode (default production).**
+    - `IDenseIndex` interface + `DenseIndexMode` enum + `DenseIndexConfig` в
+      `MemoryProfileSpec`.
+    - `ExactVectorIndex` (brute-force float cosine) реализация + benchmarks
+      против in-memory baseline.
+    - `BinaryCandidateFilterIndex` (Hamming bucket → candidate set → float
+      rerank) реализация, переиспользует `binary_bucket_index` из Step 12.
+    - Integration с `BinarySignatureEncoderRegistry` (Step 22) — encoder_id
+      резолвится через registry.
+    - Evaluation harness: Recall@10 per bit size (64/128/256) per encoder
+      (RH/AE), targets из §"Quality Targets Per Mode".
+    - Per-stack default mode selection для AgentLTM, CompiledWiki, FullResearch.
+
+24. **Step 24: ApproximateVector mode (experimental).**
+    - `ApproximateVectorIndex` с двумя вариантами: Safe (binary + float +
+      decoder) и Compact (binary + decoder only).
+    - `IBinarySignatureEncoder::decode()` extension — optional decoder
+      matrix в `.bse` file format (см. §"Encoder Registry и Versioning").
+    - Storage toggle через `DenseIndexConfig::store_decoder` +
+      `store_float_fallback`.
+    - Evaluation harness: Compact vs Safe per bit size, quality gap
+      documented vs production BinaryCandidateFilter targets.
+
+25. **Step 25: BinaryOnly mode (experimental, compact).**
+    - `BinaryOnlyIndex` (Hamming bucket → Hamming rank, no rerank).
+    - Float embeddings могут быть dropped после confirmation; storage
+      savings ~190x на 1M units.
+    - Migration tooling: Exact/BinaryCandidateFilter → BinaryOnly drop-flow
+      (см. §"Multi-Mode Migration").
+    - Quality risk accepted by user (mode = experimental). Recall@10 targets
+      из §"Quality Targets Per Mode" — experimental thresholds, не
+      production.
+
 ## Non-Goals For The First Optimization Pass
 
 - Do not replace `std::vector<float>` in `Embedding`.
@@ -1192,3 +1441,12 @@ add projection-aware benchmarks.
 - arXiv 1803.09065: "Near-lossless Binarization of Word Embeddings".
   <https://arxiv.org/abs/1803.09065>
 - ai-agent-playbook: related materials on embedding binarization patterns.
+- §"Future Encodings" (this document) — `BinarySignatureEncoderId` enum
+  taxonomy (`RandomHyperplaneLSH`, `AutoencoderBinarizer`,
+  `HaarLikeExperimental`) — ID source-of-truth для `DenseIndexConfig::encoder_id`
+  и `BinarySignatureEncoderRegistry`.
+- §"Dense Index Modes (Backend Selection)" (this document) — 4-mode
+  `IDenseIndex` interface (Exact / BinaryCandidateFilter / BinaryOnly /
+  ApproximateVector), `DenseIndexConfig` shape, storage estimates, quality
+  targets, per-stack defaults, multi-mode migration flow и
+  `RetrievalPlan::dense_index_mode_override`.
