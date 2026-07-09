@@ -2,9 +2,11 @@
 
 Спецификация cross-cutting runtime сервисов (PromptCache, AsyncIndexer, WriteGate) для подсистемы памяти `agent-memory-cpp`. Документ конкретизирует ADR-013 (Runtime services) из `guides/memory-stacks-roadmap.md` секции 11.
 
+> **C++17 compliance:** кодовые сниппеты используют `const std::vector<T>&` вместо `std::span<T>` и явные конструкторы вместо designated initializers. PromptCache split на `IPromptPrefixCache` (provider-side, всегда) и `IResponseCache` (local response, opt-in default OFF для безопасности).
+
 ## 1. Purpose
 
-- Что описывает: PromptCache (LRU по prompt prefix + AnthropicCacheControl adapter), AsyncIndexer (batch вставки в lexical/vector индексы), WriteGate (применяет WritePolicy). Все сервисы ортогональны profile (доступны через интерфейсы, не зависят от конкретного MemoryStack).
+- Что описывает: PromptCache split (`IPromptPrefixCache` provider-side + `IResponseCache` local opt-in), AnthropicCacheControlAdapter, AsyncIndexer (batch вставки в lexical/vector индексы), WriteGate (применяет WritePolicy). Все сервисы ортогональны profile (доступны через интерфейсы, не зависят от конкретного MemoryStack).
 - Cross-references: memory-stacks-roadmap.md (ADR-013, секции 7, 12.4), knowledge-base-roadmap.md (RetrievalTrace), policies-roadmap.md (WritePolicy), compaction-roadmap.md (job submission).
 
 ## 2. Layer Architecture Review
@@ -24,150 +26,201 @@ Cross-cutting Runtime Services (orthogonal):
 
 Runtime-сервисы доступны из любого layer, но сами не зависят от конкретного MemoryStack. Каждый сервис — singleton per MemoryStack (если включён в spec).
 
-## 3. PromptCache
+## 3. PromptCache (Split: Provider-Side Prefix + Local Response)
 
-### 3.1. Purpose
+### 3.1. Purpose and Split Rationale
 
-Кэширование LLM responses по prompt prefix. Экономит 60-90% токенов для long-running сессий через `cache_control: ephemeral` (Anthropic API) или аналог.
+Кэширование в LLM-приложениях объединяет два РАЗНЫХ механизма с разными consistency guarantees:
 
-Per `concepts/llm-research/Управление контекстом LLM-агента - стратегии снижения стоимости.md` (ai-agent-playbook): cache hit rate > 70% — основная цель.
+1. **Provider-side prompt prefix cache** — `cache_control: ephemeral` (Anthropic), `prompt_cache_key` (OpenAI), и аналоги. Провайдер САМ кэширует prefix на своей стороне и возвращает метрики `cache_read_input_tokens` / `cache_write_input_tokens`. Семантически безопасен: провайдер контролирует consistency, нам нужно только эмитить `cache_control` metadata.
 
-### 3.2. Interface
+2. **Local response cache** — локальное кэширование ПОЛНОГО `response_text` на нашей стороне. Семантически рискованно: для динамических агентов (изменяемый контекст, tool calls, time-sensitive вопросы) может вернуть **stale answer** вместо актуального.
+
+Семантический bug unified дизайна: смешиваются два механизма с разными consistency guarantees и разными failure modes. Решение — два независимых интерфейса:
+
+- `IPromptPrefixCache` — provider-side, **всегда вызывается** при LLM call (cheap, провайдер гарантирует).
+- `IResponseCache` — local, **opt-in, default OFF** (для безопасности по умолчанию).
+
+Per `concepts/llm-research/Управление контекстом LLM-агента - стратегии снижения стоимости.md` (ai-agent-playbook): cache hit rate > 70% — основная цель (для обоих механизмов).
+
+### 3.2. IPromptPrefixCache (Provider-Side)
 
 ```cpp
-class IPromptCacheProvider {
+class IPromptPrefixCache {
 public:
-    virtual ~IPromptCacheProvider() = default;
+    virtual ~IPromptPrefixCache() = default;
 
-    virtual std::optional<CachedResponse> lookup(
-        const PromptKey& key) = 0;
+    // Возвращает cache_key для нормализованного prompt prefix.
+    // Используется для cache_control: ephemeral метаданных в API calls.
+    virtual std::string compute_cache_key(
+        const std::string& provider_id,        // "anthropic", "openai"
+        const std::string& model_id,
+        const std::string& prompt_prefix) = 0;
 
-    virtual void store(
-        const PromptKey& key,
-        const CachedResponse& response) = 0;
-
-    virtual void invalidate(
-        const PromptKey& key) = 0;
-
-    virtual void invalidate_scope(ScopeId scope) = 0;
-
-    virtual PromptCacheMetrics metrics() const = 0;
+    // Метрики провайдер-кэша (cache_read_input_tokens, cache_write_input_tokens).
+    virtual PromptPrefixCacheMetrics metrics() const = 0;
 };
 
-struct PromptKey {
-    ScopeId scope_id;          // scope-aware
-    std::string provider_id;   // "anthropic", "openai", "ollama"
+struct PromptPrefixCacheMetrics {
+    uint64_t cache_read_input_tokens = 0;
+    uint64_t cache_write_input_tokens = 0;
+    uint64_t cache_creation_input_tokens = 0;
+};
+```
+
+### 3.3. IResponseCache (Local, Opt-In)
+
+```cpp
+class IResponseCache {
+public:
+    virtual ~IResponseCache() = default;
+
+    virtual std::optional<CachedResponse> lookup(
+        const ResponseCacheKey& key) = 0;
+
+    virtual void store(
+        const ResponseCacheKey& key,
+        const CachedResponse& response) = 0;
+
+    virtual void invalidate(const ResponseCacheKey& key) = 0;
+    virtual void invalidate_scope(ScopeId scope) = 0;
+
+    virtual ResponseCacheMetrics metrics() const = 0;
+};
+
+struct ResponseCacheKey {
+    ScopeId scope_id;
+    std::string provider_id;
     std::string model_id;
-    std::string prompt_prefix;  // normalized, hashed
-    std::optional<std::string> suffix;  // optional suffix for partial match
+    std::string prompt_hash;     // hash(prompt + tools + temperature)
+    std::optional<std::string> suffix;
 };
 
 struct CachedResponse {
     std::string response_text;
     uint64_t input_tokens;
     uint64_t output_tokens;
-    uint64_t cache_read_input_tokens;
-    uint64_t cache_write_input_tokens;
     uint64_t created_at_ms;
-    std::chrono::seconds ttl{3600};  // default 1 hour
+    std::chrono::seconds ttl{3600};
+};
+
+struct ResponseCacheMetrics {
+    uint64_t hits = 0;
+    uint64_t misses = 0;
+
+    double hit_rate() const {
+        auto total = hits + misses;
+        return total > 0 ? double(hits) / double(total) : 0.0;
+    }
 };
 ```
 
-### 3.3. PromptPrefixCache (LRU implementation)
+### 3.4. PromptPrefixCache (LRU Implementation)
+
+LRU-таблица дедупликации `compute_cache_key` для нормализованных prompt prefix (не хранит response — провайдер делает caching):
 
 ```cpp
-class PromptPrefixCache : public IPromptCacheProvider {
+class PromptPrefixCache : public IPromptPrefixCache {
 public:
-    explicit PromptPrefixCache(
+    explicit PromptPrefixCache(size_t max_keys = 10000);
+
+    std::string compute_cache_key(
+        const std::string& provider_id,
+        const std::string& model_id,
+        const std::string& prompt_prefix) override;
+
+    PromptPrefixCacheMetrics metrics() const override;
+
+private:
+    std::list<std::string> m_lru;  // front = most recent
+    std::unordered_map<std::string, std::list<std::string>::iterator> m_index;
+    size_t m_max_keys;
+    mutable std::shared_mutex m_mutex;
+    PromptPrefixCacheMetrics m_metrics;
+};
+```
+
+LRU eviction по количеству ключей (`max_keys`). Ключи детерминированно вычисляются из `(provider_id, model_id, prompt_prefix)` — persistence не требуется.
+
+### 3.5. Adapters
+
+```cpp
+// AnthropicCacheControlAdapter — translates IPromptPrefixCache to API metadata
+class AnthropicCacheControlAdapter : public IPromptPrefixCache {
+    // compute_cache_key возвращает cache_id для prompt prefix.
+    // Используется в requests как cache_control: {type: ephemeral}.
+    // Метрики провайдера (cache_read/cache_write_input_tokens) приходят из response.
+    // Обновляет m_metrics после каждого API call.
+};
+
+// NoOpAdapter — для профилей без prompt cache
+class NoOpPromptPrefixCache : public IPromptPrefixCache {
+    // compute_cache_key возвращает пустую строку; provider не использует cache.
+    // metrics() возвращает нули.
+};
+```
+
+### 3.6. ResponseCache (LRU Implementation) and Persistence
+
+`ResponseCache` — LRU-реализация `IResponseCache` для хранения `CachedResponse`:
+
+```cpp
+class ResponseCache : public IResponseCache {
+public:
+    explicit ResponseCache(
         size_t max_entries = 10000,
         size_t max_bytes = 100 * 1024 * 1024);  // 100 MB
 
-    std::optional<CachedResponse> lookup(const PromptKey& key) override;
-    void store(const PromptKey& key, const CachedResponse& response) override;
-    void invalidate(const PromptKey& key) override;
+    std::optional<CachedResponse> lookup(const ResponseCacheKey& key) override;
+    void store(const ResponseCacheKey& key, const CachedResponse& response) override;
+    void invalidate(const ResponseCacheKey& key) override;
     void invalidate_scope(ScopeId scope) override;
-    PromptCacheMetrics metrics() const override;
+    ResponseCacheMetrics metrics() const override;
 
 private:
     struct Entry {
-        PromptKey key;
+        ResponseCacheKey key;
         CachedResponse response;
         uint64_t last_access_ms;
         size_t size_bytes;
     };
 
     std::list<Entry> m_lru;  // front = most recent
-    std::unordered_map<PromptKey, list_iterator> m_index;
+    std::unordered_map<ResponseCacheKey, std::list<Entry>::iterator> m_index;
     size_t m_max_entries;
     size_t m_max_bytes;
     size_t m_current_bytes = 0;
     mutable std::shared_mutex m_mutex;
-    PromptCacheMetrics m_metrics;
+    ResponseCacheMetrics m_metrics;
 };
 ```
 
-LRU eviction по size_bytes (когда превышен max_bytes) и по age (TTL на каждую запись).
+LRU eviction по `size_bytes` (когда превышен `max_bytes`) и по age (TTL на каждую запись).
 
-### 3.4. PromptCacheMetrics
-
-```cpp
-struct PromptCacheMetrics {
-    uint64_t lookups = 0;
-    uint64_t hits = 0;
-    uint64_t misses = 0;
-    uint64_t stores = 0;
-    uint64_t evictions = 0;
-    uint64_t invalidations = 0;
-    uint64_t bytes_saved_input = 0;     // input tokens saved through cache
-    uint64_t bytes_saved_output = 0;
-    uint64_t total_input_tokens = 0;   // raw baseline
-    uint64_t total_output_tokens = 0;
-
-    double hit_rate() const {
-        return lookups > 0 ? double(hits) / double(lookups) : 0.0;
-    }
-
-    double token_savings_ratio() const {
-        auto total = total_input_tokens + total_output_tokens;
-        return total > 0 ? double(bytes_saved_input + bytes_saved_output) / double(total) : 0.0;
-    }
-};
-```
-
-### 3.5. Adapters
-
-```cpp
-// AnthropicCacheControlAdapter — translates cache hit/miss to Anthropic API metadata
-class AnthropicCacheControlAdapter : public IPromptCacheProvider {
-    // На lookup hit: возвращает CachedResponse с cache_read_input_tokens > 0.
-    // На lookup miss: возвращает nullopt, caller делает API call.
-    // На store: после API call с cache_control: ephemeral, сохраняет response.
-};
-
-// NoOpAdapter — для профилей без cache
-class NoOpPromptCache : public IPromptCacheProvider {
-    // Всегда nullopt на lookup, ничего не делает на store.
-};
-```
-
-### 3.6. Persistence (опционально)
-
-Для M1+ PromptCache может опционально персистить в MDBX DBI:
+**Persistence (M2+, опционально):** `IResponseCache` может персистить в MDBX DBI:
 
 ```
-prompt_cache
-  key = (scope_id, prompt_key_hash) → CachedResponse
+response_cache
+  key = (scope_id, prompt_hash) → CachedResponse
 ```
 
-При MemoryStack::open() — загрузить из DBI. На eviction (LRU в memory) — удалить из DBI. Это переживает restart.
+При `MemoryStack::open()` — загрузить из DBI. На eviction (LRU in-memory) — удалить из DBI. Переживает restart.
 
-Для M0 — in-memory only.
+`IPromptPrefixCache` **НЕ персистится**: ключи детерминированно вычисляются через хэш-функцию, persistence не нужна.
 
-### 3.7. Validation Rules
+Для M0/M1 — `IResponseCache` отсутствует (только `IPromptPrefixCache`).
 
-- `enable_prompt_cache=true` → MemoryStack создаёт PromptCache singleton.
-- scope-aware key: разные scope_id имеют разные cache entries.
-- TTL: default 1 час, configurable per provider.
+### 3.7. Default Behavior
+
+- `IPromptPrefixCache`: opt-in через `enable_prompt_cache=true`. Default **ON** для профилей с hybrid retrieval (BasicRag, AgentLTM, QAKnowledgeBase) — provider-side кэш даёт прямую экономию токенов без consistency рисков.
+- `IResponseCache`: opt-in через `enable_response_cache=true`. Default **OFF везде** — для безопасности (см. §3.1 rationale).
+
+### 3.8. Validation Rules
+
+- `IPromptPrefixCache.compute_cache_key()` вызывается при каждом LLM call (cheap, O(1) lookup).
+- `IResponseCache.lookup()` вызывается ТОЛЬКО если spec.enable_response_cache=true (default не вызывается).
+- scope-aware keys: разные `scope_id` имеют разные cache entries.
+- TTL для `IResponseCache`: default 1 час, configurable per provider.
 
 ## 4. AsyncIndexer
 
@@ -331,17 +384,27 @@ private:
 
 | Service | Capability | Default |
 |---|---|---|
-| PromptCache | `enable_prompt_cache = true` | opt-in |
+| PromptPrefixCache | `enable_prompt_cache = true` | opt-in (default ON для hybrid retrieval профилей) |
+| ResponseCache | `enable_response_cache = true` | opt-in, default **OFF** (для безопасности) |
 | AsyncIndexer | (always on for write perf) | always |
 | WriteGate | (always on if WritePolicy set) | conditional |
 | CompactionWorker | `enable_compaction = true` | opt-in |
+
+Уточнение по defaults:
+- `PromptPrefixCache` default **ON** для профилей с hybrid retrieval (BasicRag, AgentLTM, QAKnowledgeBase) — provider-side кэш даёт прямую экономию токенов без consistency рисков.
+- `ResponseCache` default **OFF везде** — opt-in через явное `enable_response_cache=true` в spec (см. §3.1 rationale).
 
 ### 6.2. Инициализация
 
 При MemoryStack::open(spec):
 1. Создаются DBI по capabilities.
-2. Инициализируются runtime-сервисы: PromptCache если opt-in, AsyncIndexer всегда, CompactionWorker если opt-in.
-3. WriteGate создаётся если spec.write_policy задан.
+2. Инициализируются runtime-сервисы:
+   - `IPromptPrefixCache` — если `enable_prompt_cache=true` (default ON для hybrid retrieval профилей).
+   - `IResponseCache` — только если `enable_response_cache=true` (default OFF).
+   - `AsyncIndexer` — всегда.
+   - `WriteGate` — если `spec.write_policy` задан.
+   - `CompactionWorker` — если `enable_compaction=true`.
+3. Lifecycle ordering: `IPromptPrefixCache` создаётся ДО первого LLM call; `IResponseCache` создаётся как singleton (даже если выключен) с no-op stub.
 
 ### 6.3. Shutdown
 
@@ -349,8 +412,9 @@ private:
 1. Stop accepting new requests.
 2. AsyncIndexer.flush() — finish pending batches.
 3. CompactionWorker.stop() — finish current job, then exit.
-4. PromptCache — опционально persist to DBI.
-5. Освобождение handles.
+4. `IResponseCache` — опционально persist to DBI (`response_cache`).
+5. `IPromptPrefixCache` — persistence не требуется (ключи детерминированно вычисляются).
+6. Освобождение handles.
 
 ### 6.4. Graceful degradation
 
@@ -383,9 +447,9 @@ WriteGate.evaluate(request)
 Application
   ↓ stack.retrieve(plan)
   ↓
-PromptCache.lookup(prompt_key)  // если opt-in
-  ├── hit → return cached response
-  └── miss → continue
+IResponseCache.lookup(response_cache_key)  // ТОЛЬКО если opt-in (default OFF)
+  ├── hit → return cached response_text
+  └── miss (или выключен) → continue
   ↓
 HybridRetriever.retrieve(plan)
   ├── LexicalRetriever (per lexical-search-roadmap.md)
@@ -396,10 +460,19 @@ RRF fusion
   ↓
 ContextBuilder
   ↓
-LLM call (or cached)
+IPromptPrefixCache.compute_cache_key(provider_id, model_id, prompt_prefix)  // ВСЕГДА (cheap, O(1))
   ↓
-PromptCache.store()  // для next call
+LLM call с cache_control: ephemeral metadata (Anthropic) / prompt_cache_key (OpenAI)
+  ↓
+IResponseCache.store(response_cache_key, response)  // ТОЛЬКО если opt-in
+  ↓
+IPromptPrefixCache.metrics().cache_read_input_tokens += response.usage.cache_read  // обновление провайдер-метрик
 ```
+
+**Provider-side vs local cache split:**
+- `IPromptPrefixCache.compute_cache_key()` вызывается при каждом LLM call (cheap, no-op если ключ не меняется).
+- `IResponseCache.lookup()` вызывается **ТОЛЬКО** если spec.enable_response_cache=true. По умолчанию — не вызывается.
+- Это даёт чёткое разделение provider-side (always) и local response (opt-in).
 
 ### 7.3. Background path
 
@@ -423,7 +496,13 @@ MultiTableWriter (atomic per job)
 
 ```cpp
 auto stats = stack.stats();
-// stats.prompt_cache, stats.async_indexer, stats.compaction, stats.write_gate
+// stats.prompt_prefix_cache, stats.response_cache, stats.async_indexer, stats.compaction, stats.write_gate
+```
+
+Отдельные accessors для split-кэша:
+```cpp
+auto pp = stack.prompt_prefix_cache()->metrics();   // cache_read_input_tokens, cache_write_input_tokens
+auto rc = stack.response_cache()->metrics();         // hits, misses, hit_rate
 ```
 
 ### 8.2. RetrievalTrace integration
@@ -437,8 +516,9 @@ Per knowledge-base-roadmap.md: `RetrievalTrace.trace` содержит:
 ### 8.3. CLI integration
 
 ```
-agent-memory-cli cache stats
-agent-memory-cli cache clear [--scope <scope_id>]
+agent-memory-cli prompt-cache stats                 # IPromptPrefixCache (cache_read/cache_write_input_tokens)
+agent-memory-cli response-cache stats              # IResponseCache (hits, misses, hit_rate)
+agent-memory-cli response-cache clear [--scope <scope_id>]
 agent-memory-cli indexer status
 agent-memory-cli indexer flush
 ```
@@ -451,16 +531,18 @@ Per memory-stacks-roadmap.md секция 16, конкретизация:
 |---|---|
 | 11.1 | WriteGate (impl WritePolicy logic) |
 | 11.2 | AsyncIndexer (background thread + batch processing) |
-| 12.5 | PromptCache (in-memory LRU) |
-| 12.6 | AnthropicCacheControlAdapter |
-| 12.7 | PromptCache persistence (M2) |
+| 12.5 | `IPromptPrefixCache` (in-memory LRU key dedup) + `AnthropicCacheControlAdapter` |
+| 12.6 | `IResponseCache` stub (default OFF, no-op implementation для safe by default) |
+| M2.x | `IResponseCache` full implementation + MDBX persistence (`response_cache` DBI) |
 
 ## 10. Open Issues
 
 - PromptCache invalidation при обновлении knowledge (когда unit перезаписан, cache entries могут быть stale). Решение: scope-based invalidation при bulk update.
+- **ResponseCache correctness при tool/function calls: если LLM вызывает tools, response зависит не только от prompt, но и от tool results. Решение: хэшировать полный conversation context (prompt + tool definitions + tool call history + tool results), не только prompt. Альтернатива: opt-out response cache для turns с tool calls.**
 - AsyncIndexer backpressure: если consumer (retrieval) медленнее producer (writes), queue растёт. Решение: bounded queue + drop policy.
 - WriteGate flush trigger: на скольких units считать "OnSizeThreshold" — bytes или count?
 - Multi-stack coordination: если несколько MemoryStack разделяют scope, runtime services не координируются. M2+.
+- ResponseCache staleness при live data: cache TTL 1 час может вернуть устать данные для time-sensitive запросов. Опции: (a) короткий TTL, (b) invalidation при записи в KnowledgeUnit, (c) включение timestamp в key (но это убивает hit rate).
 
 ## 11. References
 

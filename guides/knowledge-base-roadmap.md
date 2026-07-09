@@ -4,6 +4,8 @@
 
 Этот файл supersede'ит предыдущую версию, описывавшую монолитный `KnowledgeUnit` struct и `IKnowledgeUnitStore`-as-primary-table. Новая модель разделяет данные на три независимых слоя (см. ADR-001) и вводит capability-aware создание DBI.
 
+> C++17 compliance: illustrative code (no std::span, no designated initializers). Decay formula — canonical (см. policies-roadmap.md §2.3). SourceRef — split на inline summary (envelope) + DBI (M1).
+
 ## 1. Purpose
 
 Этот документ конкретизирует retrieval и evaluation слой поверх архитектурного манифеста `memory-stacks-roadmap.md`. Описывает:
@@ -39,20 +41,22 @@ Non-goals: BM25F scoring details, embedding model адаптеры, per-kind pay
 
 ```cpp
 struct KnowledgeUnitEnvelope {
-    KnowledgeUnitId id;             // стабильная, монотонная, не reuse
+    KnowledgeUnitId id;             // стабильная, монотонная, не reuse (allocate(), НЕ content-hash)
     KnowledgeUnitKind kind;         // дискриминатор per-kind semantics
     ScopeId scope_id;               // multi-tenancy namespace
     std::string primary_text;       // 256-1024 байт, retrieval seed
     std::string display_text;       // LLM-friendly formatted text
     LifecycleState lifecycle_state; // Active / SoftSuppressed / Superseded / Deprecated / Erased
-    std::vector<SourceRef> sources; // first-class provenance
+    std::vector<SourceRefSummary> sources; // inline provenance summary, max 3 per unit, ≤256 байт каждое
     int64_t created_at_ms;
     int64_t updated_at_ms;
     int64_t observed_at_ms;         // когда source наблюдался
     uint64_t generation;            // инкремент при content change
+    uint32_t revision;              // монотонный внутри unit, инкремент при supersede/regenerate
     double priority_weight;         // [0.0, 1.0], ranking boost
-    std::vector<KnowledgeUnitId> supersedes;     // lineage вперёд
-    std::vector<KnowledgeUnitId> superseded_by; // lineage назад
+    std::vector<KnowledgeUnitId> supersedes;     // lineage вперёд (vector: может быть несколько predecessors)
+    std::optional<KnowledgeUnitId> superseded_by; // lineage назад (single, immediate successor)
+    std::optional<KnowledgeUnitId> derived_from; // compilation/aggregation origin
 };
 ```
 
@@ -188,7 +192,7 @@ struct CompiledArticlePayload {
 
 ### 4.3. Storage layout для components
 
-- **Operational components** — единая DBI `unit_components` через `TypeDiscriminatedTable` (tag-prefix + UnitId → ValueVariant).
+- **Operational components** — единая DBI `unit_components` через `TypeDiscriminatedTable` (ComponentKind tag + UnitId → ValueVariant): UsageStats, Speaker, Temporal, EmbeddingMeta, CompactionMeta.
 - **Per-kind payloads** — отдельные DBI: `qa_payloads`, `fact_payloads`, `conversation_episode_payloads`, `compiled_article_payloads`, `chunk_payloads`. Key = UnitId.
 - `MultiTableWriter` обеспечивает atomic coordinated writes (envelope + components + projections + secondary indexes в одной транзакции).
 
@@ -258,11 +262,15 @@ Primary table для envelope CRUD. Backend — MDBX DBI `knowledge_units` (key 
 class IKnowledgeUnitStore {
 public:
     virtual ~IKnowledgeUnitStore();
+    // put/get/scan работают с KnowledgeUnitId (monotonic, allocate(), НЕ content-hash)
     virtual std::optional<KnowledgeUnitEnvelope> find(const KnowledgeUnitId& id) const = 0;
     virtual void upsert(KnowledgeUnitEnvelope envelope) = 0;
     virtual bool erase(const KnowledgeUnitId& id) = 0;
     virtual std::vector<KnowledgeUnitId> scan_by_kind(KnowledgeUnitKind kind) const = 0;
     virtual std::vector<KnowledgeUnitId> scan_by_scope(const ScopeId& scope_id) const = 0;
+    // content-addressing lookup: KnowledgeUnitKey — отдельная struct (content-hash), служит
+    // для dedup/upsert-by-content; возвращает текущий Id, под которым живёт этот content
+    virtual std::optional<KnowledgeUnitId> find_by_content_key(const KnowledgeUnitKey& key) const = 0;
 };
 ```
 
@@ -363,18 +371,43 @@ Per-stack default weights в `HybridRetrievalConfig::retriever_weights`. Validat
 
 ### 7.4. Decay-Aware Scoring
 
-`DecayAwareRetriever` оборачивает другие retrievers и применяет DecayPolicy:
+`DecayAwareRetriever` оборачивает другие retrievers и применяет DecayPolicy через две стадии per canonical spec (см. `policies-roadmap.md` §2.3):
 
-```text
-decay_score = base_score + use_boost * log1p(use_count) - elapsed_ms / half_life_ms
+```cpp
+double decay_factor(uint64_t elapsed_ms, double half_life_ms) {
+    if (half_life_ms <= 0) return 1.0;
+    return std::exp(-double(elapsed_ms) / half_life_ms);
+}
+
+double apply_decay_and_boost(
+    double base_score,
+    const UsageStatsComponent& usage,
+    const DecayPolicy& policy,
+    uint64_t now_ms) {
+    uint64_t elapsed = (now_ms >= usage.last_used_at_ms) ? (now_ms - usage.last_used_at_ms) : 0;
+    double factor = decay_factor(elapsed, policy.half_life_ms);
+    return base_score * factor + policy.use_boost * std::log1p(double(usage.use_count));
+}
+
+double apply_post_filters(
+    double score,
+    const UsageStatsComponent& usage,
+    const SpeakerComponent* speaker,
+    SpeakerId agent_self_id,
+    uint64_t now_ms,
+    const DecayPolicy& policy) {
+    if (usage.cooldown_until_ms > now_ms) score *= policy.cooldown_factor;
+    if (speaker && speaker->speaker_id == agent_self_id) score *= policy.self_echo_suppression;
+    return score;
+}
 ```
 
 Алгоритм:
 
 1. AntiLoopCooldown filter (перед scoring).
 2. Получить `UsageStatsComponent` для каждого unit.
-3. Вычислить `decay_score`.
-4. self_echo_suppression: если `SpeakerComponent.speaker_id == agent_self_id`, умножить score на `(1.0 - self_echo_suppression)`.
+3. Применить `apply_decay_and_boost` (exponential decay на base_score + log-бонус за использование).
+4. Применить `apply_post_filters` (cooldown-фактор и self_echo_suppression поверх результата).
 
 Defaults для `AgentLongTermMemory` (см. `memory-stacks-roadmap.md` секция 8.3): half_life=7d, use_boost=0.35, cooldown=60s, self_echo=0.3, cold_threshold=0.01.
 
@@ -460,7 +493,7 @@ Citations обязательны: каждый `ContextBlock` имеет `source
 struct ContextBlock {
     BlockType block_type;                 // QA | Chunk | Summary | Graph | Evidence
     std::string content;
-    std::vector<SourceRef> sources;
+    std::vector<SourceRefSummary> sources; // inline summaries; полный SourceRef с excerpt_text — через source_refs DBI (M1)
     double score;
     size_t token_count;
     std::vector<KnowledgeUnitId> unit_ids;
@@ -564,6 +597,8 @@ CI gate: `Recall@10(hybrid) >= 1.20 * Recall@10(BM25-only)`, `NoAnswerAccuracy(h
 4. **Decay + Cooldown + self-echo complexity.** Много параметров политик. Митигация: defaults в `MemoryProfiles::` namespace, per-stack validation в `open()`, eval pipeline проверяет effectiveness (`anti_loop_skip_rate > 0` для активно используемых stacks).
 
 5. **Cross-stack isolation (interference между scope_id).** Митигация: scope-aware keys (все secondary indexes начинаются с `scope_id`), per-scope transactions, `metadata_filters` через `ReverseIndexTable` (scope-prefixed).
+
+6. **Envelope bloat (vector<SourceRefSummary> в hot-path lookup).** Митигация: max 3 sources per unit, ≤256 байт preview на каждый (SourceRefSummary хранит только quote_hash_high + excerpt_preview + confidence + scope_ref), полный SourceRef с excerpt_text вынесен в `source_refs` DBI (M1) с lookup через `source_refs_by_unit` index; на hot-path подтягиваются только summary'ы, detail-fetch — lazy по требованию.
 
 ## 11. Cross-references и Implementation Order
 

@@ -2,6 +2,8 @@
 
 Спецификация CompactionWorker, job types, scheduling и CompactionHandoff для подсистемы памяти `agent-memory-cpp`. Документ конкретизирует ADR-009 (Compaction strategy) из `guides/memory-stacks-roadmap.md` секции 12.4 и описывает runtime-сервис, который ортогонален MemoryStack (per ADR-013).
 
+> C++17 compliance: кодовые сниппеты используют `const std::vector&` вместо `std::span` и явные сеттеры/positional constructor calls вместо designated initializers. Decay formula — canonical (см. `policies-roadmap.md` §2.3).
+
 ## 1. Purpose
 
 Этот документ описывает:
@@ -193,14 +195,16 @@ struct DecayParams {
 };
 
 class DecayJob : public ICompactionJob {
-    // Алгоритм:
-    //   for each unit in scope_id (по CompactionMetaComponent.dirty_decay = true):
-    //     usage = load UsageStatsComponent(unit)
-    //     elapsed_ms = now_ms - usage.last_used_at_ms
-    //     decay_score = use_boost * log1p(usage.use_count) - elapsed_ms / half_life_ms
-    //     update CompactionMetaComponent.last_decay_score = decay_score
-    //     if decay_score < min_score_threshold:
-    //       update CompactionMetaComponent.cold_candidate = true
+    // Алгоритм (canonical DecayJob::run, см. policies-roadmap.md §2.3):
+    //   for each unit candidate в scope_id (по CompactionMetaComponent.dirty_decay = true):
+    //     usage = get_usage_stats(unit.unit_id)
+    //     new_score = apply_decay_and_boost(unit.base_score, usage, policy, now_ms)
+    //     new_score = apply_post_filters(
+    //         new_score, usage,
+    //         get_speaker(unit.unit_id), agent_self_id,
+    //         now_ms, policy)
+    //     if new_score < policy.cold_threshold:
+    //       unit.compaction_meta.cold_candidate = true
     //     clear CompactionMetaComponent.dirty_decay = false
     //
     // Применяет DecayPolicy из MemoryProfileSpec.decay_policy:
@@ -229,7 +233,7 @@ struct DedupeParams {
 
 class DedupeJob : public ICompactionJob {
     // Алгоритм:
-    //   for each pair (unit_a, unit_b) в scope с distance < distance_threshold:
+    //   for each pair (unit_a, unit_b) в scope с cosine_distance <= distance_threshold:
     //     if prefer_supersede и WritePolicy.allow_supersede:
     //       newer_unit supersedes older_unit (lifecycle = Superseded)
     //     elif WritePolicy.allow_merge:
@@ -627,12 +631,17 @@ agent-memory-cli compaction stats              # CompactionStats snapshot
 ```cpp
 auto& compaction = stack.compaction();
 
-auto job_id = compaction.enqueue(std::make_shared<DecayJob>(DecayParams{
-    .scope_id = "user:yaroslav", .min_score_threshold = 0.05, .batch_size = 500}));
+DecayParams decay_params;
+decay_params.scope_id = "user:yaroslav";
+decay_params.min_score_threshold = 0.05;
+decay_params.batch_size = 500;
+auto job_id = compaction.enqueue(std::make_shared<DecayJob>(decay_params));
 
-auto merge_id = compaction.trigger_now(ICompactionJob::Kind::Merge, MergeParams{
-    .source_units = {unit_a, unit_b, unit_c},
-    .strategy = MergeStrategy::Summarize, .scope_id = "agent:nika"});
+MergeParams merge_params;
+merge_params.source_units = {unit_a, unit_b, unit_c};
+merge_params.strategy = MergeStrategy::Summarize;
+merge_params.scope_id = "agent:nika";
+auto merge_id = compaction.trigger_now(ICompactionJob::Kind::Merge, merge_params);
 
 auto stats = compaction.stats();           // CompactionStats snapshot
 auto recent = compaction.recent_jobs(10);  // last 10 JobState records

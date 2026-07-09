@@ -1,5 +1,7 @@
 # Optimization Roadmap
 
+> C++17 compliance: кодовые сниппеты используют const std::vector& вместо std::span и явные конструкторы вместо designated initializers. Dedupe distance — cosine, lower = stricter.
+
 ## Purpose
 
 This document describes the optimization layers (vector math, vector encoding,
@@ -202,23 +204,23 @@ embedding_meta
 ```cpp
 auto& store = stack.embeddings();
 
-store.upsert(EmbeddingWriteRequest{
-    .unit_id = my_chunk_id,
-    .scope_id = my_scope_id,
-    .projection_kind = ProjectionKind::Original,
-    .model_id = "bge-m3",
-    .model_version = "1.0",
-    .vector = dense_vector_original_projection,
-});
+EmbeddingWriteRequest req_original;
+req_original.unit_id = my_chunk_id;
+req_original.scope_id = my_scope_id;
+req_original.projection_kind = ProjectionKind::Original;
+req_original.model_id = "bge-m3";
+req_original.model_version = "1.0";
+req_original.vector = dense_vector_original_projection;
+store.upsert(req_original);
 
-store.upsert(EmbeddingWriteRequest{
-    .unit_id = my_chunk_id,
-    .scope_id = my_scope_id,
-    .projection_kind = ProjectionKind::DenseContextual,
-    .model_id = "bge-m3",
-    .model_version = "1.0",
-    .vector = dense_vector_dense_contextual_projection,
-});
+EmbeddingWriteRequest req_contextual;
+req_contextual.unit_id = my_chunk_id;
+req_contextual.scope_id = my_scope_id;
+req_contextual.projection_kind = ProjectionKind::DenseContextual;
+req_contextual.model_id = "bge-m3";
+req_contextual.model_version = "1.0";
+req_contextual.vector = dense_vector_dense_contextual_projection;
+store.upsert(req_contextual);
 ```
 
 Both writes coexist in the same DBI; they are independent rows with distinct
@@ -227,29 +229,27 @@ keys.
 ### Multi-Model Example
 
 ```cpp
-store.upsert(EmbeddingWriteRequest{
-    .unit_id = my_chunk_id,
-    .scope_id = my_scope_id,
-    .projection_kind = ProjectionKind::Original,
-    .model_id = "openai-3-small",
-    .model_version = "2024-01",
-    .vector = openai_vector_original_projection,
-});
+EmbeddingWriteRequest req_openai;
+req_openai.unit_id = my_chunk_id;
+req_openai.scope_id = my_scope_id;
+req_openai.projection_kind = ProjectionKind::Original;
+req_openai.model_id = "openai-3-small";
+req_openai.model_version = "2024-01";
+req_openai.vector = openai_vector_original_projection;
+store.upsert(req_openai);
 ```
 
 After both models are present, retrieval can fuse their results with RRF:
 
 ```cpp
-auto hits = store.search_multi_model(
-    query_vector,
-    SearchOptions{
-        .scope_ids = {my_scope_id},
-        .models = {"bge-m3", "openai-3-small"},
-        .projection_kinds = {ProjectionKind::Original,
-                             ProjectionKind::DenseContextual},
-        .fusion = FusionStrategy::RRF,
-        .limit = 32,
-    });
+SearchOptions search_opts;
+search_opts.scope_ids = {my_scope_id};
+search_opts.models = {"bge-m3", "openai-3-small"};
+search_opts.projection_kinds = {ProjectionKind::Original,
+                                ProjectionKind::DenseContextual};
+search_opts.fusion = FusionStrategy::RRF;
+search_opts.limit = 32;
+auto hits = store.search_multi_model(query_vector, search_opts);
 ```
 
 The RRF fusion (or weighted alternative) is implemented in the retrieval layer

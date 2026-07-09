@@ -1,5 +1,7 @@
 # memory-stacks-roadmap.md
 
+> Все C++ сниппеты в этом документе — illustrative C++17 (не designated initializers, не std::span, не std::strong_ordering). Компилируемые примеры — отдельная задача `examples/` при старте реализации.
+
 Центральная спецификация архитектуры памяти `agent-memory-cpp`. Определяет модель данных (envelope + components + projections), декларативную спецификацию профилей, runtime-стек, capability matrix, валидационные правила и MDBX layout. Документ supersede'ит компонент-агностичные части `knowledge-base-roadmap.md` и `knowledge-units-roadmap.md` для разделов, относящихся к profiles/stacks.
 
 ## 1. Purpose
@@ -19,8 +21,8 @@ Non-goals документа:
 - Детальная спецификация payload-компонентов (см. `knowledge-units-roadmap.md`).
 - Детальная спецификация BM25F / postings / tokenization (см. `lexical-search-roadmap.md`).
 - Детальная спецификация dense vector / binary signature / secondary indexes (см. `optimization-roadmap.md`).
-- Детальная спецификация compaction-воркера (см. `compaction-roadmap.md`, future).
-- Детальная спецификация runtime-сервисов prompt-cache/write-gate (см. `runtime-services-roadmap.md`, future).
+- Детальная спецификация compaction-воркера (см. `compaction-roadmap.md`).
+- Детальная спецификация runtime-сервисов prompt-cache/write-gate (см. `runtime-services-roadmap.md`).
 
 ## 2. Architectural Decision Records (ADR Index)
 
@@ -109,20 +111,21 @@ Profile (через `MemoryStack`) и Scope — независимые оси: P
 // Один стек, много scopes
 auto stack = MemoryStack::open("agent.mdbx", MemoryProfiles::AgentLongTermMemory());
 
-stack.write_unit(WriteRequest{
-    .envelope = make_envelope(...).with_scope("user:yaroslav"),
-    .payload = ...,
-});
-stack.write_unit(WriteRequest{
-    .envelope = make_envelope(...).with_scope("agent:nika"),
-    .payload = ...,
-});
+WriteRequest req_a;
+req_a.envelope = make_envelope(...).with_scope("user:yaroslav");
+req_a.payload = ...;
+stack.write_unit(req_a);
+
+WriteRequest req_b;
+req_b.envelope = make_envelope(...).with_scope("agent:nika");
+req_b.payload = ...;
+stack.write_unit(req_b);
 
 // Retrieval с фильтром
-auto hits = stack.retrieve(RetrievalPlan{
-    .raw_query = "...",
-    .scope_ids = {"user:yaroslav"},
-});
+RetrievalPlan plan;
+plan.raw_query = "...";
+plan.scope_ids = {"user:yaroslav"};
+auto hits = stack.retrieve(plan);
 ```
 
 ### 5.3. Обоснование
@@ -278,7 +281,7 @@ public:
 
     RetrievalResult retrieve(const RetrievalPlan& plan);
     WriteResult write_unit(const WriteRequest& request);
-    BulkWriteResult write_units(std::span<const WriteRequest> requests);
+    BulkWriteResult write_units(const std::vector<WriteRequest>& requests);
 
     CompactionWorker& compaction();
     bool has_compaction() const;
@@ -295,7 +298,7 @@ public:
 
 ```cpp
 struct WriteRequest {
-    KnowledgeUnitEnvelope envelope;
+    KnowledgeUnitEnvelope envelope;   // envelope.sources: vector<SourceRefSummary>, max ~3 inline, <=256 байт excerpt preview каждый
     std::optional<QAPayload> qa_payload;
     std::optional<FactPayload> fact_payload;
     std::optional<ChunkPayload> chunk_payload;
@@ -370,17 +373,18 @@ inline MemoryProfileSpec BasicRag() {
     s.enable_qa_payload = false;
     s.enable_fact_payload = false;
     s.enable_compaction = false;
-    s.context_budget = ContextBudget{
-        .total_tokens = 4096,
-        .chunk_tokens = 3072,
-        .summary_tokens = 512,
-        .evidence_tokens = 256,
-    };
-    s.hybrid_config = HybridRetrievalConfig{
-        .fusion = FusionStrategy::RRF,
-        .rrf_k_constant = 60.0,
-        .retriever_weights = {1.0, 1.0},
-    };
+    s.context_budget = ContextBudget(
+        /*total_tokens=*/4096,
+        /*qa_tokens=*/0,
+        /*chunk_tokens=*/3072,
+        /*graph_tokens=*/0,
+        /*summary_tokens=*/512,
+        /*evidence_tokens=*/256);
+    s.hybrid_config = HybridRetrievalConfig(
+        FusionStrategy::RRF,
+        /*rrf_k_constant=*/60.0,
+        /*retriever_weights=*/std::vector<double>{1.0, 1.0},
+        /*candidate_pool_size=*/200);
     return s;
 }
 ```
@@ -397,12 +401,13 @@ inline MemoryProfileSpec QAKnowledgeBase() {
     s.enable_usage_stats = true;
     s.enable_temporal_validity = true;
     s.enable_compaction = false;
-    s.context_budget = ContextBudget{
-        .total_tokens = 2048,
-        .qa_tokens = 1024,
-        .chunk_tokens = 512,
-        .evidence_tokens = 256,
-    };
+    s.context_budget = ContextBudget(
+        /*total_tokens=*/2048,
+        /*qa_tokens=*/1024,
+        /*chunk_tokens=*/512,
+        /*graph_tokens=*/0,
+        /*summary_tokens=*/0,
+        /*evidence_tokens=*/256);
     return s;
 }
 ```
@@ -421,35 +426,37 @@ inline MemoryProfileSpec AgentLongTermMemory() {
     s.enable_fact_payload = true;
     s.enable_embedding_meta = true;
     s.enable_compaction = true;
-    s.context_budget = ContextBudget{
-        .total_tokens = 4096,
-        .qa_tokens = 512,
-        .chunk_tokens = 2048,
-        .graph_tokens = 512,
-        .summary_tokens = 512,
-        .evidence_tokens = 256,
-    };
-    s.decay_policy = DecayPolicy{
-        .mode = DecayMode::Exponential,
-        .half_life_ms = 7.0 * 24.0 * 3600.0 * 1000.0,
-        .use_boost = 0.35,
-        .cooldown_ms = 60.0 * 1000.0,
-        .self_echo_suppression = 0.3,
-        .cold_threshold = 0.01,
-    };
-    s.write_policy = WritePolicy{
-        .trigger = WriteFlushTrigger::OnTimer,
-        .flush_interval_ms = 30.0 * 1000.0,
-        .importance_threshold = 0.4,
-        .dedupe_distance_threshold = 0.15,
-        .allow_supersede = true,
-        .allow_merge = true,
-    };
-    s.hybrid_config = HybridRetrievalConfig{
-        .fusion = FusionStrategy::RRF,
-        .rrf_k_constant = 60.0,
-        .retriever_weights = {1.0, 1.0, 1.5, 0.5, 1.0},
-    };
+    s.context_budget = ContextBudget(
+        /*total_tokens=*/4096,
+        /*qa_tokens=*/512,
+        /*chunk_tokens=*/2048,
+        /*graph_tokens=*/512,
+        /*summary_tokens=*/512,
+        /*evidence_tokens=*/256);
+    // DecayPolicy(DecayMode::Exponential, half_life_ms, use_boost,
+    //             cooldown_ms, self_echo_suppression, cold_threshold)
+    s.decay_policy = DecayPolicy(
+        DecayMode::Exponential,
+        /*half_life_ms=*/7.0 * 24.0 * 3600.0 * 1000.0,
+        /*use_boost=*/0.35,
+        /*cooldown_ms=*/60.0 * 1000.0,
+        /*self_echo_suppression=*/0.3,
+        /*cold_threshold=*/0.01);
+    s.write_policy = WritePolicy(
+        WriteFlushTrigger::OnTimer,
+        /*flush_interval_ms=*/30.0 * 1000.0,
+        /*size_threshold_bytes=*/0,
+        /*importance_threshold=*/0.4,
+        /*dedupe_distance_threshold=*/0.15,
+        /*allow_supersede=*/true,
+        /*allow_merge=*/true,
+        /*allow_episode_compaction=*/true);
+    // dedupe_distance_threshold: skip/merge if cosine_distance <= threshold (canonical, см. WritePolicy).
+    s.hybrid_config = HybridRetrievalConfig(
+        FusionStrategy::RRF,
+        /*rrf_k_constant=*/60.0,
+        /*retriever_weights=*/std::vector<double>{1.0, 1.0, 1.5, 0.5, 1.0},
+        /*candidate_pool_size=*/200);
     s.default_retrieval_mode = RetrievalMode::Hybrid;
     return s;
 }
@@ -467,24 +474,28 @@ inline MemoryProfileSpec SpeakerAwareChat() {
     s.enable_temporal_validity = true;
     s.enable_conversation_episode = true;
     s.enable_usage_stats = true;
-    s.context_budget = ContextBudget{
-        .total_tokens = 3000,
-        .chunk_tokens = 1500,
-        .summary_tokens = 800,
-        .evidence_tokens = 256,
-    };
-    s.speaker_policy = SpeakerScopePolicy{
-        .include_self = true,
-        .include_owner = true,
-        .include_cohost = true,
-        .include_audience = false,
-        .attribute_quote = true,
-    };
-    s.write_policy = WritePolicy{
-        .trigger = WriteFlushTrigger::OnTimer,
-        .flush_interval_ms = 5.0 * 1000.0,
-        .importance_threshold = 0.2,
-    };
+    s.context_budget = ContextBudget(
+        /*total_tokens=*/3000,
+        /*qa_tokens=*/0,
+        /*chunk_tokens=*/1500,
+        /*graph_tokens=*/0,
+        /*summary_tokens=*/800,
+        /*evidence_tokens=*/256);
+    s.speaker_policy = SpeakerScopePolicy(
+        /*include_self=*/true,
+        /*include_owner=*/true,
+        /*include_cohost=*/true,
+        /*include_audience=*/false,
+        /*attribute_quote=*/true);
+    s.write_policy = WritePolicy(
+        WriteFlushTrigger::OnTimer,
+        /*flush_interval_ms=*/5.0 * 1000.0,
+        /*size_threshold_bytes=*/0,
+        /*importance_threshold=*/0.2,
+        /*dedupe_distance_threshold=*/0.0,
+        /*allow_supersede=*/true,
+        /*allow_merge=*/true,
+        /*allow_episode_compaction=*/true);
     return s;
 }
 ```
@@ -501,12 +512,13 @@ inline MemoryProfileSpec CompiledWiki() {
     s.enable_fact_payload = true;
     s.enable_embedding_meta = true;
     s.enable_compaction = true;
-    s.context_budget = ContextBudget{
-        .total_tokens = 6000,
-        .chunk_tokens = 2000,
-        .summary_tokens = 2000,
-        .evidence_tokens = 512,
-    };
+    s.context_budget = ContextBudget(
+        /*total_tokens=*/6000,
+        /*qa_tokens=*/0,
+        /*chunk_tokens=*/2000,
+        /*graph_tokens=*/0,
+        /*summary_tokens=*/2000,
+        /*evidence_tokens=*/512);
     return s;
 }
 ```
@@ -522,12 +534,13 @@ inline MemoryProfileSpec TemporalFactStore() {
     s.enable_temporal_validity = true;
     s.enable_fact_payload = true;
     s.enable_graph = true;
-    s.context_budget = ContextBudget{
-        .total_tokens = 3000,
-        .chunk_tokens = 1500,
-        .graph_tokens = 800,
-        .evidence_tokens = 256,
-    };
+    s.context_budget = ContextBudget(
+        /*total_tokens=*/3000,
+        /*qa_tokens=*/0,
+        /*chunk_tokens=*/1500,
+        /*graph_tokens=*/800,
+        /*summary_tokens=*/0,
+        /*evidence_tokens=*/256);
     return s;
 }
 ```
@@ -626,8 +639,14 @@ Cross-cutting Runtime Services (runtime/) — orthogonal
 ### 12.1. Всегда открываются (core DBI)
 
 ```
-knowledge_units
-  key = UnitId → KnowledgeUnitEnvelope (msgpack/flat binary)
+unit_id_to_envelope
+  key = KnowledgeUnitId → KnowledgeUnitEnvelope (msgpack/flat binary)
+  // KnowledgeUnitId — монотонный opaque uint64_t, никогда не reused.
+
+content_key_to_unit_id
+  key = KnowledgeUnitKey → KnowledgeUnitId
+  // KnowledgeUnitKey = (KnowledgeUnitKind, ScopeId, ContentHash);
+  // secondary index для dedupe / supersedence / migration.
 
 knowledge_units_by_kind
   key = (kind, UnitId) → empty
@@ -737,14 +756,15 @@ schema_info
 Включено:
 
 - KnowledgeUnitEnvelope (lean, 13 полей).
-- primary_text + display_text в envelope.
-- BM25F по primary_text (как fallback-индекс, без projection_kind в posting keys).
+- primary_text + display_text в envelope; sources — inline `vector<SourceRefSummary>` (max ~3 на unit, <=256 байт excerpt preview каждый).
+- KnowledgeUnitId монотонный, opaque (`uint64_t`). `KnowledgeUnitKey = (kind, ScopeId, ContentHash)` и content-key secondary index (`content_key_to_unit_id`) — для dedupe/supersedence готов с M0.
+- SearchProjection::Original создаётся с самого начала (минимальный: unit_id → primary_text). BM25F работает через projection model с M0 (не flat fallback).
 - Lifecycle FSM с состояниями Active / SoftSuppressed / Superseded / Deprecated / Erased.
 - BasicRagStack, QAKnowledgeBaseStack.
 - Чтение через ILexicalIndex, запись через простой write API.
 - scope_id во всех DBI keys (multi-tenancy с самого начала).
 
-Не включено (M1+): Components, Payloads per kind, SearchProjections, DecayPolicy/WritePolicy, Compaction, PromptCache.
+Не включено (M1+): Components, Payloads per kind, дополнительные SearchProjections (QAQuestion/QAAnswer/Summary), DecayPolicy/WritePolicy, Compaction, PromptCache, full SourceRef DBI (в M0 — только inline summary).
 
 Ship-it критерии:
 
@@ -829,6 +849,8 @@ new_spec.decay_policy = MemoryProfiles::DefaultAgentDecay();
 
 Это additive: новая DBI создаётся, существующие данные не трогаются. `profile_signature` обновляется.
 
+Content-key index (`content_key_to_unit_id`) — additive, можно добавить в M0 или позже.
+
 ### 14.2. Major migration (новая БД)
 
 Смена профиля с существенными изменениями:
@@ -867,10 +889,10 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 - `mdbx-containers-extension-tz.md` — TypeDiscriminatedTable для components, MultiTableWriter.
 - `architecture.md` — 4-слойная модель + Maturity Levels.
 - `guides/mdbx-stack-boundaries.md` — границы ответственности между agent-memory-cpp и external/mdbx-containers/.
-- `policies-roadmap.md` (future) — детальная спецификация DecayPolicy/WritePolicy/SpeakerScopePolicy с диапазонами и defaults.
-- `compaction-roadmap.md` (future) — CompactionWorker, job types, handoff structure.
-- `runtime-services-roadmap.md` (future) — PromptCache, AsyncIndexer, WriteGate.
-- `cli-roadmap.md` (future) — agent-memory-cli target.
+- `policies-roadmap.md` — детальная спецификация DecayPolicy/WritePolicy/SpeakerScopePolicy с диапазонами и defaults.
+- `compaction-roadmap.md` — CompactionWorker, job types, handoff structure.
+- `runtime-services-roadmap.md` — PromptCache, AsyncIndexer, WriteGate.
+- `cli-roadmap.md` — agent-memory-cli target.
 
 ## 16. Recommended Implementation Order
 
@@ -948,9 +970,44 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 ### Шаг 10: Decay + Anti-loop
 
 - DecayPolicy в MemoryProfileSpec.
-- DecayAwareRetriever: применяет decay_score = base + use_boost * log1p(use_count) - elapsed_ms / half_life_ms.
-- AntiLoopCooldown фильтр: пропускает units с cooldown_until_ms > now_ms.
-- self_echo_suppression для подсвинка (SpeakerId == agent_self_id).
+- DecayAwareRetriever: применяет `apply_decay_and_boost(base_score, usage, policy, now_ms, last_used_at_ms)` — экспоненциальный decay multiplier на `base_score` плюс аддитивный `use_boost * log1p(use_count)`.
+- AntiLoopCooldown и self-echo suppression — отдельный шаг `apply_filters(score, usage, speaker, agent_self_id, now_ms, policy)`, мультипликативные фильтры, применяются ПОСЛЕ `apply_decay_and_boost`.
+
+```cpp
+// Decay multiplier (applied to base_score, not use_count)
+double decay_factor(uint64_t elapsed_ms, double half_life_ms) {
+    return std::exp(-double(elapsed_ms) / half_life_ms);
+}
+
+// Final scoring (additive boost on top of decayed base):
+double apply_decay_and_boost(
+    double base_score,
+    const UsageStatsComponent& usage,
+    const DecayPolicy& policy,
+    uint64_t now_ms,
+    uint64_t last_used_at_ms) {
+    double elapsed = double(now_ms - last_used_at_ms);
+    double factor = decay_factor(elapsed, policy.half_life_ms);
+    return base_score * factor + policy.use_boost * std::log1p(double(usage.use_count));
+}
+
+// Cooldown и self-echo — отдельные мультипликативные фильтры, применяются ПОСЛЕ:
+double apply_filters(
+    double score,
+    const UsageStatsComponent& usage,
+    const SpeakerComponent* speaker,
+    SpeakerId agent_self_id,
+    uint64_t now_ms,
+    const DecayPolicy& policy) {
+    if (usage.cooldown_until_ms > now_ms) {
+        return score * policy.cooldown_factor;        // default 0.1
+    }
+    if (speaker && speaker->speaker_id == agent_self_id) {
+        return score * policy.self_echo_suppression;  // default 0.3
+    }
+    return score;
+}
+```
 
 ### Шаг 11: WritePolicy + WriteGate
 
@@ -1015,6 +1072,7 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 
 - Когда SearchProjection регенерируется? На write? На compaction tick? По требованию?
 - Решение: на write (для active revision), если projection kind включён в WriteRequest. Старые revisions остаются до compaction purge.
+- Projections создаются для каждого unit'а в момент write (Original — всегда; QAQuestion/QAAnswer — только для QAPair; Summary — только для Summary/CompiledArticle).
 
 ### 17.5. Cyrillic morphology
 
@@ -1040,8 +1098,9 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 
 ### 17.9. Multi-process / multi-host
 
-- Если два процесса открывают один MDBX env (read-only) — поддерживается ли?
-- Решение: MDBX поддерживает multi-process; MemoryStack open в shared mode только для read.
+- Multi-process: НЕ в scope для M0/M1/M2. mdbx-containers extension явно исключает multi-process.
+- Возможно рассмотреть в виде future research-task после M2, не блокирует текущую работу.
+- MDBX multi-process read-only режим теоретически доступен штатно без изменений в mdbx-containers, но не тестируется и не специфицируется.
 
 ### 17.10. AsyncIndexer batching
 

@@ -14,6 +14,10 @@
 >   `KnowledgeUnitId`, retrieval flow contracts.
 > - [`knowledge-units-roadmap.md`](knowledge-units-roadmap.md) — per-kind payload
 >   components (QAPayload, FactPayload, ChunkPayload, …).
+>
+> C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо
+> `std::span` и явные конструкторы (`MyType x{...}`) либо сеттеры вместо
+> designated initializers (`Type{ .field = value }`).
 
 ## Purpose
 
@@ -362,7 +366,7 @@ public:
 
     virtual void upsert(
         const KnowledgeUnitRevision& revision,
-        std::span<const SearchProjection> projections
+        const std::vector<SearchProjection>& projections
     ) = 0;
 
     [[nodiscard]] virtual std::vector<LexicalSearchResult> search(

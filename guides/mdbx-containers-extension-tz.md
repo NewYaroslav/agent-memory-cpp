@@ -37,7 +37,8 @@
 - **Schema versioning framework поверх mdbx-containers** — payload versioning остаётся на стороне приложения (текущие префиксы `agent_memory.document.v1` и т.п. сохраняются).
 - **Background compaction API** — не в scope первой итерации.
 - **Bloom filters** — не в scope.
-- **Multi-process support** — не в scope; per-thread transaction модель сохраняется.
+- **Multi-process support**: extension НЕ добавляет новый multi-process API. MDBX штатно поддерживает multi-process read-only режим без изменений в extension; agent-memory-cpp может использовать этот режим без mdbx-containers изменений (future research, не входит в M0/M1/M2 scope).
+- **Per-thread transaction model** сохраняется как primary design constraint (см. `common/Connection.hpp`); multi-table write обеспечивается одним `Transaction`-объектом, разделяемым между таблицами, а не координацией отдельных транзакций (см. `guides/memory-stacks-roadmap.md`, open issue 17.9).
 
 ## 2. Принципы
 

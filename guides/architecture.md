@@ -1,5 +1,7 @@
 # Architecture
 
+> Knowledge base architecture is component-based (Envelope + Components + SearchProjections), NOT a single `KnowledgeUnit` value type. См. [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) для полной спецификации.
+
 ## Baseline
 
 Use a DDD-like architecture with small domain slices and explicit dependency
@@ -141,28 +143,49 @@ is not a RAG library and not an LLM framework. Contracts stay
 dependency-free, evaluation is a primary citizen, and adapters live
 outside core.
 
-The architecture has six parts:
+The knowledge base data model is **component-based** — Envelope +
+Components + SearchProjections. There is NO single `KnowledgeUnit`
+value type and NO discriminated union of payload types in one struct.
+The old `DocumentChunk` / `MemoryObject` / `chat::Message` /
+`facts::Fact` value types are retired and replaced by these contracts:
 
-- A discriminated `KnowledgeUnit` value type that generalizes over
-  the existing `DocumentChunk`, `MemoryObject`, `chat::Message`, and
-  `facts::Fact` types. See
-  [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md) for
-  per-kind specifications and migration helpers.
-- A `SourceRef` first-class provenance value type lifted into the
-  domain layer. Every unit kind that needs citation, every
-  `RetrievalHit`, and every retrieval trace entry references
-  `SourceRef`.
-- A retriever graph built on `RetrievalPlan`, `IUnitRetriever`, and
-  `RetrievalHit` with `KnowledgeUnitId` as the unified key. `ChunkId`
-  is one of many unit kinds, not the only key.
-- Per-kind domain stores (`IKnowledgeUnitStore`, `IQAKnowledgeBase`,
-  `IFactStore`, `ITemporalIndex`, `IGraphStore`, `IEntityStore`,
-  `IRelationStore`) that share a primary-table-plus-secondary-index
+- A lean `KnowledgeUnitEnvelope` (13-field hot-path struct): id, kind,
+  scope_id, primary_text, display_text, lifecycle_state, sources,
+  timestamps, generation, priority_weight, supersedes/superseded_by.
+  See [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md)
+  for per-kind specifications and migration helpers.
+- Typed components (operational + per-kind payloads): operational
+  components `UsageStats`, `Speaker`, `Temporal`, `EmbeddingMeta`,
+  `CompactionMeta`; per-kind payload components `QAPayload`,
+  `FactPayload`, `ChunkPayload`, `ConversationEpisodePayload`,
+  `CompiledArticlePayload`. Stored separately from the envelope.
+- `SearchProjections` (multi-projection retrieval): `Original`,
+  `QAQuestion`, `QAAnswer`, `Summary`, `CodeSymbols`,
+  `DenseContextual`, `Bm25Fields`. Each projection has its own
+  payload and kind-specific indexer.
+- Component-based stores: `IKnowledgeUnitStore` (envelope),
+  `IComponentStore` (operational + per-kind payload components),
+  `IProjectionStore` (retrieval projections), per-payload stores for
+  high-volume kinds. They share a primary-table-plus-secondary-index
   pattern. The pattern is described in
   [`guides/optimization-roadmap.md`](optimization-roadmap.md) under
   "Secondary & Reverse Indexes" and in
   [`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md)
   under "Domain Stores".
+- Retrieval / index stores: `ILexicalIndex`, `IDenseIndex`,
+  `IGraphIndex`, `ITemporalIndex` consumed by retriever composition.
+- Context / eval / tracing contracts: `ContextBuilder`,
+  `IRetrievalTrace`, `RetrievalMetrics`, `RetrievalDataset`.
+
+Cross-cutting contracts:
+
+- A `SourceRef` first-class provenance value type lifted into the
+  domain layer. Every component / projection that needs citation,
+  every `RetrievalHit`, and every retrieval trace entry references
+  `SourceRef`.
+- A retriever graph built on `RetrievalPlan`, `IUnitRetriever`, and
+  `RetrievalHit` with `KnowledgeUnitId` as the unified key. `ChunkId`
+  is one of many unit kinds, not the only key.
 - A budgeted `IContextBuilder` with per-block budgets, mandatory final
   context logging through `IRetrievalTrace`, and a deterministic
   trim order.
@@ -170,6 +193,10 @@ The architecture has six parts:
   `RetrievalMetrics`) with a golden dataset of at least 50 cases
   spanning at least three intents, and a hybrid lift target of
   `Recall@10 >= 1.20 * Recall@10(BM25-only)`.
+
+> `KnowledgeUnitId` — monotonic opaque `uint64_t` (allocated, never
+> reused). Separate `KnowledgeUnitKey` struct for content-addressing
+> (dedupe, migration, supersedence).
 
 Detailed contracts, MDBX layouts, per-kind field blocks, the QA
 knowledge base, the temporal index, the typed graph, the typed
@@ -327,15 +354,15 @@ matrix и validation rules.
 
 Состав knowledge base:
 
-- Envelope (13 полей lean): id, kind, scope_id, primary_text, display_text,
-  lifecycle_state, sources, timestamps, generation, priority_weight,
-  supersedes/superseded_by.
+- `KnowledgeUnitEnvelope` (13 полей lean): id, kind, scope_id, primary_text,
+  display_text, lifecycle_state, sources, timestamps, generation,
+  priority_weight, supersedes/superseded_by.
 - Components (operational + per-kind payloads): UsageStats, Speaker,
   Temporal, EmbeddingMeta, CompactionMeta + QAPayload, FactPayload,
-  ConversationEpisodePayload, CompiledArticlePayload, ChunkPayload.
+  ChunkPayload, ConversationEpisodePayload, CompiledArticlePayload.
 - SearchProjections (multi-projection retrieval): Original,
-  DenseContextual, Bm25Body/Title/Heading/Symbols, QAQuestion, QAAnswer,
-  Summary, CodeSymbols.
+  DenseContextual, Bm25Fields (Body / Title / Heading / Symbols),
+  QAQuestion, QAAnswer, Summary, CodeSymbols.
 - 7 default MemoryStacks: `BasicRagStack`, `QAKnowledgeBaseStack`,
   `AgentLongTermMemoryStack`, `SpeakerAwareChatStack`, `CompiledWikiStack`,
   `TemporalFactStoreStack`, `FullResearchMemoryStack`.
@@ -345,10 +372,20 @@ matrix и validation rules.
   GraphRelations / EmbeddingMigration / CompiledArticles / ConversationMemory).
 - Validation rules при `MemoryStack::open()` (Decay → UsageStats и т.д.).
 
+> `KnowledgeUnitId` — monotonic opaque `uint64_t` (allocated, never
+> reused). Отдельный `KnowledgeUnitKey` используется для
+> content-addressing (dedupe, migration, supersedence).
+
 Per-kind payloads и lifecycle FSM: см.
 [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md).
 Retrieval flow и evaluation: см.
 [`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md).
+Decay / Write / Speaker policies: см.
+[`guides/policies-roadmap.md`](policies-roadmap.md).
+`CompactionWorker` (job types, handoff): см.
+[`guides/compaction-roadmap.md`](compaction-roadmap.md).
+Runtime services (PromptCache / AsyncIndexer / WriteGate):
+см. [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md).
 
 ## Profile Migration Strategy
 
