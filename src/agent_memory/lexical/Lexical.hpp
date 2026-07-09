@@ -19,6 +19,14 @@
 
 namespace agent_memory {
 
+    /// \brief Numeric identifier of a logical section within a resource.
+    ///
+    /// A section is a coarse-grained span inside a resource (chapter, table,
+    /// appendix). Zero is the "unset" sentinel so default-constructed records
+    /// remain section-less. Sections are stable across re-ingestion of the
+    /// same resource revision.
+    using SectionId = std::uint64_t;
+
     /// \brief Stable numeric identifier for a normalized lexical token.
     class TokenId final {
     public:
@@ -56,6 +64,10 @@ namespace agent_memory {
         ResourceRevision revision;
         std::vector<Token> tokens;
         Metadata metadata;
+        /// \brief Section this chunk belongs to. 0 when not section-scoped.
+        SectionId section_id = 0;
+        /// \brief Enrichment level (0 = passthrough, 1+ = LLM-assisted).
+        std::uint32_t enrichment_level = 0;
 
         /// \brief Returns true when no tokens are present.
         [[nodiscard]] bool empty() const noexcept;
@@ -97,6 +109,14 @@ namespace agent_memory {
         /// \brief Comparable lexical score where higher is always better.
         float score = 0.0F;
         Metadata metadata;
+        /// \brief Section the hit belongs to. 0 when not section-scoped.
+        SectionId section_id = 0;
+        /// \brief Resource the hit belongs to. Empty when not yet wired up.
+        ResourceId resource_id;
+        /// \brief Enrichment level reported by the chunk enricher.
+        std::uint32_t enrichment_level = 0;
+        /// \brief Retrieval tier (0 = chunk, 1 = section, 2 = summary card).
+        std::uint8_t result_tier = 0;
     };
 
     [[nodiscard]] bool operator==(TokenId lhs, TokenId rhs) noexcept;

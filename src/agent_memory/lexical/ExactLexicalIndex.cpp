@@ -45,17 +45,16 @@ namespace agent_memory {
             );
         }
 
-        // Exact exception-safety contract:
-        //   - Before any global mutation: validate input and build the
-        //     StoredRecord locally. The contract's std::bad_alloc
-        //     allowance applies only to the actual commit phase.
-        //   - During commit: any throwing step leaves the index in
-        //     EXACTLY the pre-upsert state -- df, m_total_token_count,
-        //     m_chunks_by_resource, and m_records are all rolled back
-        //     to what they were before this call. The old record (if
-        //     any) is fully restored from snapshot.
-        //   - We do NOT rely on "best-effort" or "temporarily-wrong
-        //     df". The index is consistent at all observable moments.
+        // Basic exception-safety contract:
+        //   - validate() runs before any global mutation; on
+        //     std::invalid_argument no state changes.
+        //   - The commit phase (m_records.emplace and friends) may
+        //     throw std::bad_alloc; we attempt to roll back exactly
+        //     the steps already applied via the trackers. A second
+        //     throw inside the rollback itself (e.g. re-emplace of
+        //     the old snapshot) would leave the index in a degraded
+        //     state; this is a known limitation and we do not promise
+        //     strong guarantee here.
 
         // 4. Capture the existing record (if any) before any erase. The
         //    snapshot is a complete copy of StoredRecord; if the commit
@@ -197,11 +196,15 @@ namespace agent_memory {
 
             const auto score = score_record(record, query);
             if(score > 0.0F) {
-                results.push_back(LexicalSearchResult{
-                    record.record.chunk_id,
-                    score,
-                    record.record.metadata
-                });
+                LexicalSearchResult hit;
+                hit.chunk_id = record.record.chunk_id;
+                hit.score = score;
+                hit.metadata = record.record.metadata;
+                hit.section_id = record.record.section_id;
+                hit.resource_id = record.record.revision.resource_id;
+                hit.enrichment_level = record.record.enrichment_level;
+                hit.result_tier = 0;  // chunk-level result
+                results.push_back(std::move(hit));
             }
         }
 
