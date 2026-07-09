@@ -20,7 +20,7 @@ namespace agent_memory {
         m_index = &index;
     }
 
-    void HybridRetrievalEngine::set_reranker(std::unique_ptr<IReranker> reranker) noexcept {
+    void HybridRetrievalEngine::set_reranker(std::unique_ptr<IReranker> reranker) {
         if(reranker) {
             m_reranker = std::move(reranker);
         } else {
@@ -28,7 +28,7 @@ namespace agent_memory {
         }
     }
 
-    void HybridRetrievalEngine::set_query_analyzer(std::unique_ptr<IQueryAnalyzer> analyzer) noexcept {
+    void HybridRetrievalEngine::set_query_analyzer(std::unique_ptr<IQueryAnalyzer> analyzer) {
         if(analyzer) {
             m_analyzer = std::move(analyzer);
         } else {

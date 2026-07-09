@@ -25,7 +25,23 @@ namespace agent_memory {
 
     /// \brief Input request for an IRetrievalEngine.
     struct RetrievalRequest final {
-        /// \brief Raw query text.
+        /// \brief Raw user query text.
+        ///
+        /// The default `HybridRetrievalEngine` runs the query through the
+        /// installed `IQueryAnalyzer` before hitting the lexical index.
+        /// Without a custom analyzer the engine installs
+        /// `PassthroughQueryAnalyzer`, which performs a minimal
+        /// whitespace split: single-term queries are kept as one keyword
+        /// and multi-term queries are split into one keyword per
+        /// whitespace-separated token. If the analyzer produces no
+        /// keywords, the engine falls back to the raw `query` string as a
+        /// single term.
+        ///
+        /// For real tokenization, stemming, query expansion, or
+        /// synonym/structured-fact overlay, install a custom
+        /// `IQueryAnalyzer` (e.g. an `ITokenizer`-driven pipeline) via
+        /// `HybridRetrievalEngine::set_query_analyzer`. Without such a
+        /// custom analyzer the engine does no language-aware processing.
         std::string query;
         /// \brief Maximum number of items to return. Zero requests no items.
         std::size_t limit = 10;

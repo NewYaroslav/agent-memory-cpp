@@ -44,12 +44,16 @@ namespace agent_memory {
 
         /// \brief Replaces the reranker. A null pointer resets to the
         ///        identity reranker so retrieve() never dereferences null.
-        void set_reranker(std::unique_ptr<IReranker> reranker) noexcept;
+        /// \note May throw `std::bad_alloc` if `nullptr` is passed and the
+        ///       default implementation's `std::make_unique` allocates.
+        void set_reranker(std::unique_ptr<IReranker> reranker);
 
         /// \brief Replaces the query analyzer. A null pointer resets to
         ///        the passthrough analyzer so retrieve() never
         ///        dereferences null.
-        void set_query_analyzer(std::unique_ptr<IQueryAnalyzer> analyzer) noexcept;
+        /// \note May throw `std::bad_alloc` if `nullptr` is passed and the
+        ///       default implementation's `std::make_unique` allocates.
+        void set_query_analyzer(std::unique_ptr<IQueryAnalyzer> analyzer);
 
         [[nodiscard]] RetrievalResponse retrieve(
             const RetrievalRequest& request
