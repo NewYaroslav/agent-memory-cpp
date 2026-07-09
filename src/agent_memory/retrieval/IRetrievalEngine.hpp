@@ -8,9 +8,8 @@
 /// This contract sits one layer above `IRetriever` and reserves hooks for
 /// the future enrichment/analyze/rerank/structured-facts pipeline. The
 /// default implementation (`HybridRetrievalEngine`) composes `ILexicalIndex`
-/// with `IdentityReranker`, `PassthroughQueryAnalyzer`, and
-/// `PassthroughChunkEnricher`. Replace any of those to light up richer
-/// behaviour without changing call sites.
+/// with `IdentityReranker` and `PassthroughQueryAnalyzer`. Replace any of
+/// those to light up richer behaviour without changing call sites.
 
 #include "../domain/MetadataFilter.hpp"
 #include "../lexical/IQueryAnalyzer.hpp"
@@ -35,6 +34,11 @@ namespace agent_memory {
     };
 
     /// \brief Single entry in an engine response.
+    ///
+    /// Section, resource, and result-tier identifiers live on `lexical`
+    /// only; `MemoryObject` carries the object id (when the result tier
+    /// is chunk), metadata, and enrichment level. Callers should read
+    /// structural fields from `item.lexical`.
     struct RetrievalResponseItem final {
         LexicalSearchResult lexical;
         MemoryObject object;
@@ -55,6 +59,13 @@ namespace agent_memory {
     ///
     /// Implementations are not required to be thread-safe. Calls may throw
     /// std::bad_alloc or backend-specific transport exceptions.
+    ///
+    /// Thread-safety:
+    ///   set_* hook installations (e.g. set_lexical_index, set_reranker,
+    ///   set_query_analyzer) MUST NOT be invoked concurrently with
+    ///   retrieve(); doing so is a data race. Outside of those
+    ///   configuration points concurrent reads from retrieve() are
+    ///   safe only when documented by the concrete engine.
     class IRetrievalEngine {
     public:
         virtual ~IRetrievalEngine();

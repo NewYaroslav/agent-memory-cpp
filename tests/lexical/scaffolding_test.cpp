@@ -67,8 +67,14 @@ namespace {
         if(!analysis.rewritten.empty()) {
             return fail("passthrough analyzer must leave rewritten empty");
         }
-        if(!agent_memory::is_identity(analysis)) {
-            return fail("passthrough analyzer output must be identity");
+        // Passthrough analyzer now performs a minimal whitespace split
+        // so the default HybridRetrievalEngine pipeline can find
+        // multi-term matches; keywords is therefore no longer empty.
+        if(analysis.keywords.size() != 3
+            || analysis.keywords[0] != "agent"
+            || analysis.keywords[1] != "memory"
+            || analysis.keywords[2] != "toolkit") {
+            return fail("passthrough analyzer must populate keywords from whitespace split");
         }
         if(analysis.type != agent_memory::QueryType::SemanticLookup) {
             return fail("passthrough analyzer must default to SemanticLookup");
@@ -136,12 +142,13 @@ namespace {
         agent_memory::MemoryObject object;
         object.id = agent_memory::MemoryObjectId{"obj:1"};
         object.type = agent_memory::ObjectType::Section;
+        object.resource_id = agent_memory::ResourceId{"resource:alpha"};
         object.section_id = 7;
         object.enrichment_level = 1;
         object.result_tier = 1;
 
         if(!agent_memory::is_valid(object)) {
-            return fail("MemoryObject with id must be valid");
+            return fail("MemoryObject with id+resource+section must be valid");
         }
         if(object.section_id != 7 || object.enrichment_level != 1) {
             return fail("MemoryObject must retain section_id and enrichment_level");
@@ -457,8 +464,12 @@ namespace {
         if(item.object.type != agent_memory::ObjectType::Chunk) {
             return fail("HybridRetrievalEngine must surface MemoryObject of type Chunk");
         }
-        if(item.object.section_id != 5 || item.object.resource_id.value() != "resource:alpha") {
-            return fail("HybridRetrievalEngine must copy section/resource onto MemoryObject");
+        if(item.object.id.value() != "chunk:alpha:0") {
+            return fail("HybridRetrievalEngine must set object.id for chunk-tier results");
+        }
+        if(!item.object.resource_id.empty() || item.object.section_id != 0) {
+            return fail("HybridRetrievalEngine must not duplicate section/resource onto MemoryObject; "
+                        "callers should read them from item.lexical");
         }
         return 0;
     }
@@ -474,6 +485,52 @@ namespace {
         const auto response = engine.retrieve(request);
         if(!response.empty()) {
             return fail("HybridRetrievalEngine must return empty response when limit == 0");
+        }
+        return 0;
+    }
+
+    int test_exact_lexical_index_populates_search_result_fields() {
+        agent_memory::ExactLexicalIndex index;
+
+        agent_memory::LexicalDocumentRecord record;
+        record.chunk_id = agent_memory::ChunkId{"chunk:alpha:7"};
+        record.revision = agent_memory::ResourceRevision{
+            agent_memory::ResourceId{"resource:alpha"},
+            1,
+            11,
+            17
+        };
+        record.tokens = {
+            make_token("hello", 0),
+            make_token("world", 1)
+        };
+        record.section_id = 42;
+        record.enrichment_level = 2;
+        index.upsert(std::move(record));
+
+        agent_memory::LexicalSearchQuery query;
+        query.terms = {"hello"};
+        query.limit = 10;
+
+        const auto hits = index.search(query);
+        if(hits.empty()) {
+            return fail("ExactLexicalIndex must return at least one hit for matching term");
+        }
+        const auto& front = hits.front();
+        if(front.chunk_id != agent_memory::ChunkId{"chunk:alpha:7"}) {
+            return fail("ExactLexicalIndex hit must preserve chunk_id from record");
+        }
+        if(front.section_id != 42) {
+            return fail("ExactLexicalIndex hit must surface section_id from record");
+        }
+        if(front.resource_id != agent_memory::ResourceId{"resource:alpha"}) {
+            return fail("ExactLexicalIndex hit must surface resource_id from record.revision");
+        }
+        if(front.enrichment_level != 2) {
+            return fail("ExactLexicalIndex hit must surface enrichment_level from record");
+        }
+        if(front.result_tier != 0) {
+            return fail("ExactLexicalIndex hit must report result_tier == 0 for chunk-level results");
         }
         return 0;
     }
@@ -500,5 +557,6 @@ int main() {
     failures += test_lexical_search_result_carries_section_resource_tier();
     failures += test_hybrid_retrieval_engine_returns_index_results();
     failures += test_hybrid_retrieval_engine_respects_zero_limit();
+    failures += test_exact_lexical_index_populates_search_result_fields();
     return failures > 0 ? 1 : 0;
 }

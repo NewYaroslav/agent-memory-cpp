@@ -37,7 +37,20 @@ namespace agent_memory {
     }
 
     bool is_valid(const MemoryObject& object) noexcept {
-        return !object.id.empty();
+        if(object.id.empty()) {
+            return false;
+        }
+        switch(object.type) {
+            case ObjectType::Document:
+                return true;
+            case ObjectType::Section:
+                return !object.resource_id.empty() && object.section_id != 0;
+            case ObjectType::Episode:
+            case ObjectType::MemoryCard:
+            case ObjectType::Chunk:
+                return !object.resource_id.empty();
+        }
+        return false;
     }
 
 } // namespace agent_memory

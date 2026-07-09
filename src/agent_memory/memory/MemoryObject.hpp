@@ -11,9 +11,11 @@
 
 #include "../domain/Metadata.hpp"
 #include "../domain/Resource.hpp"
+#include "../lexical/Lexical.hpp"
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace agent_memory {
@@ -60,7 +62,7 @@ namespace agent_memory {
         ObjectType type = ObjectType::Chunk;
         ResourceId resource_id;
         /// \brief Section identifier (0 when the object is not section-scoped).
-        std::uint64_t section_id = 0;
+        SectionId section_id = 0;
         /// \brief Optional short summary/title.
         std::string title;
         /// \brief Optional longer text body (may be empty).

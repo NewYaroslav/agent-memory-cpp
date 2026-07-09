@@ -113,6 +113,8 @@ namespace agent_memory {
         SectionId section_id = 0;
         /// \brief Resource the hit belongs to. Empty when not yet wired up.
         ResourceId resource_id;
+        /// \brief Enrichment level reported by the chunk enricher.
+        std::uint32_t enrichment_level = 0;
         /// \brief Retrieval tier (0 = chunk, 1 = section, 2 = summary card).
         std::uint8_t result_tier = 0;
     };

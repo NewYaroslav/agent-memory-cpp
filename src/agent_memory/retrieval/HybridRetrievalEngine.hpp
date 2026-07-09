@@ -42,11 +42,14 @@ namespace agent_memory {
         /// \brief Replaces the lexical index.
         void set_lexical_index(const ILexicalIndex& index) noexcept;
 
-        /// \brief Replaces the reranker.
-        void set_reranker(std::unique_ptr<IReranker> reranker);
+        /// \brief Replaces the reranker. A null pointer resets to the
+        ///        identity reranker so retrieve() never dereferences null.
+        void set_reranker(std::unique_ptr<IReranker> reranker) noexcept;
 
-        /// \brief Replaces the query analyzer.
-        void set_query_analyzer(std::unique_ptr<IQueryAnalyzer> analyzer);
+        /// \brief Replaces the query analyzer. A null pointer resets to
+        ///        the passthrough analyzer so retrieve() never
+        ///        dereferences null.
+        void set_query_analyzer(std::unique_ptr<IQueryAnalyzer> analyzer) noexcept;
 
         [[nodiscard]] RetrievalResponse retrieve(
             const RetrievalRequest& request

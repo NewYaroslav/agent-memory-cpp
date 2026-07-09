@@ -20,12 +20,20 @@ namespace agent_memory {
         m_index = &index;
     }
 
-    void HybridRetrievalEngine::set_reranker(std::unique_ptr<IReranker> reranker) {
-        m_reranker = std::move(reranker);
+    void HybridRetrievalEngine::set_reranker(std::unique_ptr<IReranker> reranker) noexcept {
+        if(reranker) {
+            m_reranker = std::move(reranker);
+        } else {
+            m_reranker = std::make_unique<IdentityReranker>();
+        }
     }
 
-    void HybridRetrievalEngine::set_query_analyzer(std::unique_ptr<IQueryAnalyzer> analyzer) {
-        m_analyzer = std::move(analyzer);
+    void HybridRetrievalEngine::set_query_analyzer(std::unique_ptr<IQueryAnalyzer> analyzer) noexcept {
+        if(analyzer) {
+            m_analyzer = std::move(analyzer);
+        } else {
+            m_analyzer = std::make_unique<PassthroughQueryAnalyzer>();
+        }
     }
 
     RetrievalResponse HybridRetrievalEngine::retrieve(
@@ -58,11 +66,17 @@ namespace agent_memory {
         for(const auto& hit : hits) {
             RetrievalResponseItem item;
             item.lexical = hit;
-            item.object.id = MemoryObjectId{std::string(hit.chunk_id.value())};
+            // The lexical hit already carries section_id, resource_id,
+            // and result_tier; readers should pull those values from
+            // item.lexical. We only copy chunk-id and metadata onto
+            // item.object, plus the enrichment level carried by the
+            // upstream enricher.
             item.object.type = ObjectType::Chunk;
-            item.object.resource_id = hit.resource_id;
-            item.object.section_id = hit.section_id;
-            item.object.result_tier = hit.result_tier;
+            item.object.metadata = hit.metadata;
+            item.object.enrichment_level = hit.enrichment_level;
+            if(hit.result_tier == 0) {
+                item.object.id = MemoryObjectId{std::string(hit.chunk_id.value())};
+            }
             response.items.push_back(std::move(item));
         }
 
