@@ -4,6 +4,8 @@
 
 > В будущем планируется переименование файла в `knowledge-payloads-roadmap.md` после завершения всех изменений; текущее имя сохранено для совместимости cross-references.
 
+> C++17 compliance: кодовые сниппеты используют явные конструкторы вместо designated initializers, `const std::vector<T>&` вместо `std::span`, builder-методы где уместно. Компилируемые примеры — в `examples/` (отдельная задача).
+
 ## 1. Purpose
 
 Этот документ описывает:
@@ -11,7 +13,7 @@
 - `KnowledgeUnitKind` (canonical enum) и kind → payload mapping (какой kind использует какой payload).
 - Per-kind правила генерации `primary_text` и `SearchProjection`.
 - `SourceRef` contract и migration mapping.
-- `KnowledgeUnitId` hash-scheme (с разделителями `<kind>:<scope>:<hash>`).
+- `KnowledgeUnitId` monotonic-uint64 scheme (opaque, никогда не reused; content-addressing через отдельный `KnowledgeUnitKey`).
 - Lifecycle FSM (включая `SoftSuppressed` state) и anti-loop подсвинок.
 - Manifest integration через `DerivedRecordKind`.
 - Storage pattern: per-component DBI allocation и capability-aware DBI creation.
@@ -79,76 +81,168 @@ enum class KnowledgeUnitKind : uint16_t {
 
 `SourceRef` — first-class provenance для всех retrieval-eligible units. Обязателен для Fact, QAPair, Relation, Event, и любого GraphNode, доступного через expansion. Рекомендуется для Chunk и CompiledArticle.
 
+В M0 contract разделяется на два слоя: `SourceRefSummary` (inline, ≤256 байт preview, всегда присутствует в envelope) и полная `SourceRef` (с `excerpt_text`, хранится в отдельной `source_refs` DBI, появляется в M1).
+
 ```cpp
 struct TextRange {
     uint64_t byte_offset;
     uint64_t byte_length;
 };
 
-struct SourceRef {
+struct SourceRefSummary {
     ResourceId resource_id;          // обязательно
     std::string uri;                 // обязательно (для citations)
     TextRange excerpt;               // обязательно для quote-based refs
-    std::string excerpt_text;        // сам excerpt (verbatim UTF-8)
     std::array<uint8_t, 16> quote_hash;  // обязательно: SHA1(prefix(excerpt))[:16]
     double confidence;               // [0.0, 1.0]
     std::optional<KnowledgeUnitId> anchor_unit_id;  // связь на parent unit
     std::optional<uint64_t> observed_at_ms;
+    std::string preview;             // inline excerpt, ≤256 байт
+};
+
+struct SourceRef {
+    SourceRefSummary summary;        // обязательно: ссылка на inline summary
+    std::string excerpt_text;        // полный текст цитаты (verbatim UTF-8)
 };
 ```
 
 ### 3.1. Обязательные поля и инварианты
 
 - `resource_id` — обязателен для reverse lookup по ресурсу.
-- `uri` — обязателен для citation fidelity (`excerpt_text + uri` = stable citation).
-- `quote_hash` — обязателен: 16-byte hex of SHA1(`prefix(excerpt_text)`). Обеспечивает детерминированную идентификацию цитат без хранения полного текста в каждом индексе.
+- `uri` — обязателен для citation fidelity (`preview + uri` = stable short citation; `excerpt_text + uri` = stable full citation).
+- `quote_hash` — обязателен: 16-byte hex of SHA1(`prefix(preview)`) для summary, либо SHA1(`prefix(excerpt_text)`) для полной SourceRef. Обеспечивает детерминированную идентификацию цитат без хранения полного текста в каждом индексе.
+- `preview` (≤256 байт) — обязателен в summary; используется в UI, short citations, projection и не требует обращения к `source_refs` DBI.
 
 ### 3.2. Storage
 
-`SourceRef[]` хранится в `envelope.sources`. Secondary index по `resource_id` строится через `metadata_filters` (DBI) — см. `memory-stacks-roadmap.md` секция 12.3. При необходимости быстрого reverse lookup добавляется отдельный DBI `source_refs_by_resource` (опционально, не в M1 budget).
+**M0 (без `source_refs` DBI):**
+- В envelope: `vector<SourceRefSummary>`, **максимум 3 summary на unit** (budget: ≤3 × ~256 байт ≈ 768 байт на envelope).
+- Полные цитаты не хранятся; `preview` используется как для UI, так и для BM25F indexing (через search projection).
 
-## 4. KnowledgeUnitId (hash-based scheme)
+**M1 (добавление `source_refs` DBI):**
+- В envelope остаётся `vector<SourceRefSummary>` (≤3).
+- Полные `SourceRef` с `excerpt_text` хранятся в отдельной `source_refs` DBI (key = `KnowledgeUnitId` → `vector<SourceRef>`).
+- Reverse lookup по `resource_id` строится через `metadata_filters` (DBI) — см. `memory-stacks-roadmap.md` секция 12.3.
+- При необходимости быстрого reverse lookup добавляется отдельный DBI `source_refs_by_resource` (опционально, не в M1 budget).
 
-`KnowledgeUnitId` — opaque strong-typedef, монотонно аллоцируется per backend, никогда не reused после erase.
+Пример создания envelope с inline summary (M0):
+
+```cpp
+SourceRefSummary summary;
+summary.resource_id = ResourceId::from_uri("https://docs.example.com/spec");
+summary.uri = "https://docs.example.com/spec#section-3";
+summary.excerpt = TextRange{/*byte_offset=*/1024, /*byte_length=*/512};
+summary.preview = "first ~256 bytes of the excerpt...";
+summary.quote_hash = compute_quote_hash(summary.preview);
+summary.confidence = 0.92;
+
+KnowledgeUnitEnvelopeBuilder env_builder;
+env_builder.set_id(KnowledgeUnitId::allocate());
+env_builder.set_kind(KnowledgeUnitKind::Fact);
+env_builder.set_scope(ScopeId::global());
+env_builder.add_source_summary(summary);  // inline, ≤3 на unit
+auto env = env_builder.build();
+```
+
+## 4. KnowledgeUnitId (monotonic scheme) и KnowledgeUnitKey
+
+`KnowledgeUnitId` — opaque strong-typedef wrapper над `uint64_t`. Используется исключительно как **primary key** для storage layer и для cross-reference между units (anchor, supersedes, derived_from). Аллоцируется **монотонно**, **никогда не reused** после erase.
+
+Content-addressing (дедупликация, миграция, idempotent upsert) выполняется через **отдельный** `KnowledgeUnitKey` (kind + scope + `ContentHash`). Это разделяет два разных понятия:
+
+- **ID** = runtime identity, opaque handle для map key, cross-reference и supersedence chains. Меняется при erase/recreate. Monotonic uint64_t.
+- **Key** = content-addressing handle, детерминированно вычисляется из payload. Один и тот же content → один и тот же key. Используется для dedupe (две записи одного контента), миграции и bulk import.
 
 ```cpp
 class KnowledgeUnitId {
 public:
-    static KnowledgeUnitId from_content(
-        KnowledgeUnitKind kind,
-        ScopeId scope,
-        std::span<const uint8_t> content_bytes,
-        std::span<const uint8_t> pipeline_salt);
+    static KnowledgeUnitId allocate();  // монотонно, opaque, никогда не reused
 
-    std::string to_string() const;  // "<kind>:<scope>:<hash_hex>"
-    bool operator==(const KnowledgeUnitId&) const;
-    std::strong_ordering operator<=>(const KnowledgeUnitId&) const;
+    uint64_t value() const noexcept;
+    bool operator==(const KnowledgeUnitId&) const noexcept = default;
+    std::strong_ordering operator<=>(const KnowledgeUnitId&) const noexcept = default;
+
 private:
-    KnowledgeUnitKind m_kind;
-    ScopeId m_scope;
-    std::array<uint8_t, 16> m_hash;
+    uint64_t m_value;
+};
+
+class ContentHash {
+public:
+    // NB: псевдокод; реальная имплементация принимает ByteView или const std::vector<uint8_t>&
+    static ContentHash compute(const std::vector<uint8_t>& bytes);
+
+    std::array<uint8_t, 16> bytes() const noexcept;
+    bool operator==(const ContentHash&) const noexcept = default;
+};
+
+struct KnowledgeUnitKey {
+    KnowledgeUnitKind kind;
+    ScopeId scope;
+    ContentHash content_hash;
+
+    bool operator==(const KnowledgeUnitKey&) const noexcept = default;
+    std::strong_ordering operator<=>(const KnowledgeUnitKey&) const noexcept = default;
 };
 ```
 
-### 4.1. Format
+### 4.1. Allocation и инварианты
 
-`<kind>:<scope>:<16-byte-hex>`, где hash = SHA256(content_bytes || pipeline_salt || kind_salt)[0..16].
+- `KnowledgeUnitId::allocate()` выдаёт монотонно возрастающий `uint64_t` per backend (per-MDBX-env atomic counter). Не зависит от content.
+- Reuse id после erase запрещён (даже если соответствующий unit удалён).
+- `KnowledgeUnitId` opaque для storage layer; не парсится ни во что.
+- При экспорте в логи/traces допускается hex-форма `to_string()` (32 hex chars), но не должно влиять на routing.
+- Strong typedef: нет implicit conversion в `std::string`, `ChunkId` или арифметические типы.
 
-Примеры:
+### 4.2. DBI mapping
 
-- `chunk:user:yaroslav:9b3f4e2a81c5d670`
-- `qa:agent:nika:7a1c5d6708b3f4e2`
-- `fact:project:agent_memory:5d6708b3f4e2a81c`
+Storage использует **два** DBI для разделения identity и content:
 
-### 4.2. Правила
+| DBI | Key | Value | Назначение |
+|---|---|---|---|
+| `unit_id_to_envelope` | `KnowledgeUnitId` | `KnowledgeUnitEnvelope` | primary storage; O(1) lookup по id |
+| `content_key_to_unit_id` | `KnowledgeUnitKey` | `KnowledgeUnitId` | dedupe/migration; O(1) "есть ли уже unit с таким content?" |
 
-- Ids opaque для storage layer; не парсить hash для routing.
-- Префикс `kind:` обязателен (для читаемых логов и traces).
-- Hash пересчитывается при изменении `content_bytes`, `pipeline_salt` или `kind_salt`.
-- Reuse id после erase запрещён.
-- Strong typedef: нет implicit conversion в `std::string` или `ChunkId`.
+Идемпотентный upsert через `content_key_to_unit_id`:
 
-`KnowledgeUnitId` обязателен для map key, `envelope.id`, `projection.unit_id`, `RetrievalHit.unit_id` и любых cross-reference (anchor_unit_id, supersedes, superseded_by, derived_from).
+```cpp
+// 1. Вычислить key из payload.
+KnowledgeUnitKey key{
+    unit.kind,
+    unit.scope,
+    ContentHash::compute(serialize_payload(unit.payload))
+};
+
+// 2. Проверить наличие существующего unit.
+auto existing = content_key_to_unit_id.find(key);
+if (existing) {
+    return UpsertResult::Existed{existing->unit_id};  // dedupe
+}
+
+// 3. Аллоцировать новый monotonic id и записать обе записи в одной транзакции.
+auto new_id = KnowledgeUnitId::allocate();
+unit.id = new_id;
+MultiTableWriter writer;
+writer.put(unit_id_to_envelope, new_id, unit);
+writer.put(content_key_to_unit_id, key, new_id);
+writer.commit();
+```
+
+### 4.3. Миграция с hash-based scheme
+
+Переход от старого `<kind>:<scope>:<hash>` (где hash = SHA256(content)) к monotonic-uint64 — **breaking change**. При наличии существующих БД требуется migration script:
+
+1. Прочитать все envelope из старой БД.
+2. Для каждого envelope:
+   - Извлечь `(kind, scope, content_hash)` из старого ID.
+   - Аллоцировать новый monotonic `KnowledgeUnitId`.
+   - Перезаписать envelope с новым id в `unit_id_to_envelope`.
+   - Записать `KnowledgeUnitKey → KnowledgeUnitId` в `content_key_to_unit_id`.
+3. Обновить все cross-reference (`anchor_unit_id`, `superseded_by`, `derived_from`) — старые ID заменяются на новые через lookup-таблицу.
+4. Перестроить `inverted_token_to_unit`, `field_to_postings`, secondary indexes.
+
+Migration запускается отдельной утилитой (`agent-memory-cli migrate-ku-id-scheme`), не часть core API. Round-trip test обязателен.
+
+`KnowledgeUnitId` обязателен для map key, `envelope.id`, `projection.unit_id`, `RetrievalHit.unit_id` и любых cross-reference (anchor_unit_id, superseded_by, derived_from).
 
 ## 5. Per-Kind Specifications
 
@@ -167,6 +261,18 @@ struct ChunkPayload {
     std::vector<std::string> symbols;           // extracted identifiers
     std::optional<std::string> detected_language;
 };
+```
+
+#### 5.1.0. Explicit construction (без designated initializers)
+
+```cpp
+ChunkPayload chunk;
+chunk.byte_offset = 4096;
+chunk.byte_length = 1024;
+chunk.heading_path = {HeadingPathItem{"Chapter 1"}, HeadingPathItem{"Section 1.2"}};
+chunk.code_blocks = {std::string{"void foo() { return; }"}};
+chunk.symbols = {std::string{"foo"}, std::string{"bar"}};
+chunk.detected_language = std::string{"cpp"};
 ```
 
 #### 5.1.1. Per-kind primary_text generation rule
@@ -195,6 +301,18 @@ struct QAPayload {
     uint64_t last_verified_at_ms;
     std::optional<std::string> expected_format;  // "text", "json", "code", ...
 };
+```
+
+#### 5.2.0. Explicit construction (без designated initializers)
+
+```cpp
+QAPayload qa;
+qa.canonical_question = "How does the KnowledgeUnitId allocator work?";
+qa.question_variants = {"KU id allocation", "monotonic unit id"};
+qa.answer = "KnowledgeUnitId::allocate() returns a monotonic uint64_t ...";
+qa.category = "architecture";
+qa.last_verified_at_ms = 1700000000000;
+qa.expected_format = std::string{"text"};
 ```
 
 #### 5.2.1. Per-kind primary_text
@@ -228,6 +346,18 @@ struct FactPayload {
     std::optional<std::string> unit;   // "USD", "kg", "Celsius", ...
     std::vector<std::string> aliases;  // alternative formulations
 };
+```
+
+#### 5.3.0. Explicit construction (без designated initializers)
+
+```cpp
+FactPayload fact;
+fact.subject = "Einstein";
+fact.predicate = "born_in";
+fact.object = "Ulm";
+fact.value_type = "string";
+fact.unit = std::nullopt;
+fact.aliases = {"Albert Einstein", "Альберт Эйнштейн"};
 ```
 
 #### 5.3.1. Per-kind primary_text
@@ -360,7 +490,7 @@ Lifecycle FSM определён в `memory-stacks-roadmap.md` ADR-011 и рас
 ```cpp
 enum class LifecycleState : uint8_t {
     Active = 0,           // active, retrieval-eligible
-    SoftSuppressed = 1,   // пониженный приоритет (anti-loop подсвинок)
+    SoftSuppressed = 1,   // пониженный приоритет (anti-loop подсвинок; длительность — DecayPolicy::cooldown_ms)
     Superseded = 2,       // заменён другим unit (bi-temporal chain)
     Deprecated = 3,       // помечен на удаление (compaction candidate)
     Erased = 4,           // физически удалён (или logical erase)
@@ -372,8 +502,8 @@ enum class LifecycleState : uint8_t {
 | From | To | Trigger | Action |
 |---|---|---|---|
 | (new) | Active | write | initial state |
-| Active | SoftSuppressed | retrieval retrieves this unit + cooldown | priority умножается на self_echo_suppression (default 0.3) |
-| SoftSuppressed | Active | cooldown_until_ms elapsed | priority восстанавливается |
+| Active | SoftSuppressed | retrieval retrieves this unit + DecayPolicy::self_echo_suppression | priority умножается на self_echo_suppression (default 0.3) на DecayPolicy::cooldown_ms |
+| SoftSuppressed | Active | DecayPolicy::cooldown_ms elapsed | priority восстанавливается |
 | Active | Superseded | supersede operation (newer unit supersedes older) | старый unit помечается Superseded, новый становится Active |
 | Superseded | Deprecated | compaction review | после N дней в Superseded |
 | Active | Deprecated | manual deprecation | авторский сигнал через WriteRequest |
@@ -382,7 +512,7 @@ enum class LifecycleState : uint8_t {
 ### 6.3. Retrieval semantics
 
 - **Active**: применяется full scoring (BM25F + decay + boost). Участвует в RRF fusion с полным весом.
-- **SoftSuppressed**: применяется full scoring, но с пониженным приоритетом в fusion (RRF multiplier или scoring weight умножается на self_echo_suppression).
+- **SoftSuppressed**: применяется full scoring, но с пониженным приоритетом в fusion (RRF multiplier или scoring weight умножается на `DecayPolicy::self_echo_suppression`). Длительность подавления определяется `DecayPolicy::cooldown_ms`.
 - **Superseded**: filtered out by default, доступен только через явный filter (bi-temporal query).
 - **Deprecated**: filtered out, доступен только через audit dump.
 - **Erased**: не возвращается ни в одном retrieval; id не reuse'ится.
@@ -391,10 +521,12 @@ enum class LifecycleState : uint8_t {
 
 Поведение `SoftSuppressed` используется в `AgentLongTermMemory` stack для предотвращения "только что использованный факт снова в retrieval":
 
-- После retrieval unit получает `SoftSuppressed` на `cooldown_ms` (default 60s).
-- `priority_weight` (или RRF contribution) умножается на `self_echo_suppression` (default 0.3).
+- Cooldown определяется **в `DecayPolicy::cooldown_ms`**, не в Lifecycle FSM (FSM описывает только состояния и переходы, длительность подавления — параметр policy).
+- После успешного retrieval unit переводится в `SoftSuppressed` через `DecayPolicy::self_echo_suppression` (применяется **после** retrieval как runtime adjustment, не как персистентный lifecycle transition обязательно).
+- `priority_weight` (или RRF contribution) умножается на `self_echo_suppression` (default 0.3) на время `cooldown_ms` (default 60s).
+- По истечении `cooldown_ms` unit автоматически возвращается в `Active`.
 - Используется в `DecayAwareRetriever` (см. `knowledge-base-roadmap.md` секция 7.4).
-- Усиливается фильтром `AntiLoopCooldown` для строгого respect cooldown.
+- Усиливается фильтром `AntiLoopCooldown` для строгого respect cooldown (hard filter — полностью исключает unit из выдачи до истечения cooldown).
 
 Подсвинок активируется при `SpeakerComponent.speaker_id == agent_self_id` (см. `memory-stacks-roadmap.md` ADR-008).
 
@@ -419,6 +551,9 @@ enum class DerivedRecordKind : uint32_t {
     ConversationEpisodePayload = 113,
     CompiledArticlePayload = 114,
     SearchProjection = 120,
+    KnowledgeUnitKey = 121,
+    SourceRefSummary = 122,
+    SourceRef = 123,
 };
 ```
 
@@ -487,30 +622,60 @@ DBI budget target ≤ 64 (расширение `max_dbs` 16→64 в `mdbx-contai
 
 Если уже есть старые базы — отдельный migration script (`agent-memory-cli migrate-monolithic-ku`), не часть core API.
 
-### 9.2. SourceRef Schema Migration
+### 9.2. SourceRef Schema Migration (inline → separate DBI)
+
+**M0 → M1 migration:** переход от inline `SourceRef[]` в envelope к разделению `SourceRefSummary` (inline, ≤3 на unit) + полная `SourceRef` в `source_refs` DBI.
 
 ```cpp
-// Старый SourceRef → новый SourceRef
+// Старый SourceRef → новый SourceRefSummary + SourceRef
 struct OldSourceRef {
     std::string uri;
-    std::string excerpt;
+    std::string excerpt;            // полный excerpt (verbatim UTF-8)
     uint64_t byte_offset;
     uint64_t byte_length;
     std::optional<std::string> quote_hash;
 };
 
 // Mapping:
-// - uri → uri (kept)
-// - excerpt + TextRange → excerpt + excerpt_text
-// - quote_hash (optional) → quote_hash (required, вычисляется из excerpt если missing)
+// - uri → SourceRefSummary.uri (kept)
+// - byte_offset + byte_length → SourceRefSummary.excerpt (TextRange)
+// - excerpt (first ≤256 байт) → SourceRefSummary.preview
+// - excerpt (full) → SourceRef.excerpt_text (в source_refs DBI)
+// - quote_hash (optional) → SourceRefSummary.quote_hash (required, вычисляется из preview если missing)
 // - ResourceId добавляется через reverse lookup по uri
 // - anchor_unit_id добавляется (default = nullopt)
 // - observed_at_ms добавляется (default = nullopt)
 ```
 
-Migration вычисляет missing `quote_hash` через SHA1(`excerpt`)[:16], добавляет `ResourceId` через reverse lookup по uri (resource registry mapping), сохраняет остальные поля.
+Migration strategy:
 
-### 9.3. Migration Steps
+1. Для каждого envelope: прочитать `sources: SourceRef[]`.
+2. Для каждой SourceRef:
+   - Создать `SourceRefSummary`: `preview = excerpt.substr(0, 256)`, остальные поля маппятся 1:1.
+   - Создать полную `SourceRef` с `summary = <Summary>` и `excerpt_text = excerpt`.
+3. Если unit имеет > 3 source refs: top-3 (по `confidence`) оставить как inline `SourceRefSummary`, остальные — только в `source_refs` DBI (полная версия).
+4. Заменить `envelope.sources` на `vector<SourceRefSummary>` (≤3).
+5. Записать все полные `SourceRef` в `source_refs` DBI под тем же `KnowledgeUnitId`.
+6. Перестроить `metadata_filters` index по `resource_id` если требуется.
+
+**M0 → M1 migration запускается отдельной утилитой** (`agent-memory-cli migrate-sourceref-inline-to-dbi`), не часть core API. Round-trip test обязателен: read all units, dump `source_refs` DBI, verify byte-for-byte equality excerpts.
+
+### 9.3. KnowledgeUnitId Migration (hash-based → monotonic)
+
+> **Breaking change:** KnowledgeUnitId migration от контент-хэша (`<kind>:<scope>:<hash>`) к монотонному `uint64_t` — breaking change, требует migration script для всех существующих БД.
+
+Детальная процедура описана в секции 4.3 (DBI mapping → migration). Краткое summary:
+
+1. Построить lookup-таблицу `old_id → new_id` через чтение всех envelope и вычисление `KnowledgeUnitKey` (kind, scope, content_hash из старого ID).
+2. Аллоцировать новый monotonic `KnowledgeUnitId` для каждого уникального key.
+3. Перезаписать envelope с новым id в `unit_id_to_envelope`.
+4. Записать `KnowledgeUnitKey → KnowledgeUnitId` в `content_key_to_unit_id`.
+5. Обновить все cross-reference (`anchor_unit_id`, `superseded_by`, `derived_from`) через lookup-таблицу.
+6. Перестроить `inverted_token_to_unit`, `field_to_postings`, secondary indexes.
+
+Запускается через `agent-memory-cli migrate-ku-id-scheme`.
+
+### 9.4. Migration Steps
 
 1. Сканировать все `knowledge_units`, прочитать envelope.
 2. Для каждого unit:
@@ -531,8 +696,10 @@ Round-trip test обязателен: `basic_rag` → `agent_ltm` → `basic_rag
 |---|---|---|
 | 1 | KnowledgeUnitEnvelope + базовые DBI | envelope только |
 | 5 | Component infrastructure | operational components (UsageStats, Speaker, Temporal, EmbeddingMeta, CompactionMeta) |
+| 5.5 | KnowledgeUnitKey DBI | `content_key_to_unit_id` DBI + `KnowledgeUnitKey`/`ContentHash` structs + monotonic `KnowledgeUnitId::allocate()` (см. секцию 4) |
+| 5.6 | SourceRefSummary inline + source_refs DBI (M1) | `SourceRefSummary` в envelope (≤3 на unit) + `source_refs` DBI для полных цитат (см. секцию 3) |
 | 6 | Payload components per kind | QAPayload, FactPayload, ChunkPayload, ConversationEpisodePayload, CompiledArticlePayload |
-| 9 | SoftSuppressed state в Lifecycle FSM | lifecycle extension с anti-loop подсвинком |
+| 9 | SoftSuppressed state в Lifecycle FSM | lifecycle extension с anti-loop подсвинком; cooldown через DecayPolicy::cooldown_ms (см. секцию 6) |
 | 9.1 | Anti-loop подсвинок | self_echo_suppression в DecayAwareRetriever + AntiLoopCooldown фильтр |
 | 12 | Round-trip тесты для default stacks | все payloads (write → close → reopen → verify) |
 
