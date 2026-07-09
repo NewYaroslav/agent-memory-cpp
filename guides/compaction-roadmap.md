@@ -2,7 +2,7 @@
 
 Спецификация CompactionWorker, job types, scheduling и CompactionHandoff для подсистемы памяти `agent-memory-cpp`. Документ конкретизирует ADR-009 (Compaction strategy) из `guides/memory-stacks-roadmap.md` секции 12.4 и описывает runtime-сервис, который ортогонален MemoryStack (per ADR-013).
 
-> C++17 compliance: кодовые сниппеты используют `const std::vector&` вместо `std::span` и явные сеттеры/positional constructor calls вместо designated initializers. Decay formula — canonical (см. `policies-roadmap.md` §2.3).
+> C++17 compliance: кодовые сниппеты используют `const std::vector&` вместо `std::span` и явные сеттеры/positional constructor calls вместо designated initializers. Decay formula — canonical (см. `policies-roadmap.md` §2.3). Reading list по RAG / summary-tree / community-summary papers: `guides/research-reading-map.md`.
 
 ## 1. Purpose
 
@@ -415,6 +415,76 @@ class CompactionHandoffJob : public ICompactionJob {
 
 См. секцию 5 для детальной структуры `CompactionHandoff`.
 
+### 4.8. SummaryTreeJob (M2+, RAPTOR-style)
+
+Reference: arXiv:2401.18059 — "RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval".
+
+Принцип: cluster similar chunks, generate summary nodes, build hierarchical tree. Retrieval может проходить на разных уровнях абстракции.
+
+```cpp
+class SummaryTreeJob final : public ICompactionJob {
+    struct Params {
+        ScopeId scope_id;
+        double cluster_distance_threshold;  // для clustering
+        size_t max_tree_depth = 3;
+        size_t summaries_per_node = 5;
+        bool use_llm_for_summaries = true;  // external LLM
+    };
+};
+```
+
+Algorithm:
+
+1. Cluster chunks в scope через embedding similarity (UMAP + GMM или simpler).
+2. Для каждого cluster: generate summary через LLM (external adapter).
+3. Создать `SummaryUnit` (`kind=Summary`) с `derived_from = [cluster_chunks]`.
+4. Рекурсивно cluster summaries -> build tree до `max_depth`.
+5. Update `SearchProjection` (Summary projection для каждого summary node).
+
+Storage:
+
+- Summary units в существующей `knowledge_units` DBI.
+- Tree edges в `graph_edges_by_src`/`graph_edges_by_dst` DBI (`parent_unit_id` -> `child_unit_ids`).
+- Optional: dedicated `summary_tree` DBI для fast tree traversal.
+
+Integration:
+
+- Retrieval может выбирать tree level:
+  - Level 0: leaf chunks (high precision).
+  - Level `max_depth`: root summaries (high coverage, lower precision).
+- Adaptive: start at root, descend if needed.
+
+### 4.9. CommunitySummaryJob (M2+, GraphRAG-style)
+
+Reference: arXiv:2404.16130 — "From Local to Global: A Graph RAG Approach to Query-Focused Summarization".
+
+Принцип: detect communities in entity graph, generate summary per community. Global sensemaking questions ("main themes of corpus") решаются через community-level summaries.
+
+```cpp
+class CommunitySummaryJob final : public ICompactionJob {
+    struct Params {
+        ScopeId scope_id;
+        size_t min_community_size = 5;
+        size_t max_communities = 100;
+        bool use_llm_for_summaries = true;
+    };
+};
+```
+
+Algorithm:
+
+1. Cluster entities в graph через Leiden / Louvain algorithm.
+2. Для каждой community: aggregate entity -> unit links.
+3. Generate summary через LLM (external adapter): "Main themes and relationships in this community".
+4. Создать `SummaryUnit` с `kind=Summary` и metadata: `community_id`.
+
+Integration:
+
+- Retrieval query types добавляются:
+  - "global" -> match against community summaries.
+  - "entity_centric" -> match against entity graph.
+  - "chunk_centric" -> match against leaf chunks (existing).
+
 ## 5. CompactionHandoff Structure
 
 ### 5.1. Purpose
@@ -665,6 +735,9 @@ if (handoff && handoff->status == HandoffStatus::InProgress) {
 | 14.3 | `MergeJob` для episode compaction | `ConversationEpisodePayload` (см. `knowledge-units-roadmap.md` 5.5.4) |
 | 14.4 | `SummaryPromotionJob` (с `ITextAdapter` интерфейсом) + `EmbeddingRecomputeJob` | `CompiledArticlePayload`, `DenseVectors` capability |
 | 14.5 | CLI commands для admin operations + Eval pipeline (CompactionHandoff test case) | 14.2-14.4 |
+| 32 (M2) | `SummaryTreeJob` (RAPTOR-style summary tree) | 14.4, embedding capabilities, `ITextAdapter` |
+| 33 (M2) | `CommunitySummaryJob` (GraphRAG-style community summaries) | 32, graph retrieval, `ITextAdapter` |
+| 34 (M2) | Tiered storage transitions в `DecayPolicy` (hot/warm/cold/erased) | 14.1, `ProductQuantizationCodec` (см. `optimization-roadmap.md`) |
 
 См. также `knowledge-units-roadmap.md` секция 10 для синхронизации.
 
@@ -678,6 +751,7 @@ if (handoff && handoff->status == HandoffStatus::InProgress) {
 - **Shutdown timeout.** `stop()` — graceful, ждёт завершения current job. Если job висит (LLM timeout, model unavailable) — нужен timeout cap. Default: 60s, configurable.
 - **Physical_erase audit log.** При `ArchiveColdJob.physical_erase = true` — нужен отдельный `audit_log` DBI (какие unit_ids удалены, когда, по какой причине).
 - **Compaction metrics в RetrievalTrace.** Добавить `compaction_metrics` в `RetrievalTrace` (см. `knowledge-base-roadmap.md` секция 9.1): `last_decay_at_ms`, `cold_candidate_count`, `pending_decay_jobs`.
+- **Tiered storage (M2+).** Hot tier: `ExactVectorIndex` / HNSW / `BinaryCandidateFilterIndex` (fast queries). Warm tier: F16 storage, `BinaryCandidateFilter` + AE-128 (medium speed, smaller). Cold tier: `ProductQuantizationCodec` (M2+) для archived embeddings (slow queries, ~96x compression). Compaction: tier transitions per `DecayPolicy.cold_threshold` + age. Hot -> Warm: после 30 days без retrieval. Warm -> Cold: после 90 days без retrieval. Cold -> Erased: после 365 days без retrieval.
 
 ## 12. References
 
@@ -697,3 +771,12 @@ External references (ai-agent-playbook):
 - `playbooks/Какой уровень памяти агента выбрать.md` — auto-compaction как operational handoff.
 - `concepts/rag-knowledge/Внешняя память LLM-агентов — система СВИНОПАС.md` — compaction в СВИНОПАС, anti-loop / cooldown patterns.
 - `concepts/ai-agents/AI-агенты и AI-VTuber — архитектурные паттерны из видео 2026.md` — hot/cold path separation, layered memory.
+
+External research references (arXiv):
+
+- arXiv:2401.18059 — "RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval".
+- arXiv:2404.16130 — "From Local to Global: A Graph RAG Approach to Query-Focused Summarization".
+- arXiv:2410.05779 — "LightRAG: Simple and Fast Retrieval-Augmented Generation".
+- arXiv:2405.14831 — "HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models".
+- arXiv:2404.13207 — "STaRK: Benchmarking LLM Retrieval on Textual and Relational Knowledge Bases".
+- See also: `guides/research-reading-map.md`.

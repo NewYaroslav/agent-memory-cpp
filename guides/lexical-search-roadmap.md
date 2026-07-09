@@ -14,6 +14,8 @@
 >   `KnowledgeUnitId`, retrieval flow contracts.
 > - [`knowledge-units-roadmap.md`](knowledge-units-roadmap.md) — per-kind payload
 >   components (QAPayload, FactPayload, ChunkPayload, …).
+> - `guides/research-reading-map.md` — research reading map backing the
+>   SPLADE and ColBERT references in the §References section below.
 >
 > C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо
 > `std::span` и явные конструкторы (`MyType x{...}`) либо сеттеры вместо
@@ -801,18 +803,56 @@ dependencies. Graph retrieval operates on `graph_edges_by_src` /
 `graph_edges_by_dst` from `memory-stacks-roadmap.md` section 12.3 and joins
 its hits into the RRF stream with `retriever_name = "graph"`.
 
-### SPLADE And Learned Sparse Retrieval
+### SPLADE-v2 Learned Sparse Adapter (M2+)
 
-SPLADE-like learned sparse retrieval is future work. It needs a model, inference
-adapter, vocabulary management, and sparse vector storage. The same
-`(scope_id, token_id, projection_kind)`-style cache used by BM25F is a
-natural place to land learned-sparse postings when they arrive.
+Reference: arXiv:2107.05720 — "SPLADE: Sparse Lexical and Expansion Model for First Stage Ranking".
 
-### ColBERT-Like Late Interaction
+Принцип: learned sparse retrieval — термин-веса предсказываются MLM-style, совместимы с inverted index.
 
-ColBERT-like retrieval is future research work. It stores token-level embeddings
-and has much higher storage and indexing complexity than one embedding per
-unit.
+Архитектура в C++:
+  - Внешний inference backend (Python/PyTorch модель).
+  - Или ONNX runtime для embedded inference.
+  - Output: sparse vector (term_id → weight), query expansion.
+
+```cpp
+class ILearnedSparseAdapter {
+public:
+    virtual SparseVector encode(const std::string& text) const = 0;
+};
+```
+
+Pipeline:
+  1. Query → SPLADE → sparse vector.
+  2. SPLADE output → inverted index lookup (overlap с BM25F).
+  3. Combined with BM25F: hybrid lexical score.
+
+Status: M2+ optional external backend.
+
+### ColBERT Late Interaction Adapter (M2+)
+
+Reference: arXiv:2004.12832 — "ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT".
+
+Принцип: token-level embeddings per chunk, late interaction при query time. ColBERTv2 уменьшает footprint на 6-10x.
+
+Архитектура в C++:
+  - Multi-vector per unit (token-level embeddings).
+  - Storage: vector_per_token × N tokens per unit.
+  - Query time: max-similarity aggregation.
+
+```cpp
+class ILateInteractionAdapter {
+public:
+    virtual std::vector<TokenEmbedding> encode(const ChunkPayload& chunk) const = 0;
+    virtual float late_interact(
+        const std::vector<TokenEmbedding>& query,
+        const std::vector<TokenEmbedding>& doc) const = 0;
+};
+```
+
+Storage estimate: 1M units × 32 tokens × 128 dim float32 = ~16 GB (raw).
+С ColBERTv2 compression: ~1.6-2.7 GB.
+
+Status: M2+ optional, дорого по памяти. Для high-precision use cases.
 
 ## Hybrid Retrieval
 
@@ -1043,6 +1083,14 @@ mixed_ru_en_corpus
 - RLM and rlm-minimal: references for planner-guided, recursive retrieval.
 - СВИНОПАС (in `ai-agent-playbook`): reference design for Cyrillic morphology
   and alias resolution in agent memory.
+
+## References
+
+- arXiv:0911.5046: "Integrating the Probabilistic Models BM25/BM25F into Lucene".
+- arXiv:2107.05720: "SPLADE: Sparse Lexical and Expansion Model for First Stage Ranking".
+- arXiv:2004.12832: "ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT".
+- arXiv:2205.00235: "To Interpolate or not to Interpolate: PRF, Dense and Sparse Retrievers".
+- See also: guides/research-reading-map.md.
 
 ## Recommended Implementation Order
 

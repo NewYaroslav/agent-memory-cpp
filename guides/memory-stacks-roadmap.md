@@ -4,6 +4,10 @@
 
 Центральная спецификация архитектуры памяти `agent-memory-cpp`. Определяет модель данных (envelope + components + projections), декларативную спецификацию профилей, runtime-стек, capability matrix, валидационные правила и MDBX layout. Документ supersede'ит компонент-агностичные части `knowledge-base-roadmap.md` и `knowledge-units-roadmap.md` для разделов, относящихся к profiles/stacks.
 
+> Research background for the M2+ retrieval-hook contracts
+> (`IQueryTransformer`, `IRetrievalEvaluator`) and for dense-retrieval
+> tradeoffs lives in `guides/research-reading-map.md`.
+
 ## 1. Purpose
 
 Этот документ фиксирует архитектурные решения для подсистемы памяти `agent-memory-cpp`:
@@ -379,6 +383,90 @@ struct RetrievalResult {
     RetrievalTrace trace;
 };
 ```
+
+## M2+ Retrieval Hooks
+
+### IQueryTransformer Hook (M2+)
+
+Reference: HyDE (arXiv:2212.10496), Rewrite-Retrieve-Read (arXiv:2305.14283).
+
+LLM-driven query transformation перед retrieval. C++ ядро не зависит от LLM; adapters реализуют конкретные стратегии.
+
+```cpp
+class IQueryTransformer {
+public:
+    virtual ~IQueryTransformer() = default;
+    
+    struct QueryVariant {
+        std::string text;
+        std::string transformer_id;  // "hyde", "rewrite", "self_rag"
+        double weight = 1.0;
+    };
+    
+    virtual std::vector<QueryVariant> transform(const Query& q) = 0;
+};
+
+// HyDE implementation:
+class HydeQueryTransformer final : public IQueryTransformer {
+public:
+    std::vector<QueryVariant> transform(const Query& q) override {
+        // 1. LLM генерирует hypothetical answer (external).
+        // 2. Embed hypothesis через IEmbedder.
+        // 3. Return как QueryVariant с transformer_id="hyde".
+    }
+};
+
+// Rewrite implementation:
+class RewriteQueryTransformer final : public IQueryTransformer {
+public:
+    std::vector<QueryVariant> transform(const Query& q) override {
+        // LLM rephrases query в 3-5 вариантов.
+    }
+};
+```
+
+Integration:
+  `MemoryStack::retrieve(plan)` вызывает `transformer.expand(plan.raw_query)` перед retriever'ами.
+  Каждый `QueryVariant` даёт свой набор кандидатов.
+  RRF fusion combines across all variants.
+
+### IRetrievalEvaluator Hook (M2+)
+
+Reference: Self-RAG (arXiv:2310.11511), CRAG (arXiv:2401.15884).
+
+Post-retrieval оценка качества candidates. Может trigger corrective action (re-search с другим transformer).
+
+```cpp
+class IRetrievalEvaluator {
+public:
+    virtual ~IRetrievalEvaluator() = default;
+    
+    struct RetrievalDecision {
+        enum class Action { Accept, Reject, CorrectiveSearch, FallbackToLLM };
+        Action action;
+        std::optional<std::string> corrective_query;
+        double confidence;
+    };
+    
+    virtual RetrievalDecision evaluate(
+        const Query& q,
+        const std::vector<RetrievalHit>& hits) = 0;
+};
+
+// CRAG implementation:
+class CragRetrievalEvaluator final : public IRetrievalEvaluator {
+public:
+    RetrievalDecision evaluate(const Query& q, const auto& hits) override {
+        // Lightweight evaluator (fine-tuned T5 или rule-based).
+        // Confidence < threshold → CorrectiveSearch с web fallback.
+    }
+};
+```
+
+Integration:
+  `MemoryStack::retrieve(plan)` вызывает `evaluator.evaluate()` после retriever'ов.
+  `Action::CorrectiveSearch` → повторный retrieval с расширенным query.
+  `Action::FallbackToLLM` → return empty context (LLM отвечает без retrieval).
 
 ## 8. Default Memory Stacks (готовые профили)
 
@@ -1141,6 +1229,13 @@ double apply_filters(
 - `agent-memory-cli` target.
 - Команды: inspect, stats, check, vacuum, reindex, profile-info, profile-migrate, dump-unit, dump-components, run-eval.
 
+### Шаги 31-34 (M2): Retrieval hook contracts
+
+- Step 31 (M2): IQueryTransformer interface + HydeQueryTransformer + RewriteQueryTransformer adapters.
+- Step 32 (M2): IRetrievalEvaluator interface + CragRetrievalEvaluator + SelfRagEvaluator adapters.
+- Step 33 (M2): HyDE integration в HybridRetriever.
+- Step 34 (M2): CRAG corrective search loop.
+
 ## 17. Open Issues
 
 Вопросы, требующие решения до или во время реализации.
@@ -1241,6 +1336,17 @@ ApproximateVector Compact (store_float_fallback == false):
 ```
 
 Per-mode подробные таблицы см. в `optimization-roadmap.md` секция "Dense Index Modes". При планировании capacity mode selection — primary driver.
+
+## References
+
+- arXiv:2212.10496: "Precise Zero-Shot Dense Retrieval without Relevance Labels" (HyDE).
+- arXiv:2305.14283: "Query Rewriting for Retrieval-Augmented Large Language Models".
+- arXiv:2310.11511: "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection".
+- arXiv:2401.15884: "Corrective Retrieval Augmented Generation".
+- arXiv:2004.04906: "Dense Passage Retrieval for Open-Domain Question Answering" (DPR).
+- arXiv:2005.11401: "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks" (RAG).
+- arXiv:2104.08663: "BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models".
+- See also: guides/research-reading-map.md.
 
 ## 18. Glossary
 

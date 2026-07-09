@@ -540,6 +540,57 @@ struct Context {
 
 Determinism: given the same plan/hits/budget → same `Context`. Это делает retrieval traces reproducible.
 
+### 8.4. IContextCompressor Hook (M2+)
+
+Reference: RECOMP (arXiv:2310.04408), LLMLingua (arXiv:2310.05736).
+
+Post-retrieval compression context'а перед передачей в LLM. Снижает tokens/cost/latency. Может вернуть empty context если retrieval бесполезен.
+
+```cpp
+class IContextCompressor {
+public:
+    virtual ~IContextCompressor() = default;
+
+    struct CompressionOptions {
+        enum class Mode {
+            None,           // no compression
+            Extractive,     // select important sentences
+            Abstractive,    // generate summary via LLM
+            Selective,      // drop low-relevance blocks entirely
+        };
+        Mode mode = Mode::None;
+        size_t target_tokens = 1024;
+        double quality_threshold = 0.5;  // minimum acceptable relevance
+    };
+
+    virtual CompressedContext compress(
+        const Context& ctx,
+        const CompressionOptions& options) = 0;
+};
+
+// RECOMP extractive implementation:
+class RecompExtractiveCompressor final : public IContextCompressor {
+    // Dual encoder scores each sentence, keep top-K by relevance.
+};
+
+// LLMLingua implementation:
+class LlamaLinguaCompressor final : public IContextCompressor {
+    // Prompt compression via small LM, preserves semantic structure.
+};
+```
+
+Integration:
+
+- `ContextBuilder.build(plan, hits)` -> `Context`.
+- `IContextCompressor.compress(ctx, opts)` -> `CompressedContext`.
+- `CompressedContext` подаётся в LLM вместо raw `Context`.
+
+Когда включать:
+
+- M0/M1: `None` (raw context).
+- M2+: optional per `RetrievalPlan`.
+- Default для long-context LLMs: `Extractive` или `Abstractive`.
+
 ## 9. Evaluation & Tracing
 
 Evaluation — first-class citizen. Retrieval traces, datasets, metrics — часть contract, не bolt-on.
@@ -614,6 +665,34 @@ CI gate: `Recall@10(hybrid) >= 1.20 * Recall@10(BM25-only)`, `NoAnswerAccuracy(h
 - **SpeakerFilter** — фильтрация по `speaker_scope` (Self/Owner/Cohost/Audience).
 - **CompactionHandoff** — compaction worker восстанавливается после crash через `compaction_handoffs` DBI.
 
+### 9.7. BEIR-style heterogeneous benchmark methodology
+
+Reference: BEIR (arXiv:2104.08663).
+
+Golden dataset должен покрывать heterogeneous query types:
+
+- Factual ("What is the capital of France?").
+- Argument ("Why does X cause Y?").
+- Comparison ("Compare A vs B").
+- Multi-hop ("Find entity X, then related entity Y").
+- No-answer ("intentionally unanswerable query").
+
+Metrics:
+
+- `Recall@1/5/10/50` across query types.
+- `nDCG@10` for graded relevance.
+- `NoAnswerAccuracy` (separate metric для unanswerable queries).
+- `CitationFidelity` (precision of source attribution).
+- `ContextPrecision` (relevance of retrieved context to query).
+- `Latency` p50/p95/p99.
+
+Reporting:
+
+- Per query-type breakdown (table).
+- Per stack (`BasicRag` vs `AgentLTM` vs etc.).
+- Per mode (`Exact` vs `HNSW` vs `BinaryCF` vs `BinaryOnly`).
+- Hybrid lift target: `Recall@10(hybrid) >= 1.20 * max(BM25, dense)`.
+
 ## 10. Cross-Module Risks
 
 Топ-5 архитектурных рисков и митигации:
@@ -661,3 +740,11 @@ External references (ai-agent-playbook):
 - `concepts/ai-agents/AI-агенты и AI-VTuber — архитектурные паттерны из видео 2026.md` — hot/cold path separation, layered memory.
 - `concepts/rag-knowledge/Внешняя память LLM-агентов — система СВИНОПАС.md` — anti-loop / decay / cooldown patterns.
 - `resources/llm-research/Memory for Autonomous LLM Agents survey — конспект.md` — write-read-manage loop, lifecycle.
+
+External research references (arXiv):
+
+- arXiv:2310.04408 — "RECOMP: Improving Retrieval-Augmented LMs with Compression and Selective Augmentation".
+- arXiv:2310.05736 — "LLMLingua: Compressing Prompts for Accelerated Inference of Large Language Models".
+- arXiv:2104.08663 — "BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models".
+- arXiv:2005.11401 — "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks" (RAG).
+- See also: `guides/research-reading-map.md`.

@@ -348,6 +348,48 @@ Possible follow-up tasks:
 - Encoding metadata also carries `projection_kind`, so two encodings of the same
   unit by different projections are not silently mixed.
 
+### Matryoshka Truncation Codec (M2+)
+
+Reference: arXiv:2205.13147 — "Matryoshka Representation Learning".
+
+Принцип: embedding обучен так, что первые N координат уже осмысленны. Хранить только первые N.
+
+```cpp
+class MatryoshkaTruncationCodec final : public IEmbeddingCodec {
+    uint32_t m_truncated_dim;  // 64 / 128 / 256 / 512
+public:
+    Embedding decode(const EncodedVector& v) const override {
+        Embedding full(m_original_dim);
+        for (uint32_t i = 0; i < m_truncated_dim; ++i) full[i] = v[i];
+        for (uint32_t i = m_truncated_dim; i < m_original_dim; ++i) full[i] = 0.0f;
+        return full;
+    }
+};
+```
+
+Storage: 768 → 128 = ~6x compression.
+При search: zero-pad до полного dim, cosine.
+
+### Product Quantization Codec (M2+)
+
+Reference: arXiv:1702.08734 (FAISS line).
+
+Принцип: K-means на sub-vectors. Compact codes (uint8 per sub-vector). Approximate distance через LUT.
+
+```cpp
+class ProductQuantizationCodec final : public IEmbeddingCodec {
+    uint32_t m_num_subvectors = 8;
+    uint32_t m_subvector_dim = 96;  // для 768-dim
+    uint32_t m_k = 256;             // K-means clusters per sub-vector
+    std::vector<std::vector<float>> m_codebooks;  // [num_subvectors × k × subvector_dim]
+};
+```
+
+Storage: 768 × 4 bytes → 8 × 1 byte = ~96x compression.
+Distance: asymmetric ADC (approximate distance computation).
+
+Применение: cold storage tier (архивные embeddings), не hot retrieval.
+
 ## Projection-Aware Vector Storage
 
 Per ADR-007 in `memory-stacks-roadmap.md`, dense vector storage is multi-model
@@ -1008,6 +1050,16 @@ FullResearch:       BinaryCandidateFilter (AE-128)
 budget, latency budget. См. §"Quality Targets Per Mode" выше для production
 target values.
 
+Production dense index modes (после M2):
+  Default для AgentLTM/FullResearch: HNSW или BinaryCandidateFilter + AE-128.
+  Default для CompiledWiki: HNSW или BinaryCandidateFilter + AE-256.
+  Default для BasicRag: Exact (small corpus).
+  
+Production trade-off:
+  - HNSW: best quality (>0.97 Recall@10), но graph storage ~20% от vector size.
+  - BinaryCF: ~95% от HNSW quality, меньше storage, лучше для filtered query.
+  - Exact: ground truth, но O(N) latency.
+
 ### Multi-Mode Migration
 
 Mode change = major migration (новая БД + transfer), не silent in-place
@@ -1048,6 +1100,35 @@ struct RetrievalPlan {
 
 Override полезен для A/B evaluation, миграций, debug queries, per-query
 fallback paths.
+
+### HNSW Vector Index (M2+ experimental)
+
+Reference: arXiv:1603.09320 — "Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs".
+
+Принцип:
+  - M-level proximity graph (обычно M=16, M_max=32 для in-memory).
+  - Greedy traversal на верхних уровнях, beam search на нижних.
+  - efConstruction (build-time) и efSearch (query-time) параметры.
+  - O(log N) average search complexity.
+
+Реализация:
+  - Custom HnswVectorIndex : IDenseIndex (если есть время и ресурсы).
+  - ИЛИ интеграция hnswlib (C++ standalone, MIT license) как adapter.
+  - Storage: edges в adjacency list, nodes в flat array.
+
+Параметры per stack:
+  BasicRag:       HNSW (M=16, efConstruction=100, efSearch=50)
+  AgentLTM:       HNSW (M=32, efConstruction=200, efSearch=100) — quality
+  CompiledWiki:   HNSW (M=32, efConstruction=200, efSearch=100)
+  FullResearch:   HNSW (M=32, efConstruction=200, efSearch=100)
+
+Storage estimate:
+  - 1M units × 768-dim float32: 3 GB (vector) + ~600 MB (graph edges)
+  - С quantized vectors: меньше.
+
+Tradeoff vs BinaryCandidateFilter:
+  - HNSW: лучше quality для high-recall (>0.97), random access slow.
+  - BinaryCF: лучше для batch rerank + structured filtering.
 
 ## Secondary & Reverse Indexes
 
@@ -1635,6 +1716,27 @@ storage estimates, quality targets и per-stack defaults).
     - Сравнительный benchmark Eigen vs std-only baseline; targets из
       §"Per-Bit-Size Recall Targets" остаются обязательными.
 
+### Steps 29-31: Additional dense index and codecs (M2+)
+
+29. **Step 29 (M2): HNSW Vector Index (HnswVectorIndex or hnswlib adapter).**
+    - 5-й `IDenseIndex` mode (см. §"HNSW Vector Index" выше).
+    - Per-stack параметры (M, efConstruction, efSearch) — см. таблицу.
+    - Benchmark vs Exact и BinaryCandidateFilter: Recall@10 ≥ 0.97, latency reduction.
+    - Tradeoff: graph storage overhead ~20% vs random access latency.
+
+30. **Step 30 (M2): MatryoshkaTruncationCodec.**
+    - `IEmbeddingCodec` implementation — store первые N координат (64/128/256/512).
+    - ~6x compression для 768 → 128.
+    - Decode zero-pad до полного dim, cosine.
+    - Reference: arXiv:2205.13147.
+
+31. **Step 31 (M2): ProductQuantizationCodec (cold storage tier).**
+    - `IEmbeddingCodec` implementation — K-means на sub-vectors, uint8 codes.
+    - ~96x compression для 768-dim с 8 sub-vectors.
+    - Asymmetric ADC distance computation.
+    - Cold storage tier (архивные embeddings), не hot retrieval.
+    - Reference: arXiv:1702.08734 (FAISS line).
+
 ## Non-Goals For The First Optimization Pass
 
 - Do not replace `std::vector<float>` in `Embedding`.
@@ -1673,6 +1775,25 @@ storage estimates, quality targets и per-stack defaults).
   embedding-migration telemetry inspection.
 - arXiv 1803.09065: "Near-lossless Binarization of Word Embeddings".
   <https://arxiv.org/abs/1803.09065>
+- arXiv:1603.09320: "HNSW — Efficient and robust approximate nearest neighbor search".
+  <https://arxiv.org/abs/1603.09320>
+- arXiv:1702.08734: "Billion-scale similarity search with GPUs" (FAISS line).
+  <https://arxiv.org/abs/1702.08734>
+- arXiv:2205.13147: "Matryoshka Representation Learning".
+  <https://arxiv.org/abs/2205.13147>
+- arXiv:1612.03651: "FastText.zip: Compressing text classification models".
+  <https://arxiv.org/abs/1612.03651>
+- arXiv:2510.27232: "A Survey on Deep Text Hashing".
+  <https://arxiv.org/abs/2510.27232>
+- arXiv:1807.05614: "ANN-Benchmarks".
+  <https://arxiv.org/abs/1807.05614>
+- arXiv:2402.03216: "BGE M3-Embedding" (multi-modal reference).
+  <https://arxiv.org/abs/2402.03216>
+- arXiv:2409.17424: "Results of the Big ANN: NeurIPS'23 competition".
+  <https://arxiv.org/abs/2409.17424>
+- arXiv:2105.09613: "FreshDiskANN" (M3+ reference).
+  <https://arxiv.org/abs/2105.09613>
+- See also: guides/research-reading-map.md для curated bibliography.
 - ai-agent-playbook: related materials on embedding binarization patterns.
 - §"Future Encodings" (this document) — `BinarySignatureEncoderId` enum
   taxonomy (`RandomHyperplaneLSH`, `AutoencoderBinarizer`,
