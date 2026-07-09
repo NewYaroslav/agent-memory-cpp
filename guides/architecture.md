@@ -36,7 +36,7 @@ Rules:
   public retrieval contracts.
 - Context assembly consumes retrieval results and memory policies; it should not
   perform storage-specific queries directly.
-- Runtime services (PromptCache, CompactionWorker, WriteGate, AsyncIndexer)
+- Runtime services (PromptPrefixCache + optional ResponseCache, CompactionWorker, WriteGate, AsyncIndexer)
   depend only on Layer 1 + Layer 2 contracts; they never reach into a concrete
   MemoryStack to read profile-specific state.
 
@@ -82,7 +82,7 @@ Layer 1: Storage Primitives (storage/)
   RangeIndexTable, TypeDiscriminatedTable, CompositeKey
 
 Cross-cutting Runtime Services (runtime/) — orthogonal
-  PromptCache, CompactionWorker, WriteGate, AsyncIndexer
+  PromptPrefixCache + optional ResponseCache, CompactionWorker, WriteGate, AsyncIndexer
   Use Layer 1 + Layer 2 through interfaces
 ```
 
@@ -149,7 +149,7 @@ value type and NO discriminated union of payload types in one struct.
 The old `DocumentChunk` / `MemoryObject` / `chat::Message` /
 `facts::Fact` value types are retired and replaced by these contracts:
 
-- A lean `KnowledgeUnitEnvelope` (13-field hot-path struct): id, kind,
+- A lean `KnowledgeUnitEnvelope` (~16-field hot-path struct): id, kind,
   scope_id, primary_text, display_text, lifecycle_state, sources,
   timestamps, generation, priority_weight, supersedes/superseded_by.
   See [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md)
@@ -262,7 +262,7 @@ and acts as the deterministic baseline for tests and small local workloads.
 
 ### M0 — MVP
 
-- Lean envelope (13 полей) + scope-aware keys + BM25F + lifecycle FSM
+- Lean envelope (~16 полей) + scope-aware keys + BM25F + lifecycle FSM
   (Active / SoftSuppressed / Superseded / Deprecated / Erased).
 - Готовые стеки: `BasicRagStack`, `QAKnowledgeBaseStack`.
 - Один MDBX env, ~10-15 DBI. In-memory prompt cache (M0 opt).
@@ -287,7 +287,7 @@ Ship-it:
 - 7 готовых MemoryStacks (BasicRag, QAKB, AgentLTM, SpeakerChat,
   CompiledWiki, TemporalFact, FullResearch).
 - `CompactionWorker` (async): Decay, Dedupe, ArchiveCold + handoff.
-- `PromptCache` (LRU + AnthropicCacheControlAdapter).
+- `PromptPrefixCache` + optional `ResponseCache` (LRU + AnthropicCacheControlAdapter aware).
 - Eval pipeline с golden dataset.
 
 Ship-it:
@@ -328,9 +328,12 @@ Per
 и секция 11. Ортогональны profile: одна и та же реализация сервиса
 обслуживает любой `MemoryStack` через интерфейсы Layer 1 и Layer 2.
 
-- **PromptCache** (LRU + AnthropicCacheControlAdapter) — кэширует
-  prompt-prefix → response. Экономия 60-90% токенов при стабильном system
+- **PromptPrefixCache** (LRU + AnthropicCacheControlAdapter) — кэширует
+  prompt-prefix → cached-prefix id. Экономия 60-90% токенов при стабильном system
   prompt. Scope-aware ключ (cache key включает `scope_id`).
+- **ResponseCache** (opt-in) — кэширует полный prompt → response. Полезен для
+  детерминированных retrieval-сценариев. По умолчанию выключен, чтобы не
+  маскировать галлюцинации/стохастичность модели.
 - **CompactionWorker** (async) — выполняет `ICompactionJob`-ы:
   Decay, Dedupe, ArchiveCold (M1); Merge, SummaryPromotion,
   EmbeddingRecompute (M2). Хранит состояние jobs и handoff в
@@ -341,8 +344,8 @@ Per
   importance threshold, dedupe distance, supersede/merge/episode-compaction
   разрешения, flush trigger.
 
-Доступны через интерфейсы (`IPromptCache`, `ICompactionWorker`,
-`IAsyncIndexer`, `IWriteGate`). Сервисы не зависят от конкретного
+Доступны через интерфейсы (`IPromptPrefixCache`, `IResponseCache`,
+`ICompactionWorker`, `IAsyncIndexer`, `IWriteGate`). Сервисы не зависят от конкретного
 `MemoryStack` и не имеют права лезть в profile-specific state напрямую —
 только через публичные контракты.
 
@@ -354,7 +357,7 @@ matrix и validation rules.
 
 Состав knowledge base:
 
-- `KnowledgeUnitEnvelope` (13 полей lean): id, kind, scope_id, primary_text,
+- `KnowledgeUnitEnvelope` (~16 полей lean): id, kind, scope_id, primary_text,
   display_text, lifecycle_state, sources, timestamps, generation,
   priority_weight, supersedes/superseded_by.
 - Components (operational + per-kind payloads): UsageStats, Speaker,
@@ -368,7 +371,7 @@ matrix и validation rules.
   `TemporalFactStoreStack`, `FullResearchMemoryStack`.
 - Policies: DecayPolicy, WritePolicy, SpeakerScopePolicy, HybridRetrievalConfig.
 - Capability matrix (LexicalBm25F / DenseVectors / QAPairs / TemporalValidity /
-  UsageStats / Decay / SpeakerAttribution / Compaction / PromptCache /
+  UsageStats / Decay / SpeakerAttribution / Compaction / PromptPrefixCache + opt. ResponseCache /
   GraphRelations / EmbeddingMigration / CompiledArticles / ConversationMemory).
 - Validation rules при `MemoryStack::open()` (Decay → UsageStats и т.д.).
 
@@ -384,7 +387,7 @@ Decay / Write / Speaker policies: см.
 [`guides/policies-roadmap.md`](policies-roadmap.md).
 `CompactionWorker` (job types, handoff): см.
 [`guides/compaction-roadmap.md`](compaction-roadmap.md).
-Runtime services (PromptCache / AsyncIndexer / WriteGate):
+Runtime services (PromptPrefixCache + ResponseCache / AsyncIndexer / WriteGate):
 см. [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md).
 
 ## Profile Migration Strategy
@@ -495,7 +498,7 @@ Filters".
 - [`guides/compaction-roadmap.md`](compaction-roadmap.md) (future) —
   `CompactionWorker`, job types, handoff structure.
 - [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md) (future) —
-  PromptCache, AsyncIndexer, WriteGate.
+  PromptPrefixCache + optional ResponseCache, AsyncIndexer, WriteGate.
 - [`guides/cli-roadmap.md`](cli-roadmap.md) (future) —
   `agent-memory-cli` target (inspect / stats / check / vacuum / reindex /
   profile-info / profile-migrate).

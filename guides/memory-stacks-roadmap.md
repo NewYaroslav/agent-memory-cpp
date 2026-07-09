@@ -42,7 +42,7 @@ Non-goals документа:
 | ADR-010 | MDBX environment | Один env, много DBI. Multi-env — только при обоснованной потребности |
 | ADR-011 | Lifecycle FSM | Active / SoftSuppressed / Superseded / Deprecated / Erased |
 | ADR-012 | Multi-tenancy | Все secondary indexes — scope-aware |
-| ADR-013 | Runtime services | PromptCache, CompactionWorker, WriteGate, AsyncIndexer — отдельный слой |
+| ADR-013 | Runtime services | PromptPrefixCache + optional ResponseCache, CompactionWorker, WriteGate, AsyncIndexer — отдельный слой |
 | ADR-014 | CLI | Отдельный target `agent-memory-cli`, не core library |
 | ADR-015 | Maturity Levels | M0 (MVP) / M1 (Production) / M2 (Advanced) с ship-it критериями |
 
@@ -286,8 +286,11 @@ public:
     CompactionWorker& compaction();
     bool has_compaction() const;
 
-    PromptCache& prompt_cache();
-    bool has_prompt_cache() const;
+    PromptPrefixCache& prompt_prefix_cache();
+    bool has_prompt_prefix_cache() const;
+
+    std::optional<ResponseCache> response_cache();
+    bool has_response_cache() const;
 
     StackStats stats() const;
     SchemaInfo schema_info() const;
@@ -732,8 +735,11 @@ compaction_handoffs                     // если Compaction
 generation_index                        // всегда
   key = (kind, generation) → unit_id (stale filter)
 
-prompt_cache                            // если PromptCache
-  key = cache_key_hash → cached_response
+prompt_prefix_cache_meta                // если PromptPrefixCache включён
+  key = (scope_id, provider_id, model_id, prefix_hash) → PromptPrefixCacheMetadata
+
+response_cache                          // если opt-in ResponseCache capability включена (default OFF)
+  key = ResponseCacheKey → CachedResponse
 ```
 
 ### 12.5. Schema metadata
@@ -755,16 +761,19 @@ schema_info
 
 Включено:
 
-- KnowledgeUnitEnvelope (lean, 13 полей).
+- KnowledgeUnitEnvelope (lean hot-path envelope, ~16 полей: id, kind, scope_id, primary_text, display_text, lifecycle_state, sources, timestamps, revision, lineage fields, priority_weight).
 - primary_text + display_text в envelope; sources — inline `vector<SourceRefSummary>` (max ~3 на unit, <=256 байт excerpt preview каждый).
 - KnowledgeUnitId монотонный, opaque (`uint64_t`). `KnowledgeUnitKey = (kind, ScopeId, ContentHash)` и content-key secondary index (`content_key_to_unit_id`) — для dedupe/supersedence готов с M0.
 - SearchProjection::Original создаётся с самого начала (минимальный: unit_id → primary_text). BM25F работает через projection model с M0 (не flat fallback).
 - Lifecycle FSM с состояниями Active / SoftSuppressed / Superseded / Deprecated / Erased.
+- Минимальный QAPayload (только canonical_question + answer + optional category + last_verified_at_ms) для QAKnowledgeBaseStack с M0.
+- Расширенный QAPayload (question_variants, frequency ranking, bi-temporal) — M1.
+- ChunkPayload (minimal) для BasicRagStack с M0. Остальные per-kind payloads (FactPayload, ConversationEpisodePayload, CompiledArticlePayload) — M1.
 - BasicRagStack, QAKnowledgeBaseStack.
 - Чтение через ILexicalIndex, запись через простой write API.
 - scope_id во всех DBI keys (multi-tenancy с самого начала).
 
-Не включено (M1+): Components, Payloads per kind, дополнительные SearchProjections (QAQuestion/QAAnswer/Summary), DecayPolicy/WritePolicy, Compaction, PromptCache, full SourceRef DBI (в M0 — только inline summary).
+Не включено (M1+): Components, расширенные QAPayload (variants/frequency/bi-temporal) и остальные per-kind payloads (FactPayload, ConversationEpisodePayload, CompiledArticlePayload), дополнительные SearchProjections (QAQuestion/QAAnswer/Summary), DecayPolicy/WritePolicy, Compaction, PromptPrefixCache + ResponseCache, full SourceRef DBI (в M0 — только inline summary).
 
 Ship-it критерии:
 
@@ -900,7 +909,7 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 
 ### Шаг 1: Envelope + базовые DBI
 
-- Создать `KnowledgeUnitEnvelope` struct (13 полей, lean).
+- Создать `KnowledgeUnitEnvelope` struct (lean hot-path envelope, ~16 полей: id, kind, scope_id, primary_text, display_text, lifecycle_state, sources, timestamps, revision, lineage fields, priority_weight).
 - MDBX DBI: `knowledge_units`, `knowledge_units_by_kind`, `generation_index`, `schema_info`.
 - Сериализация envelope через flat binary (msgpack или custom).
 - `MemoryStack::open()` для пустой spec (только envelope + lexical).
