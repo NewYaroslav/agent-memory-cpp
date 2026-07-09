@@ -1,0 +1,598 @@
+# knowledge-base-roadmap.md
+
+Спецификация knowledge base подсистемы `agent-memory-cpp`: компонентная модель данных (envelope + components + projections), retrieval contract, evaluation pipeline, ContextBuilder и cross-stack контракты. Документ опирается на архитектурные решения из `guides/memory-stacks-roadmap.md` и дополняет их retrieval-flow деталями.
+
+Этот файл supersede'ит предыдущую версию, описывавшую монолитный `KnowledgeUnit` struct и `IKnowledgeUnitStore`-as-primary-table. Новая модель разделяет данные на три независимых слоя (см. ADR-001) и вводит capability-aware создание DBI.
+
+## 1. Purpose
+
+Этот документ конкретизирует retrieval и evaluation слой поверх архитектурного манифеста `memory-stacks-roadmap.md`. Описывает:
+
+- `KnowledgeUnitEnvelope` — lean lookup-critical contract (13 полей).
+- Components — operational + per-kind payload компоненты.
+- `SearchProjection` — retrieval-specific text views.
+- Domain stores — capability-aware I/O интерфейсы.
+- Retrieval composition — план, retrievers, hybrid fusion, decay-aware scoring.
+- `ContextAssembly` — budget-aware trim с citations.
+- Evaluation & tracing — golden dataset, метрики, traces.
+
+Cross-references: `guides/memory-stacks-roadmap.md` (ADR'ы, MemoryProfileSpec, MemoryStack, MDBX layout), `guides/knowledge-units-roadmap.md` (per-kind payload-компоненты), `guides/lexical-search-roadmap.md` (BM25F), `guides/optimization-roadmap.md` (vector/binary indexes), `guides/mdbx-containers-extension-tz.md` (storage primitives).
+
+Non-goals: BM25F scoring details, embedding model адаптеры, per-kind payload схемы, CompactionWorker, runtime services.
+
+## 2. Cross-cutting Architecture References
+
+Этот документ наследует ADR'ы из `memory-stacks-roadmap.md` (раздел 2, ADR Index). Ключевые для retrieval-flow решения:
+
+- **ADR-001**: Envelope + Components + SearchProjections (NOT монолитный `KnowledgeUnit`). Минимальный I/O на hot path, lazy load компонентов.
+- **ADR-002**: `MemoryProfileSpec` декларативный, `MemoryStack` — runtime-объект.
+- **ADR-003**: Profile и Scope ортогональны. Все secondary indexes начинаются с `scope_id` в ключе.
+- **ADR-005**: Search text в envelope ограничен `primary_text` (256-1024 байт), остальное через `SearchProjection`s.
+- **ADR-007**: `embedding_meta` + `embedding_vectors` поддерживают multi-projection/multi-model (M2).
+- **ADR-008**: Decay/anti-loop меняет retrieval score, не удаляет записи. Defaults для `AgentLongTermMemory`: half_life=7d, use_boost=0.35, cooldown=60s, self_echo=0.3.
+- **ADR-011**: Lifecycle FSM — `Active` / `SoftSuppressed` / `Superseded` / `Deprecated` / `Erased`.
+- **ADR-013**: Runtime services (PromptCache, CompactionWorker, WriteGate, AsyncIndexer) — ортогональный слой, не встроены в retrieval.
+
+## 3. KnowledgeUnitEnvelope (lean contract)
+
+`KnowledgeUnitEnvelope` — минимальный lookup-critical набор полей (Layer A в ADR-001). Полная спецификация serialization version — в `memory-stacks-roadmap.md` секция 6.3.
+
+```cpp
+struct KnowledgeUnitEnvelope {
+    KnowledgeUnitId id;             // стабильная, монотонная, не reuse
+    KnowledgeUnitKind kind;         // дискриминатор per-kind semantics
+    ScopeId scope_id;               // multi-tenancy namespace
+    std::string primary_text;       // 256-1024 байт, retrieval seed
+    std::string display_text;       // LLM-friendly formatted text
+    LifecycleState lifecycle_state; // Active / SoftSuppressed / Superseded / Deprecated / Erased
+    std::vector<SourceRef> sources; // first-class provenance
+    int64_t created_at_ms;
+    int64_t updated_at_ms;
+    int64_t observed_at_ms;         // когда source наблюдался
+    uint64_t generation;            // инкремент при content change
+    double priority_weight;         // [0.0, 1.0], ranking boost
+    std::vector<KnowledgeUnitId> supersedes;     // lineage вперёд
+    std::vector<KnowledgeUnitId> superseded_by; // lineage назад
+};
+```
+
+### 3.1. Lookup-critical поля
+
+Hot path retrieval использует только `id`, `kind`, `scope_id`, `lifecycle_state`, `priority_weight` — без I/O компонентов.
+
+### 3.2. Размер primary_text
+
+`primary_text` — короткий текст для fallback BM25 (M0). Лимит 256-1024 байт enforced на write (`std::invalid_argument` при превышении). Retrieval предпочитает `SearchProjection` для длинного текста.
+
+### 3.3. Per-kind правила генерации primary_text
+
+При создании `WriteRequest` с пустым `primary_text` generation function заполняет поле:
+
+```cpp
+std::string generate_primary_text(KnowledgeUnitKind kind, const ComponentView& components) {
+    switch (kind) {
+        case KnowledgeUnitKind::Chunk:             // 500 символов body + heading
+            return components.chunk.body.substr(0, 500) + " | " + components.chunk.heading_path;
+        case KnowledgeUnitKind::QAPair:            // canonical + variants
+            return components.qa.canonical_question + " | " + join(components.qa.question_variants, " | ");
+        case KnowledgeUnitKind::Fact:              // subject predicate object
+            return components.fact.subject + " " + components.fact.predicate + " " + components.fact.object;
+        case KnowledgeUnitKind::Summary:           return components.summary.full_text;
+        case KnowledgeUnitKind::CompiledArticle:   return components.article.title + "\n" + components.article.body_first_paragraph;
+        case KnowledgeUnitKind::ConversationEpisode: return components.episode.first_utterances(2);
+        case KnowledgeUnitKind::Event:             return components.event.short_description;
+        case KnowledgeUnitKind::Entity:            return components.entity.name + " (" + components.entity.type + ")";
+        case KnowledgeUnitKind::Relation:          return components.relation.from_kind + " -[" + components.relation.edge_kind + "]-> " + components.relation.to_kind;
+        default:                                   return "";  // Custom: caller provides
+    }
+}
+```
+
+### 3.4. Display text vs primary_text
+
+`display_text` — отделён от `primary_text`: используется в `ContextBuilder` для LLM-friendly форматирования (markdown, code blocks inline). `primary_text` — для индексов, retrieval, trace logging. Разделение предотвращает "мусорный" текст в retrieval hits при красивом отображении в context.
+
+## 4. Components (operational + per-kind)
+
+Layer B в ADR-001. Два семейства: operational (общие для всех kinds) и per-kind payloads (kind-specific данные).
+
+### 4.1. Operational components
+
+```cpp
+struct UsageStatsComponent {
+    uint64_t use_count;
+    int64_t last_used_at_ms;
+    int64_t last_injected_at_ms;
+    uint64_t injection_count;
+    int64_t cooldown_until_ms;        // anti-loop guard
+    int64_t soft_suppression_until_ms;
+};
+
+struct SpeakerComponent {
+    std::string speaker_id;           // agent / user / cohost id
+    SpeakerScope speaker_scope;       // Self / Owner / Cohost / Audience
+    std::optional<UtteranceId> utterance_id;
+    std::optional<SessionId> session_id;
+    std::optional<KnowledgeUnitId> reply_to_unit_id;
+};
+
+struct TemporalComponent {
+    int64_t valid_from_ms;
+    int64_t valid_until_ms;           // 0 = still valid
+    int64_t observed_at_ms;
+    int64_t recorded_in_session_ms;
+};
+
+struct EmbeddingMetaComponent {
+    std::string model_id;             // e.g. "bge-small-en-v1.5"
+    std::string model_version;
+    int64_t computed_at_ms;
+    std::optional<VectorRef> vector_ref;
+};
+
+struct CompactionMetaComponent {
+    int64_t last_decay_at_ms;
+    int64_t last_dedupe_check_at_ms;
+    std::optional<KnowledgeUnitId> merged_into;
+    double last_decay_score;
+};
+```
+
+### 4.2. Per-kind payload components
+
+Per-kind данные живут в выделенных payload-компонентах. Подробные спецификации — в `guides/knowledge-units-roadmap.md`.
+
+```cpp
+struct QAPayload {
+    std::string canonical_question;
+    std::vector<std::string> question_variants;
+    std::string answer;
+    std::string category;
+    int64_t last_verified_at_ms;
+};
+
+struct FactPayload {
+    std::string subject;
+    std::string predicate;
+    std::string object;
+    std::string value_type;           // "string" | "int" | "float" | "datetime"
+    std::optional<std::string> unit;
+};
+
+struct ChunkPayload {
+    uint64_t byte_offset;
+    uint64_t byte_length;
+    std::vector<std::string> heading_path;
+    std::vector<std::string> code_blocks;
+    std::vector<std::string> symbols;
+};
+
+struct ConversationEpisodePayload {
+    std::vector<UtteranceId> utterance_ids;
+    int64_t started_at_ms;
+    int64_t ended_at_ms;
+    uint32_t turn_count;
+    std::vector<std::string> participants;
+};
+
+struct CompiledArticlePayload {
+    std::string title;
+    std::string owner;
+    std::vector<std::string> readers;
+    std::vector<std::string> keywords;
+    ArticleStatus status;             // Draft | Review | Published | Archived
+    int64_t last_compiled_at_ms;
+    std::vector<KnowledgeUnitId> derived_from;
+};
+```
+
+### 4.3. Storage layout для components
+
+- **Operational components** — единая DBI `unit_components` через `TypeDiscriminatedTable` (tag-prefix + UnitId → ValueVariant).
+- **Per-kind payloads** — отдельные DBI: `qa_payloads`, `fact_payloads`, `conversation_episode_payloads`, `compiled_article_payloads`, `chunk_payloads`. Key = UnitId.
+- `MultiTableWriter` обеспечивает atomic coordinated writes (envelope + components + projections + secondary indexes в одной транзакции).
+
+## 5. SearchProjections (retrieval-specific views)
+
+Layer C в ADR-001. `SearchProjection` — отдельное текстовое представление unit, оптимизированное под конкретный retrieval method.
+
+```cpp
+enum class ProjectionKind : uint16_t {
+    Original,           // исходный текст unit (BM25F input)
+    QAQuestion,         // canonical + variants (QAPair)
+    QAAnswer,           // answer (QAPair)
+    Summary,            // short summary
+    CodeSymbols,        // extracted symbols (Chunk)
+    DenseContextual,    // M2: contextual header для dense
+    // M2+: DenseQuery, DensePassage
+};
+
+struct SearchProjection {
+    UnitId unit_id;
+    ScopeId scope_id;
+    ProjectionKind kind;
+    uint64_t revision;                  // инкремент при регенерации
+    int64_t valid_from_ms;
+    int64_t valid_until_ms;             // 0 = still valid
+    std::string text;
+    std::string index_id;
+    std::optional<VectorRef> vector_ref;
+};
+```
+
+### 5.1. Storage layout
+
+```
+unit_projections
+    key   = (scope_id, UnitId, ProjectionKind, revision)
+    value = SearchProjection
+```
+
+Sparse storage: хранятся только сгенерированные projections. Версионирование: `revision` инкремент при регенерации; старые revisions остаются до compaction purge.
+
+### 5.2. Per-kind generation rules
+
+| Kind | Original | QAQuestion | QAAnswer | Summary | CodeSymbols |
+|---|---|---|---|---|---|
+| Chunk | full body | — | — | — | extracted symbols |
+| QAPair | question + answer | canonical + variants | answer | — | — |
+| Fact | subject predicate object | — | — | — | — |
+| Summary | full text | — | — | redundant | — |
+| CompiledArticle | title + body | — | — | short | — |
+| ConversationEpisode | flattened | — | — | — | — |
+| Event | description | — | — | — | — |
+| Entity | name + type + aliases | — | — | — | — |
+| Relation | from → edge → to | — | — | — | — |
+
+Generation rules детерминированы: given the same unit + components, the same projections are emitted.
+
+## 6. Domain Stores (capability-aware)
+
+`MemoryStack::open(path, spec)` создаёт только нужные DBI. Validation в `memory-stacks-roadmap.md` секция 10 гарантирует, что capabilities согласованы. DBI budget ≤ 64.
+
+### 6.1. IKnowledgeUnitStore (всегда открыт)
+
+Primary table для envelope CRUD. Backend — MDBX DBI `knowledge_units` (key = UnitId). Secondary index `knowledge_units_by_kind`.
+
+```cpp
+class IKnowledgeUnitStore {
+public:
+    virtual ~IKnowledgeUnitStore();
+    virtual std::optional<KnowledgeUnitEnvelope> find(const KnowledgeUnitId& id) const = 0;
+    virtual void upsert(KnowledgeUnitEnvelope envelope) = 0;
+    virtual bool erase(const KnowledgeUnitId& id) = 0;
+    virtual std::vector<KnowledgeUnitId> scan_by_kind(KnowledgeUnitKind kind) const = 0;
+    virtual std::vector<KnowledgeUnitId> scan_by_scope(const ScopeId& scope_id) const = 0;
+};
+```
+
+### 6.2. IComponentStore (если любой компонент включён)
+
+Backend — `TypeDiscriminatedTable`, DBI `unit_components`. Открывается если `enable_usage_stats`/`enable_temporal_validity`/`enable_speaker`/`enable_embedding_meta`/`enable_compaction`.
+
+```cpp
+class IComponentStore {
+public:
+    virtual ~IComponentStore();
+    virtual std::optional<ComponentVariant> get(ComponentKind kind, const KnowledgeUnitId& unit_id) const = 0;
+    virtual void set(ComponentKind kind, const KnowledgeUnitId& unit_id, const ComponentVariant& value) = 0;
+    virtual void erase(ComponentKind kind, const KnowledgeUnitId& unit_id) = 0;
+};
+```
+
+### 6.3. IProjectionStore (всегда для indexed retrieval)
+
+Backend — DBI `unit_projections`. Методы: `put`, `list(unit_id, kind_filter?)`, `delete_revision(unit_id, kind, revision)`.
+
+### 6.4. IEmbeddingStore (если DenseVectors=true)
+
+Backend — `embedding_meta` + `embedding_vectors` DBI. Методы: `put_vector(model_id, kind, unit_id, vector)`, `get_vector(...)`, `get_meta(kind, unit_id)`. Multi-model — M2.
+
+### 6.5. Per-payload stores (по capability)
+
+Каждый store открывается если соответствующий payload-компонент включён. Подробные интерфейсы — в `guides/knowledge-units-roadmap.md`:
+
+- `IQAKnowledgeBase` — если `enable_qa_payload = true`.
+- `IFactStore` — если `enable_fact_payload = true`.
+- `IEpisodeStore` — если `enable_conversation_episode = true`.
+- `IArticleStore` — если `enable_compiled_article = true`.
+- `IChunkStore` — если `enable_chunk_payload` (по умолчанию для Chunk kind).
+
+### 6.6. Типичный DBI usage
+
+BasicRag ~10, QAKnowledgeBase ~14, AgentLTM ~22, FullResearch ~30.
+
+## 7. Retrieval Composition
+
+Retrieval — directed graph typed retrievers. `HybridRetriever` orchestrator применяет fusion strategy.
+
+### 7.1. RetrievalPlan (cross-stack)
+
+`RetrievalPlan` — value type, передаваемый между retrievers. Полная спецификация — в `memory-stacks-roadmap.md` секция 7.3. Retrieval-ориентированные поля: `raw_query`, `query_type`, `scope_ids`, `tiers`, `mode`, `retrievers[]`, `kinds[]`, `temporal_window?`, `speaker_filter?`, `metadata_filter?`, `candidate_pool_size=200`, `limit=32`, `context_budget?`, `decay_policy_override?`.
+
+### 7.2. IUnitRetriever
+
+```cpp
+class IUnitRetriever {
+public:
+    virtual ~IUnitRetriever();
+    [[nodiscard]] virtual std::string_view name() const noexcept = 0;
+    [[nodiscard]] virtual std::vector<RetrievalHit> retrieve(const RetrievalPlan& plan) const = 0;
+};
+```
+
+Реализации:
+
+- `LexicalRetriever` — BM25F по `unit_projections` (key: scope_id, projection_kind).
+- `DenseRetriever` — vector search по `embedding_vectors`.
+- `QARetriever` — targeted lookup по `IQAKnowledgeBase` (QALookup intent).
+- `GraphRetriever` — bounded expansion через `graph_edges_by_src`/`graph_edges_by_dst`.
+- `TemporalRetriever` — query `temporal_event_index`/`temporal_unit_index`.
+- `DecayAwareRetriever` — обёртка, применяет DecayPolicy поверх других retrievers.
+- `AntiLoopCooldown` — фильтр перед scoring, пропускает units с `cooldown_until_ms > now_ms`.
+- `IntentRouter` — pre-router, классифицирует query и выбирает retrievers.
+
+### 7.3. RetrievalHit и Hybrid Fusion (RRF)
+
+```cpp
+struct RetrievalHit {
+    KnowledgeUnitId unit_id;
+    double score = 0.0;
+    uint32_t rank = 0;
+    std::string source;                   // retriever name
+    std::vector<SourceRef> source_refs;
+    std::string snippet;
+    std::optional<ProjectionKind> projection_kind;
+};
+```
+
+RRF formula:
+
+```text
+score(unit) = sum over retrievers r:
+    weight_r / (k + rank_r(unit))
+
+default k = 60
+default per-stack weights (см. memory-stacks-roadmap.md секция 8):
+    BasicRag:    lexical=1.0, vector=1.0
+    AgentLTM:    lexical=1.0, vector=1.0, qa=1.5, graph=0.5, temporal=1.0
+    SpeakerChat: lexical=1.0, speaker=1.5
+```
+
+Per-stack default weights в `HybridRetrievalConfig::retriever_weights`. Validation: `weights.size() == number of retrievers`. `WeightedMax`/`Learned` fusion — M2+.
+
+### 7.4. Decay-Aware Scoring
+
+`DecayAwareRetriever` оборачивает другие retrievers и применяет DecayPolicy:
+
+```text
+decay_score = base_score + use_boost * log1p(use_count) - elapsed_ms / half_life_ms
+```
+
+Алгоритм:
+
+1. AntiLoopCooldown filter (перед scoring).
+2. Получить `UsageStatsComponent` для каждого unit.
+3. Вычислить `decay_score`.
+4. self_echo_suppression: если `SpeakerComponent.speaker_id == agent_self_id`, умножить score на `(1.0 - self_echo_suppression)`.
+
+Defaults для `AgentLongTermMemory` (см. `memory-stacks-roadmap.md` секция 8.3): half_life=7d, use_boost=0.35, cooldown=60s, self_echo=0.3, cold_threshold=0.01.
+
+### 7.5. Bounded Graph Expansion
+
+`GraphRetriever` использует `GraphExpansionOptions` (см. `memory-stacks-roadmap.md` секция 8 + `knowledge-units-roadmap.md` section 5.2):
+
+```cpp
+struct GraphExpansionOptions {
+    uint32_t max_depth = 2;
+    uint32_t max_edges = 64;
+    uint32_t budget_tokens = 1024;
+    std::vector<EdgeKind> allowed_edge_kinds;
+    double min_weight = 0.0;
+};
+```
+
+BFS от seed units, max_depth BFS, max_edges — глобальный cap, allowed_edge_kinds — фильтр (empty = all), min_weight — prune low-confidence. Determinism: ordering `(edge_weight desc, edge_kind, from_id, to_id)`. Floating subgraph как retrieval view (не stored as separate copy).
+
+### 7.6. Adaptive Routing
+
+`ILightweightIntentRouter` — non-LLM классификатор (decision tree / trained classifier):
+
+```cpp
+enum class QueryType : uint8_t {
+    Unknown,
+    QALookup,            // "How do I ...?"
+    FactLookup,          // "What is the capital of ...?"
+    ProcedureLookup,     // "Steps to ..."
+    TemporalLookup,      // "What happened on ..."
+    GraphLookup,         // "What is connected to ...?"
+    NoAnswerCheck,       // impossible-to-answer queries
+};
+```
+
+Pre-router (перед retrieval) — per stack configurable. `QALookup` → приоритет `QARetriever`. `TemporalLookup` → `TemporalRetriever` + `LexicalRetriever`. Default `Unknown` — применяются все retrievers по profile.
+
+## 8. ContextAssembly with Budgets
+
+`ContextBuilder` превращает ranked hits в budgeted context для downstream consumer.
+
+### 8.1. ContextBudget per-block
+
+`MemoryProfileSpec::context_budget` (см. `memory-stacks-roadmap.md` секция 6.2). Constraint: `sum(per_block) <= total_tokens`.
+
+```cpp
+struct ContextBudget {
+    size_t total_tokens = 4096;
+    size_t qa_tokens = 512;
+    size_t chunk_tokens = 2048;
+    size_t graph_tokens = 512;
+    size_t summary_tokens = 512;
+    size_t evidence_tokens = 256;
+};
+```
+
+Per-stack defaults: `BasicRag` (chunks=3072), `AgentLTM` (qa=512, chunks=2048, graph=512, summary=512), `QAKB` (qa=1024, chunks=512), `SpeakerChat` (chunks=1500, summary=800).
+
+### 8.2. IContextBuilder и TrimmedContextBuilder
+
+```cpp
+class IContextBuilder {
+public:
+    virtual ~IContextBuilder();
+    [[nodiscard]] virtual Context build(const RetrievalPlan& plan, const std::vector<RetrievalHit>& hits) const = 0;
+};
+```
+
+`TrimmedContextBuilder` — дефолтная реализация. Алгоритм trim order:
+
+1. QA block (highest precision, lowest cost).
+2. Top 30% high-score chunks от remaining budget.
+3. Low-score chunks (rest of chunk budget).
+4. Summaries.
+5. Graph expansion (entities/relations only, no raw text).
+6. Evidence blocks (quotes + ranges) inline с parent block, count against parent's budget.
+
+Citations обязательны: каждый `ContextBlock` имеет `source_refs`. Без citations — block rejected, logged as warning. Final context logging через `IRetrievalTrace` (см. секцию 9.1) — обязательно, не side channel.
+
+### 8.3. ContextBlock и Context
+
+```cpp
+struct ContextBlock {
+    BlockType block_type;                 // QA | Chunk | Summary | Graph | Evidence
+    std::string content;
+    std::vector<SourceRef> sources;
+    double score;
+    size_t token_count;
+    std::vector<KnowledgeUnitId> unit_ids;
+};
+
+struct Context {
+    std::vector<ContextBlock> blocks;
+    size_t total_tokens;
+    std::string trace_id;
+    std::string retrieval_plan_id;
+    bool truncated;
+};
+```
+
+Determinism: given the same plan/hits/budget → same `Context`. Это делает retrieval traces reproducible.
+
+## 9. Evaluation & Tracing
+
+Evaluation — first-class citizen. Retrieval traces, datasets, metrics — часть contract, не bolt-on.
+
+### 9.1. RetrievalTrace
+
+```cpp
+struct RetrievalTrace {
+    std::string trace_id;
+    RetrievalPlan plan;
+    std::vector<std::vector<RetrievalHit>> per_retriever_hits;  // associative
+    std::vector<RetrievalHit> targeted_hits;                     // targeted (QALookup)
+    std::vector<RetrievalHit> fused_hits;
+    Context final_context;
+    LatencyStats latency_ms;                                    // per-stage
+};
+```
+
+Latency per stage: tokenize, lexical, vector, qa, graph, temporal, fusion, build_context. Метрики: `cache_hit_rate`, `anti_loop_skip_rate`, `decay_score_distribution` (histogram), `retrieval_channel_latency` (p50/p95/p99 per channel). Per-retriever breakdown: `associative` (lexical/vector/graph) vs `targeted` (QA, exact match). Associative timeout 50ms, targeted 4000ms.
+
+### 9.2. RetrievalDataset / TestCase / Judgment
+
+```cpp
+struct RetrievalJudgment {
+    KnowledgeUnitId unit_id;
+    uint32_t grade = 0;                  // 0..3 (0=irrelevant, 1=related, 2=useful, 3=exact)
+    std::string note;
+};
+
+struct RetrievalTestCase {
+    std::string id;
+    std::string query;
+    QueryType expected_query_type;
+    std::vector<RetrievalJudgment> judgments;
+    std::vector<KnowledgeUnitId> must_include;
+    std::vector<KnowledgeUnitId> must_exclude;
+    std::optional<std::string> expected_answer;
+    std::optional<RetrievalPlan> plan_override;
+};
+
+struct RetrievalDataset {
+    std::string name;
+    std::vector<RetrievalTestCase> cases;
+};
+```
+
+### 9.3. Golden dataset requirements
+
+M1 minimum: ≥50 test cases; ≥3 distinct intent types (QALookup, FactLookup, GraphLookup minimum; TemporalLookup/ProcedureLookup encouraged); ≥1 no-answer case per intent; ≥1 case per `KnowledgeUnitKind`. Dataset checked in под `tests/data/golden/` в JSON form.
+
+### 9.4. RetrievalMetrics
+
+- `Recall@K` — fraction of judged units (grade > 0) в top-K hits.
+- `MRR` — mean reciprocal rank of first grade > 0 unit.
+- `NDCG@K` — graded 0..3 NDCG with logarithmic discount.
+- `ContextPrecision` — fraction of context tokens from grade > 0 units.
+- `NoAnswerAccuracy` — fraction of no-answer cases where builder emits no answer.
+- `CitationFidelity` — fraction of context blocks whose source_refs resolve in storage.
+- `Latency` — p50, p95, p99 per stage.
+- `IndexSize` — bytes per category (units, postings, graph, temporal).
+- `ReindexTime` — seconds per resource, per backend.
+
+### 9.5. Hybrid Lift Target
+
+CI gate: `Recall@10(hybrid) >= 1.20 * Recall@10(BM25-only)`, `NoAnswerAccuracy(hybrid) >= NoAnswerAccuracy(BM25-only)`, `p95 latency(hybrid) <= 2x p95 latency(BM25-only)`. Failing lift — release blocker.
+
+### 9.6. Intent-class-specific test cases (M1)
+
+- **TemporalPointLookup** — bi-temporal query: "What was true at T?" + "What is true now?".
+- **SupersedenceChain** — новый fact supersed'ит старый: retrieval возвращает новый, не старый.
+- **CooldownRespect** — после retrieval unit не возвращается в течение cooldown_ms.
+- **SpeakerFilter** — фильтрация по `speaker_scope` (Self/Owner/Cohost/Audience).
+- **CompactionHandoff** — compaction worker восстанавливается после crash через `compaction_handoffs` DBI.
+
+## 10. Cross-Module Risks
+
+Топ-5 архитектурных рисков и митигации:
+
+1. **Component explosion (DBI budget).** Митигация: `TypeDiscriminatedTable` для operational components, per-kind таблицы только для крупных payloads (qa/fact/episode/article/chunk).
+
+2. **Profile drift.** `profile_signature` mismatch при `open_existing()`. Митигация: detected на open, additive auto-migrate для новых capabilities, breaking → error + migration tool (`agent-memory-cli profile-migrate`).
+
+3. **Multi-projection retrieval overhead.** N projections × N retrievers. Митигация: `candidate_pool_size` limited (200 default), `projection_kind` в posting keys для targeted scan, sparse projection storage.
+
+4. **Decay + Cooldown + self-echo complexity.** Много параметров политик. Митигация: defaults в `MemoryProfiles::` namespace, per-stack validation в `open()`, eval pipeline проверяет effectiveness (`anti_loop_skip_rate > 0` для активно используемых stacks).
+
+5. **Cross-stack isolation (interference между scope_id).** Митигация: scope-aware keys (все secondary indexes начинаются с `scope_id`), per-scope transactions, `metadata_filters` через `ReverseIndexTable` (scope-prefixed).
+
+## 11. Cross-references и Implementation Order
+
+Этот документ расширяет `memory-stacks-roadmap.md` секция 16 (Recommended Implementation Order) более детальной спецификацией:
+
+| Шаг в memory-stacks-roadmap | Детализация здесь |
+|---|---|
+| Шаг 1-2: envelope + scope + metadata filters | Секция 3 (envelope fields, per-kind rules) |
+| Шаг 5: component infrastructure | Секция 4 (operational + per-kind components, storage) |
+| Шаг 7: SearchProjections + BM25F indexing | Секция 5 (projection kinds, generation rules, storage) |
+| Шаг 13: retrieval composition | Секция 7 (RetrievalPlan, retrievers, RRF, decay-aware) |
+| Шаг 15: eval pipeline | Секция 9 (golden dataset, metrics, hybrid lift) |
+
+Дополнительные секции: domain stores (секция 6) — capability-aware DBI creation; ContextAssembly (секция 8) — budget trim order, citations; Cross-module risks (секция 10) — top-5 retrieval-specific риски.
+
+## 12. References
+
+- `guides/memory-stacks-roadmap.md` — центральный манифест архитектуры, ADR'ы, MemoryProfileSpec, MemoryStack, MDBX layout, maturity levels.
+- `guides/knowledge-units-roadmap.md` — per-kind payload-компоненты (QAPayload, FactPayload, ChunkPayload, ConversationEpisodePayload, CompiledArticlePayload, Entity, Relation).
+- `guides/lexical-search-roadmap.md` — BM25F поверх projections, postings, tokenization.
+- `guides/optimization-roadmap.md` — vector/binary secondary indexes, multi-projection embeddings.
+- `guides/mdbx-containers-extension-tz.md` — `TypeDiscriminatedTable`, `MultiTableWriter`, `ReverseIndexTable` storage primitives.
+- `guides/architecture.md` — 4-слойная модель.
+- `guides/policies-roadmap.md` (future) — детальная спецификация DecayPolicy/WritePolicy/SpeakerScopePolicy.
+- `guides/compaction-roadmap.md` (future) — CompactionWorker, job types, handoff structure.
+- `guides/runtime-services-roadmap.md` (future) — PromptCache, AsyncIndexer, WriteGate.
+
+External references (ai-agent-playbook):
+
+- `concepts/ai-agents/AI-агенты и AI-VTuber — архитектурные паттерны из видео 2026.md` — hot/cold path separation, layered memory.
+- `concepts/rag-knowledge/Внешняя память LLM-агентов — система СВИНОПАС.md` — anti-loop / decay / cooldown patterns.
+- `resources/llm-research/Memory for Autonomous LLM Agents survey — конспект.md` — write-read-manage loop, lifecycle.
