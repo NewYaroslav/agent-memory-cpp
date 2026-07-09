@@ -1,0 +1,690 @@
+# compaction-roadmap.md
+
+Спецификация CompactionWorker, job types, scheduling и CompactionHandoff для подсистемы памяти `agent-memory-cpp`. Документ конкретизирует ADR-009 (Compaction strategy) из `guides/memory-stacks-roadmap.md` секции 12.4 и описывает runtime-сервис, который ортогонален MemoryStack (per ADR-013).
+
+## 1. Purpose
+
+Этот документ описывает:
+
+- `CompactionWorker` — фоновый компонент MemoryStack, обрабатывающий compaction jobs.
+- `ICompactionJob` интерфейс и его контракт (validate / run / checkpoint / restore / is_idempotent).
+- Job types: DecayJob, DedupeJob, MergeJob, ArchiveColdJob, SummaryPromotionJob, EmbeddingRecomputeJob, CompactionHandoffJob.
+- `CompactionHandoff` — структурированная запись для crash recovery и operational handoff.
+- Scheduling policy: hybrid on-write + on-schedule; threading model; crash recovery; admin operations (CLI + programmatic).
+
+Cross-references: `guides/memory-stacks-roadmap.md` (ADR-009, ADR-013, секция 8, 12.4, 16 шаг 14), `guides/knowledge-units-roadmap.md` (CompactionMetaComponent, Lifecycle FSM, episode compaction 5.5.4), `guides/knowledge-base-roadmap.md` (DecayAwareRetriever, eval pipeline CompactionHandoff test 9.6), `guides/policies-roadmap.md` future (DecayPolicy, WritePolicy), `guides/mdbx-containers-extension-tz.md` (12.5 TaskQueue).
+
+Non-goals: подробная спецификация embedding model адаптеров, LLM-based summary generation (использует внешний `ITextAdapter`), distributed compaction (multi-process).
+
+## 2. CompactionWorker
+
+### 2.1. Architecture
+
+`CompactionWorker` — фоновый компонент `MemoryStack`, обрабатывающий compaction jobs. Один worker thread per MemoryStack (per ADR-013, см. также Open Issue 17.6 в `memory-stacks-roadmap.md`). Использует `TaskQueue`/`JobStore` из `mdbx-containers-extension-tz.md` секции 12.5 для persistent очереди и DBI `compaction_jobs` + `compaction_handoffs` из `memory-stacks-roadmap.md` секции 12.4 для operational state.
+
+```cpp
+class CompactionWorker {
+public:
+    explicit CompactionWorker(MemoryStack& stack);
+    ~CompactionWorker();
+
+    // Lifecycle
+    void start();           // spawn thread (lazy start on first enqueue, explicit ok)
+    void stop();            // graceful shutdown: finish current job, then exit
+    void stop_immediate();  // cancel current job (use carefully, breaks idempotency)
+
+    // Job submission
+    JobId enqueue(ICompactionJob::Ptr job);
+    JobId enqueue_delayed(ICompactionJob::Ptr job, std::chrono::milliseconds delay);
+
+    // Status
+    CompactionStats stats() const;
+    std::vector<JobState> active_jobs() const;
+    std::vector<JobState> recent_jobs(size_t limit) const;
+    std::optional<CompactionHandoff> current_handoff() const;
+
+    // Manual trigger (для admin tool)
+    JobId trigger_now(ICompactionJob::Kind kind, CompactionParams params);
+
+    // Health
+    bool is_running() const noexcept;
+    uint64_t worker_thread_id() const noexcept;
+};
+```
+
+Worker создаётся через `MemoryStack::compaction()` (см. `memory-stacks-roadmap.md` секция 7.1) и доступен только если `spec.enable_compaction = true`. Создание с capability mismatch выбрасывает `std::logic_error`.
+
+### 2.2. Threading Model
+
+Решение: один worker thread per MemoryStack (per Open Issue 17.6 в `memory-stacks-roadmap.md`).
+
+- Write operations (on-write cheap jobs) и compaction jobs используют одну MDBX транзакцию через `MultiTableWriter` (`mdbx-containers-extension-tz.md` секция 3.7).
+- Compaction jobs ждут в persistent queue `compaction_jobs` и обрабатываются последовательно (FIFO с учётом priority).
+- Нет параллельного compaction внутри одного stack — избежание lock contention на secondary indexes.
+- Worker thread использует per-thread transaction model из `mdbx-containers` (per-thread → один worker thread владеет одной активной транзакцией).
+- On-write cheap operations (mark dirty, enqueue DecayJob) выполняются в вызывающем потоке через `MultiTableWriter`, не блокируют worker.
+
+```cpp
+// Conceptual flow: on-write path
+auto write_result = stack.write_unit(WriteRequest{...});
+// внутри write_unit:
+//   1. MultiTableWriter txn открыт
+//   2. envelope + components + projections записаны
+//   3. CompactionMetaComponent.dirty_decay = true
+//   4. Если dirty threshold reached -> enqueue DecayJob
+//   5. Commit
+// worker thread (если запущен) подхватывает DecayJob асинхронно
+```
+
+### 2.3. Lifecycle интеграция с MemoryStack
+
+```cpp
+auto stack = MemoryStack::open(path, MemoryProfiles::AgentLongTermMemory());
+// stack.compaction() возвращает ссылку на CompactionWorker
+// Worker автоматически стартует при первом enqueue (lazy start)
+// Worker останавливается при stack.close() (graceful shutdown)
+```
+
+Lifecycle контракт:
+
+- `MemoryStack::open()` — создаёт `CompactionWorker`, не запускает thread.
+- Первый `enqueue()` — стартует thread (lazy).
+- `MemoryStack::close()` — вызывает `worker.stop()` (graceful), дожидается завершения текущего job.
+- Деструктор `MemoryStack` — гарантирует `stop()` (RAII).
+- Crash recovery при следующем `open()` — worker проверяет `compaction_handoffs` DBI для in-progress handoff.
+
+Worker может быть запущен явно через `worker.start()` если приложение хочет запустить предварительный decay sweep до первого write (например, для восстановления индексов после cold start).
+
+### 2.4. CompactionStats
+
+```cpp
+struct CompactionStats {
+    uint64_t total_enqueued = 0, total_completed = 0, total_failed = 0, total_partial = 0;
+    uint64_t active_jobs_count = 0, queued_jobs_count = 0;
+    std::chrono::milliseconds avg_job_duration{0}, last_completion_at{0};
+    uint64_t units_processed_total = 0, units_changed_total = 0;
+    uint64_t units_erased_total = 0, units_promoted_total = 0;
+};
+```
+
+`stats()` читает атомарные счётчики (lock-free) без обращения к MDBX.
+
+## 3. ICompactionJob
+
+### 3.1. Interface
+
+```cpp
+class ICompactionJob {
+public:
+    using Ptr = std::shared_ptr<ICompactionJob>;
+
+    enum class Kind : uint16_t {
+        Decay = 0, Dedupe = 1, Merge = 2, ArchiveCold = 3,
+        SummaryPromotion = 4, EmbeddingRecompute = 5, CompactionHandoff = 6,
+    };
+
+    virtual ~ICompactionJob() = default;
+
+    virtual Kind kind() const = 0;
+    virtual std::string name() const = 0;
+    virtual CompactionParams params() const = 0;
+    virtual Result<void> validate(const MemoryStack& stack) const = 0;
+    virtual Result<JobOutcome> run(MemoryStack& stack) = 0;
+    virtual std::optional<HandoffState> checkpoint() const { return std::nullopt; }
+    virtual void restore(HandoffState state) {}
+    virtual bool is_idempotent() const { return true; }
+    virtual int priority() const { return 0; }
+};
+```
+
+`validate()` — перед постановкой в очередь, возвращает ошибку если preconditions не выполнены. `run()` — вызывается worker thread, должен использовать `stack.compaction_txn()` для atomic multi-DBI write. При exception worker логирует error, помечает job как Failed, инкрементит retry counter. `checkpoint()`/`restore()` — опциональный механизм для длинных jobs. `is_idempotent()` — критично для crash recovery: если `false` и worker crashed mid-job, при restart job помечается Failed без перезапуска. DecayJob, DedupeJob, ArchiveColdJob, EmbeddingRecomputeJob — idempotent. MergeJob — conditional (если restore checkpoint возможен).
+
+### 3.2. JobOutcome
+
+```cpp
+struct JobOutcome {
+    uint64_t units_processed = 0;
+    uint64_t units_changed = 0;
+    uint64_t units_erased = 0;
+    uint64_t units_promoted = 0;
+    std::chrono::milliseconds duration{0};
+    std::optional<std::string> error;
+    bool was_partial = false;  // true если job был прерван (checkpoint resume или crash)
+};
+```
+
+`was_partial` устанавливается если job завершился через exception в середине обработки, или был cancelled через `stop_immediate()`. Используется для retry-логики и reporting.
+
+### 3.3. JobState (storage representation)
+
+Сериализуемая запись для DBI `compaction_jobs` (key = `JobId`, сериализация msgpack/flat binary):
+
+```cpp
+struct JobState {
+    JobId job_id;
+    ICompactionJob::Kind kind;
+    std::string name;
+    std::vector<uint8_t> params_blob;          // сериализованные params
+    JobStatus status = JobStatus::Pending;     // Pending, Running, Done, Failed, Dead
+    int64_t created_at_ms = 0;
+    int64_t started_at_ms = 0;
+    int64_t completed_at_ms = 0;
+    int64_t run_after_ms = 0;                  // для delayed jobs
+    uint32_t attempts = 0;
+    uint32_t max_attempts = 3;
+    std::string last_error;
+    JobOutcome outcome;
+    std::optional<std::string> worker_id;      // set while Running
+    std::optional<HandoffState> handoff_state; // checkpoint для resume
+};
+```
+
+## 4. Job Types
+
+### 4.1. DecayJob
+
+Пересчёт decay scores для всех units в scope. Обновляет `UsageStatsComponent` и `CompactionMetaComponent`.
+
+```cpp
+struct DecayParams {
+    ScopeId scope_id;
+    double min_score_threshold = 0.0;  // units ниже threshold → кандидаты на archive
+    size_t batch_size = 1000;
+};
+
+class DecayJob : public ICompactionJob {
+    // Алгоритм:
+    //   for each unit in scope_id (по CompactionMetaComponent.dirty_decay = true):
+    //     usage = load UsageStatsComponent(unit)
+    //     elapsed_ms = now_ms - usage.last_used_at_ms
+    //     decay_score = use_boost * log1p(usage.use_count) - elapsed_ms / half_life_ms
+    //     update CompactionMetaComponent.last_decay_score = decay_score
+    //     if decay_score < min_score_threshold:
+    //       update CompactionMetaComponent.cold_candidate = true
+    //     clear CompactionMetaComponent.dirty_decay = false
+    //
+    // Применяет DecayPolicy из MemoryProfileSpec.decay_policy:
+    //   - mode (None / Linear / Exponential / Logistic) — выбор формулы
+    //   - half_life_ms (для Exponential)
+    //   - use_boost, cooldown_ms, self_echo_suppression, cold_threshold
+    //
+    // Не удаляет записи — это задача ArchiveColdJob.
+    // Идемпотентен: повторный запуск даёт тот же результат.
+};
+```
+
+Default `min_score_threshold` для `AgentLongTermMemory` = `cold_threshold` из `DecayPolicy` (default 0.01).
+
+### 4.2. DedupeJob
+
+Дедупликация через vector similarity. Сливает близкие units через supersede или merge.
+
+```cpp
+struct DedupeParams {
+    ScopeId scope_id;
+    double distance_threshold;     // обычно = WritePolicy.dedupe_distance_threshold (0.15)
+    size_t batch_size = 500;
+    bool prefer_supersede = true;  // vs merge
+};
+
+class DedupeJob : public ICompactionJob {
+    // Алгоритм:
+    //   for each pair (unit_a, unit_b) в scope с distance < distance_threshold:
+    //     if prefer_supersede и WritePolicy.allow_supersede:
+    //       newer_unit supersedes older_unit (lifecycle = Superseded)
+    //     elif WritePolicy.allow_merge:
+    //       merge в один unit с combined metadata
+    //     else:
+    //       skip (no-op)
+    //
+    // Distance вычисляется через embeddings:
+    //   - default: cosine distance между EmbeddingMetaComponent.vector_ref
+    //   - fallback: BM25F similarity на unit_projections
+    //
+    // Идемпотентен (после supersede / merge — повторный запуск no-op).
+};
+```
+
+### 4.3. MergeJob
+
+Слияние N units в один. Используется для episode compaction (см. `knowledge-units-roadmap.md` секция 5.5.4) и related facts.
+
+```cpp
+enum class MergeStrategy {
+    Concatenate,   // raw concat primary_text
+    Summarize,     // LLM-generated summary (требует ITextAdapter)
+    Structured,    // per-kind merge rules (для QAPair, Fact — special handling)
+};
+
+struct MergeParams {
+    std::vector<KnowledgeUnitId> source_units;
+    MergeStrategy strategy = MergeStrategy::Concatenate;
+    std::optional<KnowledgeUnitId> target_unit;  // если nullopt, создаётся новый unit
+    ScopeId scope_id;
+};
+
+class MergeJob : public ICompactionJob {
+    // Алгоритм:
+    //   1. Загрузить source_units (envelope + payload + components).
+    //   2. Применить strategy:
+    //      - Concatenate: target.primary_text = join(source_units.primary_text, "\n---\n")
+    //      - Summarize: ITextAdapter.summarize(source_texts) -> target.primary_text
+    //      - Structured: per-kind merge (QAPair: union variants; Fact: keep latest)
+    //   3. Создать target_unit (если nullopt) или обновить существующий.
+    //   4. Для каждого source_unit: lifecycle = Superseded, superseded_by = target_unit.
+    //   5. CompactionMetaComponent для source_units: merged_into = target_unit.
+    //   6. update lineage: target_unit.supersedes = source_units.
+    //
+    // Условно идемпотентен: при restore из checkpoint повторный merge даёт тот же target.
+};
+```
+
+### 4.4. ArchiveColdJob
+
+Физическое или логическое удаление units, помеченных как cold candidates через DecayJob.
+
+```cpp
+struct ArchiveColdParams {
+    ScopeId scope_id;
+    double score_threshold;          // аналог DecayParams.min_score_threshold
+    bool physical_erase = false;    // true = erase из MDBX; false = lifecycle = Deprecated
+    uint64_t older_than_ms = 0;     // дополнительный фильтр: created_at_ms < now_ms - older_than_ms
+    size_t batch_size = 500;
+};
+
+class ArchiveColdJob : public ICompactionJob {
+    // Алгоритм:
+    //   for each unit в scope где:
+    //     CompactionMetaComponent.cold_candidate = true
+    //     AND last_decay_score < score_threshold
+    //     AND created_at_ms < (now_ms - older_than_ms):
+    //       if physical_erase:
+    //         erase из knowledge_units DBI
+    //         erase из secondary indexes
+    //         erase из unit_components DBI
+    //         erase из unit_projections DBI
+    //         erase из per-payload DBI
+    //       else:
+    //         envelope.lifecycle_state = Deprecated (или Erased для audit-safety)
+    //
+    // Идемпотентен: повторный запуск no-op для уже обработанных units.
+};
+```
+
+Физическое удаление vs logical (lifecycle = Erased) — выбор зависит от требований auditability. По умолчанию используется logical (audit-safe).
+
+### 4.5. SummaryPromotionJob
+
+Промоция частей в `CompiledArticle` (для wiki-maintainer). Анализирует часто-retrieved facts, генерирует summary, создаёт `CompiledArticlePayload`.
+
+```cpp
+struct SummaryPromotionParams {
+    ScopeId scope_id;
+    double usage_threshold;         // use_count > threshold
+    double relevance_threshold;      // last_decay_score > threshold
+    size_t max_articles_per_run = 10;
+    std::optional<std::string> target_owner;       // CompiledArticlePayload.owner
+    std::optional<std::string> target_readers;     // CompiledArticlePayload.readers
+    bool use_llm_summarizer = false;               // ITextAdapter.summarize vs extractive
+};
+
+class SummaryPromotionJob : public ICompactionJob {
+    // Алгоритм:
+    //   1. Найти candidate units:
+    //      - use_count >= usage_threshold
+    //      - last_decay_score >= relevance_threshold
+    //      - kind in {Fact, Chunk, Summary}
+    //   2. Кластеризовать candidates (по embeddings, density-based или fixed N).
+    //   3. Для каждого кластера:
+    //      - Сгенерировать summary (LLM или extractive top-K sentences).
+    //      - Создать CompiledArticle unit с CompiledArticlePayload:
+    //          title = cluster centroid keywords
+    //          body = generated summary
+    //          derived_from = source unit_ids
+    //      - Пометить source units: lifecycle = Superseded, superseded_by = article unit_id.
+    //
+    // Требует: CompiledArticles capability (см. memory-stacks-roadmap.md секция 9, validation rule 10).
+    // Без LLM: extractive summary через top-K sentences (cheap fallback).
+};
+```
+
+### 4.6. EmbeddingRecomputeJob
+
+Пересчёт embeddings с `source_model` на `target_model`. Используется при model upgrade.
+
+```cpp
+struct EmbeddingRecomputeParams {
+    ScopeId scope_id;
+    std::string source_model_id;
+    std::string source_model_version;
+    std::string target_model_id;
+    std::string target_model_version;
+    std::vector<ProjectionKind> projection_kinds;  // какие projection'ы пересчитывать
+    size_t batch_size = 100;
+};
+
+class EmbeddingRecomputeJob : public ICompactionJob {
+    // Алгоритм:
+    //   for each unit в scope:
+    //     1. Загрузить projection_kind text (через unit_projections).
+    //     2. Embed через target_model (через ITextEmbedder adapter).
+    //     3. Записать новый embedding с revision + 1:
+    //        - embedding_meta: новый model_id, model_version, computed_at_ms
+    //        - embedding_vectors: новый vector blob
+    //     4. Старые embeddings остаются с revision = N до ArchiveColdJob.
+    //
+    // Требует: EmbeddingMigration capability (см. validation rule в memory-stacks-roadmap.md секция 10).
+    //
+    // Checkpointable: каждые batch_size units сохраняет HandoffState.
+    // Идемпотентен: при restore повторно эмбеддит уже processed units (same result).
+};
+```
+
+См. также `mdbx-containers-extension-tz.md` секция 12.4 (Decay-механика в MemoryStore) для контекста по embedding meta полям.
+
+### 4.7. CompactionHandoffJob (meta-job)
+
+Сохраняет handoff state в `compaction_handoffs` DBI для crash recovery.
+
+```cpp
+struct CompactionHandoffParams {
+    HandoffId handoff_id;
+    SessionId session_id;
+    std::string goal;                       // что делает compaction
+    std::vector<std::string> plan_steps;    // ["scan candidates", "apply decay", ...]
+    std::vector<std::string> constraints;   // max_duration, max_units, safety
+    std::optional<bool> approval_required;
+};
+
+class CompactionHandoffJob : public ICompactionJob {
+    // Автоматически enqueue'ится при:
+    // - compaction worker stop (graceful): создаёт handoff с status = Aborted, current_state = serialized JobState.
+    // - compaction worker startup: если найден in-progress handoff — resume с checkpoint.
+    // - explicit checkpoint call: periodic snapshot каждые checkpoint_interval_ms.
+    //
+    // Приоритет: высокий (priority = 100).
+    //
+    // Не идемпотентен по умолчанию (каждая запись — новая HandoffId),
+    // но повторное выполнение с тем же handoff_id безопасно (overwrite).
+};
+```
+
+См. секцию 5 для детальной структуры `CompactionHandoff`.
+
+## 5. CompactionHandoff Structure
+
+### 5.1. Purpose
+
+`CompactionHandoff` — структурированная запись состояния compaction worker для:
+
+1. **Crash recovery** — восстановление после неожиданного завершения (worker thread died, process killed, OOM).
+2. **Operational handoff** — передача состояния между процессами (например, между короткими CLI вызовами и долгим worker).
+
+Per `ai-agent-playbook: concepts/llm-research/Управление контекстом LLM-агента — стратегии снижения стоимости.md` — auto-compaction должен быть operational handoff, не литературный пересказ. Это означает: структурированные поля (goal, plan_steps, constraints), а не free-form text summary.
+
+### 5.2. Schema
+
+```cpp
+enum class HandoffStatus : uint8_t {
+    InProgress = 0,    // job выполняется
+    Completed = 1,     // успешно завершён
+    Failed = 2,        // завершён с ошибкой
+    Aborted = 3,       // остановлен (graceful stop_immediate или crash detection)
+};
+
+struct CompactionHandoff {
+    HandoffId handoff_id;
+    SessionId session_id;
+    int64_t created_at_ms = 0;
+    int64_t updated_at_ms = 0;
+    HandoffStatus status = HandoffStatus::InProgress;
+
+    // Operational handoff fields (структурированные, не литературные)
+    std::string goal;                              // что делает compaction (1 sentence)
+    std::vector<std::string> constraints;          // max_duration, max_units, safety constraints
+    std::vector<std::string> plan_steps;           // ["scan candidates", "apply decay", ...]
+    std::optional<bool> approval_required;         // true если sensitive operation (physical_erase)
+    std::string current_state;                     // сериализованное JobState (base64 или msgpack blob)
+    std::vector<std::string> error_history;        // лог ошибок для post-mortem
+    std::optional<std::string> next_step;          // checkpoint: что делать при resume
+
+    // Progress tracking
+    uint64_t units_total = 0;
+    uint64_t units_processed = 0;
+    uint64_t units_changed = 0;
+    uint64_t checkpoint_at_unit = 0;               // последний checkpointed unit offset
+    int64_t estimated_remaining_ms = 0;
+
+    // Job metadata (для resume)
+    ICompactionJob::Kind job_kind;
+    JobId job_id;
+    std::vector<uint8_t> params_blob;              // сериализованные params
+};
+```
+
+### 5.3. Storage
+
+DBI `compaction_handoffs` (см. `memory-stacks-roadmap.md` секция 12.4):
+
+```
+compaction_handoffs
+  key = SessionId → CompactionHandoff
+```
+
+Session-scoped: один handoff per session. При создании нового handoff старый помечается `Completed` или `Aborted`.
+
+### 5.4. Checkpoint lifecycle
+
+Worker вызывает `checkpoint_progress()` каждые `checkpoint_interval_ms` (default 5000 ms): сериализует `current_job_->checkpoint()` в `handoff_.current_state`, обновляет `units_processed`, `units_changed`, `checkpoint_at_unit`, периодически flush в DBI. При graceful stop или crash detection — flush немедленно.
+
+## 6. Scheduling Policy
+
+### 6.1. Hybrid on-write + on-schedule (per ADR-009)
+
+**On-write (synchronous, cheap):** выполняется в вызывающем потоке через `MultiTableWriter` в рамках write transaction.
+
+- Schema validation (`envelope` + `payload` + `components` schema checks).
+- Lifecycle state update (initial = Active).
+- `SourceRef` write в `metadata_filters` DBI.
+- Lightweight secondary index update (`knowledge_units_by_kind`, `metadata_filters`).
+- Mark dirty flags: `CompactionMetaComponent.dirty_decay = true`, `dirty_dedupe = true`.
+- Enqueue compaction job if dirty threshold reached.
+
+**On-schedule (background, heavy):** выполняется worker thread асинхронно.
+
+- Decay recompute (`DecayJob`).
+- Dedupe (`DedupeJob`).
+- Merge (`MergeJob`).
+- Archive cold (`ArchiveColdJob`).
+- Summary promotion (`SummaryPromotionJob`).
+- Embedding recompute (`EmbeddingRecomputeJob`).
+- Graph cleanup (orphaned edges).
+
+### 6.2. Job submission rules
+
+| Trigger | Action |
+|---|---|
+| Unit write | `CompactionMetaComponent.dirty_decay = true` |
+| Unit write завершён | Enqueue `DecayJob` если dirty_decay count в scope > threshold |
+| Unit write с `importance_score < WritePolicy.importance_threshold` | Skip enqueue |
+| Dedupe distance threshold reached (on write) | Enqueue `DedupeJob` |
+| `cold_candidate` flag count в scope > N | Enqueue `ArchiveColdJob` |
+| Schedule timer (per `WritePolicy.flush_interval_ms`) | Enqueue `DecayJob` (forced flush) |
+| Model upgrade | Enqueue `EmbeddingRecomputeJob` для всех units в scope |
+| Manual CLI / admin tool | `worker.trigger_now(kind, params)` |
+| Worker stop (graceful) | Auto-enqueue `CompactionHandoffJob` (Aborted status) |
+| Worker startup | Check `compaction_handoffs` DBI для in-progress → enqueue resume |
+
+### 6.3. Job priority
+
+Compaction jobs обрабатываются FIFO с учётом priority (больше = раньше):
+
+| Kind | Priority | Обоснование |
+|---|---|---|
+| `CompactionHandoffJob` | 100 | высокий — для crash recovery |
+| `DecayJob` | 50 | нормальный — affects retrieval score |
+| `DedupeJob` | 40 | нормальный — affects storage size |
+| `MergeJob` | 30 | нормальный — episode compaction |
+| `SummaryPromotionJob` | 20 | низкий — admin-triggered |
+| `EmbeddingRecomputeJob` | 10 | низкий — не блокирует retrieval |
+| `ArchiveColdJob` | 10 | низкий — reclamation |
+
+### 6.4. Dirty counter aggregation
+
+Решение "когда enqueue job" использует счётчик dirty units per scope (`dirty_decay_count`, `dirty_dedupe_count`, `last_flush_ms`) — агрегат в `unit_components` DBI или отдельный ключ.
+
+Threshold для enqueue (per stack):
+
+- `AgentLongTermMemory`: dirty_decay >= 100 или elapsed >= 30s с последнего DecayJob.
+- `CompiledWiki`: dirty_decay >= 50 (маленький stack, чаще).
+- `SpeakerAwareChat`: dirty_decay >= 1000 (высокий write rate).
+
+## 7. Crash Recovery
+
+### 7.1. Compaction worker crash
+
+При startup `CompactionWorker`:
+
+1. Открывает `compaction_handoffs` DBI, ищет in-progress handoff (status = InProgress) для текущего session.
+2. Если найден — десериализует job через `deserialize_job(handoff->job_kind, handoff->params_blob)`, восстанавливает state через `ICompactionJob::restore(handoff->current_state)`, resume с `checkpoint_at_unit`.
+3. Если `is_idempotent()` = true — безопасно перезапустить с offset (или с начала если checkpoint отсутствует).
+4. Если `is_idempotent()` = false и checkpoint отсутствует — fail safely, логирует error, помечает job = Failed (manual review required).
+
+### 7.2. MemoryStack crash
+
+MDBX гарантирует atomicity per transaction (через `MultiTableWriter`). Compaction job, прерванный mid-transaction:
+
+- Транзакция откатывается полностью.
+- Никаких partial writes в primary DBI.
+- Secondary indexes консистентны (обновляются в той же транзакции).
+- Resume при next `open()` через handoff checkpoint.
+
+### 7.3. Partial failure
+
+Если job fails partway (например, embedding model недоступен, DecayPolicy невалиден для части units):
+
+1. Save checkpoint через `CompactionHandoffJob`.
+2. Log error в `handoff.error_history` (с timestamp, unit_id, error message).
+3. Mark handoff status = `Failed`.
+4. Re-enqueue если `retry_policy.attempts < max_attempts`:
+   - Backoff: exponential (1s, 5s, 30s, 5min).
+   - Новый `run_after_ms` через `enqueue_delayed`.
+5. Если `attempts >= max_attempts` — mark job = `Dead` (manual review).
+
+```cpp
+struct RetryPolicy {
+    uint32_t max_attempts = 3;
+    std::chrono::milliseconds base_backoff{1000};
+    double backoff_multiplier = 5.0;
+    std::chrono::milliseconds max_backoff{5 * 60 * 1000};
+};
+```
+
+## 8. Default Stack Compaction Configurations
+
+Из `memory-stacks-roadmap.md` секция 8 (Default Memory Stacks) и 9 (Capability Matrix):
+
+| Stack | Compaction jobs | Schedule | Trigger |
+|---|---|---|---|
+| `BasicRag` | None (opt-in) | — | — |
+| `QAKnowledgeBase` | None (opt-in) | — | — |
+| `AgentLongTermMemory` | Decay, Dedupe, ArchiveCold | Timer 30s + OnWrite | `WritePolicy.flush_interval_ms = 30s` |
+| `SpeakerAwareChat` | Decay (recent cleanup) | Timer 5min | `WritePolicy.flush_interval_ms = 5s` write, DecayJob 5min |
+| `CompiledWiki` | SummaryPromotion, ArchiveCold | Manual + Timer 1h | Manual `trigger_now`, periodic 1h |
+| `TemporalFactStore` | ArchiveCold | Timer 1h | `TemporalComponent.valid_until_ms < now_ms` |
+| `FullResearchMemory` | All jobs | Timer 30s + OnWrite | `AgentLongTermMemory` config + additional |
+
+Конфигурации определены через `MemoryProfileSpec`:
+
+- `BasicRag`, `QAKnowledgeBase`: `enable_compaction = false` по умолчанию. Можно включить через minor in-place migration (см. `memory-stacks-roadmap.md` секция 14.1).
+- `AgentLongTermMemory`: `enable_compaction = true`, `decay_policy.mode = Exponential`, `half_life_ms = 7d`, `cold_threshold = 0.01`.
+- `SpeakerAwareChat`: `enable_compaction = true`, decay для cleanup старых episodes.
+- `CompiledWiki`: `enable_compaction = true`, `enable_compiled_article = true` (validation rule: CompiledArticles requires Compaction).
+- `TemporalFactStore`: `enable_compaction = true`, ArchiveCold для expired facts.
+- `FullResearchMemory`: union всех capabilities.
+
+## 9. Admin Operations
+
+### 9.1. CLI
+
+Команды `agent-memory-cli` target (см. `memory-stacks-roadmap.md` секция 16, шаг 16):
+
+```
+agent-memory-cli compaction status
+agent-memory-cli compaction enqueue <kind> [--scope <scope_id>] [--params <json>]
+agent-memory-cli compaction list [--limit N] [--status <pending|running|done|failed>]
+agent-memory-cli compaction cancel <job_id>
+agent-memory-cli compaction handoff list
+agent-memory-cli compaction handoff inspect <session_id>
+agent-memory-cli compaction retry <job_id>     # re-enqueue Dead job
+agent-memory-cli compaction stats              # CompactionStats snapshot
+```
+
+Подробная спецификация CLI — в `guides/cli-roadmap.md` (future).
+
+### 9.2. Programmatic
+
+```cpp
+auto& compaction = stack.compaction();
+
+auto job_id = compaction.enqueue(std::make_shared<DecayJob>(DecayParams{
+    .scope_id = "user:yaroslav", .min_score_threshold = 0.05, .batch_size = 500}));
+
+auto merge_id = compaction.trigger_now(ICompactionJob::Kind::Merge, MergeParams{
+    .source_units = {unit_a, unit_b, unit_c},
+    .strategy = MergeStrategy::Summarize, .scope_id = "agent:nika"});
+
+auto stats = compaction.stats();           // CompactionStats snapshot
+auto recent = compaction.recent_jobs(10);  // last 10 JobState records
+
+auto handoff = compaction.current_handoff();
+if (handoff && handoff->status == HandoffStatus::InProgress) {
+    log("{} / {} units, ETA {}ms", handoff->units_processed,
+        handoff->units_total, handoff->estimated_remaining_ms);
+}
+```
+
+## 10. Implementation Order
+
+Из `memory-stacks-roadmap.md` секция 16 (шаг 14), конкретизация для compaction:
+
+| Шаг | Что | Зависимости |
+|---|---|---|
+| 14.0 | `ICompactionJob` interface + `CompactionWorker` skeleton + `JobState` сериализация | Шаги 1-2 (envelope + DBI) |
+| 14.1 | `compaction_jobs` DBI + `TaskQueue` integration (`mdbx-containers-extension-tz.md` 12.5) + `DecayJob`/`DedupeJob`/`ArchiveColdJob` (M1 minimum) | 14.0, шаги 5, 10 (components + DecayPolicy) |
+| 14.2 | `CompactionHandoff` structure + crash recovery + `CompactionHandoffJob` meta-job | 14.1 |
+| 14.3 | `MergeJob` для episode compaction | `ConversationEpisodePayload` (см. `knowledge-units-roadmap.md` 5.5.4) |
+| 14.4 | `SummaryPromotionJob` (с `ITextAdapter` интерфейсом) + `EmbeddingRecomputeJob` | `CompiledArticlePayload`, `DenseVectors` capability |
+| 14.5 | CLI commands для admin operations + Eval pipeline (CompactionHandoff test case) | 14.2-14.4 |
+
+См. также `knowledge-units-roadmap.md` секция 10 для синхронизации.
+
+## 11. Open Issues
+
+- **Optimal batch_size per job type.** Default values (100-1000) — placeholder, требуют benchmark на realistic workloads.
+- **Adaptive scheduling.** Auto-tune interval based on write rate: при высоком write rate — DecayJob чаще. Требует metric collection (write events per second).
+- **Cross-stack compaction coordination.** Если несколько stack'ов (AgentLTM + CompiledWiki) разделяют scope — нужна координация compaction jobs во избежание redundant work. Решение: shared dirty counter или distributed lock.
+- **Distributed compaction (multi-process).** Out of scope для v0.x. Возможное решение: external coordinator (Redis lock / ZooKeeper).
+- **EmbeddingRecompute rollback.** При провале migration на target_model — как откатить? Embeddings хранятся с revision, можно вернуться к N-1, но search индексы нужно перестроить. Требует explicit rollback strategy.
+- **Shutdown timeout.** `stop()` — graceful, ждёт завершения current job. Если job висит (LLM timeout, model unavailable) — нужен timeout cap. Default: 60s, configurable.
+- **Physical_erase audit log.** При `ArchiveColdJob.physical_erase = true` — нужен отдельный `audit_log` DBI (какие unit_ids удалены, когда, по какой причине).
+- **Compaction metrics в RetrievalTrace.** Добавить `compaction_metrics` в `RetrievalTrace` (см. `knowledge-base-roadmap.md` секция 9.1): `last_decay_at_ms`, `cold_candidate_count`, `pending_decay_jobs`.
+
+## 12. References
+
+Internal documents:
+
+- `guides/memory-stacks-roadmap.md` — секции 7 (MemoryStack), 8 (Default Stacks), 9 (Capability Matrix), 10 (Validation Rules), 12.4 (MDBX compaction DBI), 16 (Implementation Order, шаг 14); ADR-009 (compaction strategy), ADR-013 (runtime services).
+- `guides/knowledge-units-roadmap.md` — `CompactionMetaComponent`, Lifecycle FSM, episode compaction (секция 5.5.4).
+- `guides/knowledge-base-roadmap.md` — `DecayAwareRetriever`, `UsageStatsComponent`, Eval pipeline CompactionHandoff test case (секция 9.6), `EmbeddingMetaComponent`.
+- `guides/policies-roadmap.md` (future) — DecayPolicy / WritePolicy полные спецификации.
+- `guides/mdbx-containers-extension-tz.md` — секция 12.5 (TaskQueue / JobStore), секция 3.7 (MultiTableWriter).
+- `guides/cli-roadmap.md` (future) — `agent-memory-cli` compaction subcommands.
+- `guides/runtime-services-roadmap.md` (future) — PromptCache, AsyncIndexer, WriteGate.
+
+External references (ai-agent-playbook):
+
+- `concepts/llm-research/Управление контекстом LLM-агента — стратегии снижения стоимости.md` — auto-compaction patterns, operational handoff vs literal summary.
+- `playbooks/Какой уровень памяти агента выбрать.md` — auto-compaction как operational handoff.
+- `concepts/rag-knowledge/Внешняя память LLM-агентов — система СВИНОПАС.md` — compaction в СВИНОПАС, anti-loop / cooldown patterns.
+- `concepts/ai-agents/AI-агенты и AI-VTuber — архитектурные паттерны из видео 2026.md` — hot/cold path separation, layered memory.
