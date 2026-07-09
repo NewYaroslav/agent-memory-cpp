@@ -104,9 +104,13 @@ Maturity breakdown:
   decoder support (если `ApproximateVector` mode); training pipeline — Python,
   C++ только inference.
 - M2/M3: specialized SIMD `HammingTopK` kernel (после benchmark).
-  - AVX2 (4-way parallelism): `_mm256_xor_si256` + `_mm256_popcnt_u64`.
-  - AVX-512 (8-way parallelism): `_mm512_xor_si64` + `_mm512_popcnt_epi64`.
+  - AVX2: `_mm256_xor_si256` (XOR, 4× uint64_t parallel) +
+    scalar `__builtin_popcountll` per lane ИЛИ nibble LUT через
+    `_mm256_shuffle_epi8 + _mm256_sad_epu8` (Hacker's Delight).
+  - AVX-512 + VPOPCNTDQ: `_mm512_xor_si512` + `_mm512_popcnt_epi64`
+    (8× uint64_t per instruction, требует Skylake-X+).
   - Runtime CPU detection (не compile-time).
+  - Замечание: `_mm256_popcnt_u64` НЕ существует в AVX2 (это AVX-512 VPOPCNTDQ).
 - NEVER first: hand-written AVX matrix-vector encoder (complexity vs benefit
   плохой).
 
@@ -156,32 +160,51 @@ HammingTopK kernel (для после M2 benchmark):
 - Алгоритм: bucket-based prefiltering через `binary_bucket_index`
   (O(log N)); per-bucket — linear scan с Hamming distance; top-K maintained
   в binary heap size K.
-- AVX2 ускорение (4-way parallelism): параллельно XOR 4× `uint64_t` через
-  `_mm256_xor_si256`; параллельно popcount через `_mm256_popcnt_u64`
-  (AVX2 + POPCNT); 4-8x speedup vs scalar loop на 128/256-bit signatures.
-- AVX-512 ускорение (8-way parallelism): параллельно XOR 8× `uint64_t`
-  через `_mm512_xor_si64`; VPOPCNTDQ через `_mm512_popcnt_epi64`;
-  8-16x speedup на 256-bit signatures.
-- Реализация: runtime CPU detection в `MemoryStack::open`; dispatch table
-  scalar / SSE4.2 / AVX2 / AVX-512; benchmark-driven выбор (не
-  преждевременная оптимизация).
+- AVX2 путь для Hamming (2-4x speedup vs scalar):
+  1. XOR: `_mm256_xor_si256` (vector, AVX2) — 256 бит = 4× uint64_t parallel.
+  2. Popcount: scalar `__builtin_popcountll` (GCC/Clang) / `__popcnt64` (MSVC)
+     per lane, ИЛИ nibble LUT через `_mm256_shuffle_epi8 + _mm256_sad_epu8`
+     (Hacker's Delight technique, ~2x vs scalar),
+     ИЛИ SSE4.2 `_mm_popcnt_u64` (только 64-bit) — 2× per AVX2 register.
+  3. Sum: горизонтальная сумма 4× uint64_t → scalar.
+  Замечание: `_mm256_popcnt_u64` НЕ существует (это AVX-512 VPOPCNTDQ).
+
+- AVX-512 + VPOPCNTDQ путь (8-16x speedup):
+  1. XOR: `_mm512_xor_si512` (vector, AVX-512) — 512 бит = 8× uint64_t parallel.
+  2. Popcount: `_mm512_popcnt_epi64` (vector, VPOPCNTDQ) — 8× uint64_t per instruction.
+  3. Sum: горизонтальная сумма 8× uint64_t → scalar.
+  Требование: CPU с AVX-512 + VPOPCNTDQ (Skylake-X и позже).
+
+- Implementation:
+  - Runtime CPU detection (`cpu_features` library или platform intrinsics).
+  - Dispatch table: scalar / SSE4.2 / AVX2 / AVX-512.
+  - Benchmark-driven выбор (НЕ преждевременная оптимизация).
 
 Eigen encoder memory sizes (per encoder registry, НЕ per unit):
 
-- `W_encoder`: `[bit_count × input_dim]`:
-  - `bit_count=128, input_dim=768`:   384 KB.
-  - `bit_count=256, input_dim=768`:   768 KB.
-  - `bit_count=128, input_dim=1024`:  512 KB.
-- `b_encoder`: `[bit_count]`:
-  - 128-bit: 512 B.
-  - 256-bit: 1 KB.
-- Decoder (optional, для `ApproximateVector` mode):
-  - `W_decoder`: `[input_dim × bit_count]` — same size as `W_encoder`.
-  - `b_decoder`: `[input_dim]` — 3-4 KB.
-- Итого encoder + decoder memory:
-  - 128-bit + decoder: ~770 KB per encoder.
-  - 256-bit + decoder: ~1.5 MB per encoder.
-- Per encoder registry (НЕ per unit): один экземпляр на `MemoryStack`.
+```text
+weights_W: float[bit_count × input_dim]
+  Size estimates:
+    128 × 768:   393,216 bytes  ≈ 384 KiB
+    256 × 768:   786,432 bytes  ≈ 768 KiB
+    128 × 1024:  524,288 bytes  ≈ 512 KiB
+    256 × 1024:  1,048,576 bytes ≈ 1.0 MiB
+
+weights_WT (optional): float[input_dim × bit_count] — same sizes.
+
+b_encoder: float[bit_count]
+  128-bit: 512 B
+  256-bit: 1 KB
+
+b_decoder (optional): float[input_dim]
+  768-dim: 3 KB
+  1024-dim: 4 KB
+
+Итого (128-bit × 768-dim, encoder + decoder): ~770 KB per encoder registry.
+Итого (256-bit × 1024-dim, encoder + decoder): ~2 MB per encoder registry.
+```
+
+Per encoder registry (НЕ per unit): один экземпляр на `MemoryStack`.
 
 Eigen interface pattern:
 
@@ -688,15 +711,21 @@ mixed bits
 
 - Add MDBX-backed bucket storage after the in-memory prototype.
 - Integrate with resource manifests before treating bucket storage as mutable
-  production storage; bucket postings need `unit_id` and generation or an
-  equivalent stale-entry guard.
+  production storage; bucket postings need `unit_id` and `envelope.revision`
+  (aka `unit_revision`) for stale-entry filtering.
 - Prefer the two-stage layout first:
 
 ```text
 binary_bucket_index:
     key   = (scope_id, projection_kind, short signature key)
     value = compressed or uncompressed posting list
-            [ { unit_id, full_signature, generation }, ... ]
+            vector<BinaryBucketPosting> per (scope_id, projection_kind, short_key):
+              struct BinaryBucketPosting {
+                  KnowledgeUnitId unit_id;          // monotonic uint64_t
+                  BinarySignature full_signature;   // 64/128/256 bits
+                  uint64_t unit_revision;           // envelope.revision at encoding time
+                  std::optional<uint64_t> resource_generation;  // optional, для derived records
+              };
 
 embedding_store:
     key   = (scope_id, model_id, projection_kind, unit_id)
@@ -707,8 +736,9 @@ unit_store:
     value = compressed chunk text and metadata
 ```
 
-- Store bucket values as compact posting lists of `{unit_id, full_signature,
-  generation}`.
+- Store bucket values as compact posting lists of `BinaryBucketPosting`
+  (`{unit_id, full_signature, unit_revision, optional resource_generation}`).
+  Filter на stale: `skip if posting.unit_revision < envelope.revision`.
 - Keep one-stage bucket values with embedded float vectors as an experimental
   benchmark variant.
 - Prefer sparse MDBX key-value lookup for 64-bit short keys.
@@ -722,8 +752,8 @@ unit_store:
 ### Mutable Bucket Updates
 
 - Do not rely on stable entry offsets inside compressed bucket blobs.
-- For deletion or reindexing, filter bucket entries by `unit_id`, `generation`,
-  and `projection_kind` after decompression.
+- For deletion or reindexing, filter bucket entries by `unit_id`,
+  `unit_revision`, and `projection_kind` after decompression.
 - For frequently updated memory, allow stale bucket entries and skip them at
   query time until compaction rewrites affected buckets.
 - Keep compaction observable through benchmark counters such as stale entry
@@ -808,7 +838,7 @@ BinarySignatureEncoderFile (.bse):
   bit_count:     uint32
   input_dim:     uint32
   has_decoder:   uint8 (0 or 1)
-  weights_W:     float[bit_count x input_dim]    # ~768 KB для 128-bit × 768-dim
+  weights_W:     float[bit_count x input_dim]    # ~384 KiB для 128-bit × 768-dim
   weights_WT:    float[input_dim x bit_count]    # optional decoder
 ```
 
@@ -923,13 +953,14 @@ Encoder ID taxonomy (parallel enum) живёт в §"Future Encodings" выше:
 | Exact                         | ~3 GB                    | float32 baseline, ground truth           |
 | BinaryCandidateFilter         | ~3.02 GB                 | float + binary для rerank                |
 | BinaryOnly                    | ~16 MB                   | binary only, ~190x compression vs float |
-| ApproximateVector (Safe)      | ~3.02 GB + 400 KB decoder| float + binary + decoder                 |
-| ApproximateVector (Compact)   | ~16 MB + 400 KB decoder  | binary + decoder only, no float          |
+| ApproximateVector (Safe)      | ~3.02 GB + ~384 KiB decoder | float + binary + decoder (128-bit × 768) |
+| ApproximateVector (Compact)   | ~16 MB + ~384 KiB decoder  | binary + decoder only, no float (128-bit) |
 ```
 
-Decoder matrix shared across stack (one per encoder registry): ~400 KB
-для 128-bit × 768-dim. См. `.bse` file format в §"Encoder Registry и
-Versioning" выше.
+Decoder matrix shared across stack (one per encoder registry): ~384 KiB
+(`W_decoder` float32, 128-bit × 768-dim) + ~3 KiB `b_decoder` ≈ ~387 KiB per
+encoder registry. Полная таблица sizes — см. §"Eigen и SIMD стратегия"
+выше. Format — см. `.bse` file format в §"Encoder Registry и Versioning".
 
 ### Quality Targets Per Mode (Recall@10 vs Exact baseline)
 
@@ -1107,15 +1138,26 @@ usage_stats_index:
     key   = (scope_id, unit_id)
     value = UsageStatsComponent (copy for fast ranking)
 
-generation_index:
-    key   = (scope_id, kind, generation, unit_id)
+unit_revision_index: optional, M2+
+    key   = (scope_id, unit_id, revision)
     value = empty (presence-only)
-    used by:  stale-filter fast path during reindex
+    used by: stale-filter validation / debug / compaction events
+
+resource_generation_index: optional, M3+
+    key   = (scope_id, resource_id, resource_generation, unit_id)
+    value = empty (presence-only)
+    used by: resource reindex / derived record invalidation
+
+M0/M1: индексы не создаются; per-posting `unit_revision` check inline
+       (см. §"Stale Filter Pattern" ниже) — достаточно.
+M2+: опциональные индексы для batch reindex / debugging.
 
 binary_bucket_index:                     // if DenseVectors
     key   = (scope_id, projection_kind, short_key)
     value = posting list
-            [ { unit_id, full_signature, generation }, ... ]
+            vector<BinaryBucketPosting>:
+              { unit_id, full_signature, unit_revision,
+                optional resource_generation }
     used by:  binary signature candidate filter
 
 embedding_meta:                          // if EmbeddingMeta or EmbeddingMigration
@@ -1184,23 +1226,37 @@ secondary indexes is no compression. Compression is only considered when:
 
 ### Stale Filter Pattern
 
-Generation filtering is the cheap way to remove stale entries:
+Revision filtering (cheap stale-removal) — primary path через
+`envelope.revision`:
 
 ```text
-unit_id matches secondary index lookup
-    -> load current generation from generation_index or unit_stats
-    -> if stored generation != current generation: skip
-    -> else: accept
+unit_id matches secondary index lookup (binary_bucket_index, edge indexes, ...)
+    -> batch load current envelopes (по KnowledgeUnitId)
+    -> для каждого candidate:
+        skip if posting.unit_revision < envelope.revision  // stale signature
+        (rare) skip if posting.resource_generation
+                && ResourceManifest.generation differs      // derived record
+        else: accept (compute Hamming / score / rank)
 ```
 
-The pattern must not turn secondary index lookups into many random reads.
-Implementations can amortize generation checks by:
+Стоимость: O(N_bucket) Hamming + O(K) batch envelope fetch.
+Для 100k candidates × 128-bit: ~100k XOR + 200k popcount = <1 ms (scalar),
+<0.3 ms (AVX-512 + VPOPCNTDQ).
 
-- keeping the current generation in a small in-memory cache per resource;
-- batching the current-generation lookup with the secondary index read in the
-  same transaction;
-- storing a per-unit `last_seen_generation` inside the secondary index value
-  itself (e.g. `EdgePayload::generation`).
+The pattern must not turn secondary index lookups into many random reads.
+Implementations can amortize revision checks by:
+
+- keeping the current `envelope.revision` in a small in-memory cache per
+  resource (один ко многим unit'ам);
+- batching the envelope fetch with the secondary index read in the same
+  transaction;
+- storing a per-unit `last_seen_revision` / `unit_revision` inside the
+  secondary index value itself (e.g. inside `BinaryBucketPosting`,
+  `EdgePayload::unit_revision`).
+
+Resource-level derived records (`ResourceManifest.generation`) обрабатываются
+отдельно: secondary lookup по `resource_id` → manifest → filter derived
+postings. Это path используется редко (только для reindex / invalidation).
 
 ### Schema Versioning
 
@@ -1466,8 +1522,9 @@ add projection-aware benchmarks.
 18. MDBX-backed `FactStore`, `QAKnowledgeBase`, `GraphStore`, and
     `TemporalIndex`. Each one is a thin shim over its in-memory baseline that
     uses the cross-table transaction pattern from step 16. Each store ships
-    with a generation-aware reindex path that is wired into the
-    `ResourceIndexer`.
+    with a revision-aware reindex path that is wired into the
+    `ResourceIndexer` (uses `envelope.revision` per `unit_id` для stale-filter;
+    см. §"Stale Filter Pattern" выше).
 19. Schema versioning: every secondary index value gains a `schema_version`
     byte (default `1`). Bumping the version requires a `compact_index()`
     rebuild. Tests assert that a downgrade does not silently corrupt lookups.
@@ -1558,8 +1615,11 @@ storage estimates, quality targets и per-stack defaults).
 
 27. **Step 27 (M2/M3): HammingTopK kernel.**
     - Bucket prefilter → linear Hamming scan → top-K binary heap.
-    - AVX2 dispatch: 4-way XOR + popcount, 4-8x speedup vs scalar.
-    - AVX-512 dispatch: 8-way XOR + popcount, 8-16x speedup.
+    - AVX2 dispatch: 4-way XOR + popcount (scalar `__builtin_popcountll`
+      per lane ИЛИ nibble LUT через `_mm256_shuffle_epi8 + _mm256_sad_epu8`),
+      2-4x speedup vs scalar (НЕ 4-8x — `_mm256_popcnt_u64` НЕ существует).
+    - AVX-512 + VPOPCNTDQ dispatch: 8-way XOR + popcount
+      (`_mm512_xor_si512` + `_mm512_popcnt_epi64`), 8-16x speedup.
     - Runtime CPU detection в `MemoryStack::open` (НЕ compile-time
       dispatch).
     - Benchmark-driven выбор kernel (НЕ преждевременная оптимизация);
@@ -1631,9 +1691,14 @@ storage estimates, quality targets и per-stack defaults).
 - `cpu_features` library (Google): cross-platform CPU feature detection
   (POPCNT, SSE4.2, AVX2, AVX-512, NEON). Рекомендован для runtime SIMD
   dispatch в `HammingTopK` kernel (Step 27).
-- Intel Intrinsics Guide: AVX2/AVX-512 POPCNT intrinsics
-  (`_mm256_popcnt_u64`, `_mm512_popcnt_epi64`) — reference для Hamming
-  scan kernel implementation.
+- Intel Intrinsics Guide: AVX2/AVX-512 POPCNT intrinsics — reference для
+  Hamming scan kernel implementation:
+  - AVX-512 + VPOPCNTDQ: `_mm512_xor_si512`, `_mm512_popcnt_epi64`
+    (8× uint64_t per instruction).
+  - AVX2: `_mm256_xor_si256` (vector XOR, 4× uint64_t parallel) +
+    scalar `__builtin_popcountll` / `__popcnt64` per lane ИЛИ nibble LUT
+    (`_mm256_shuffle_epi8` + `_mm256_sad_epu8`).
+  - Замечание: `_mm256_popcnt_u64` НЕ существует (это AVX-512 VPOPCNTDQ).
 - §"Eigen и SIMD стратегия" (this document) — maturity breakdown, hot
   path analysis, CMake flags, `simd::` abstraction layer, `HammingTopK`
   kernel design, Eigen encoder memory sizes, `IAutoencoderEncoder`
