@@ -2,6 +2,8 @@
 
 Спецификация политик retrieval/write/decay/speaker для MemoryStack. Документ конкретизирует политики из `guides/memory-stacks-roadmap.md` секции 6.2 с детальными диапазонами, defaults per stack, валидацией и примерами.
 
+> Decay formula — canonical, согласован с memory-stacks-roadmap.md §16 шаг 10. Cooldown и self_echo suppression — отдельные post-filters, не часть decay. dedupe_distance_threshold — cosine distance, lower = stricter dedup.
+
 ## 1. Purpose
 
 - Что описывает: DecayPolicy (anti-loop, забывание, soft-suppression), WritePolicy (trigger, dedupe, importance), SpeakerScopePolicy (multi-user фильтрация), RetrievalMode (associative/targeted/hybrid), HybridRetrievalConfig (RRF/weighted/learned).
@@ -25,38 +27,85 @@ enum class DecayMode { None, Linear, Exponential, Logistic };
 | cooldown_ms | double | [0, infinity) | 0 | minimum time between re-retrievals |
 | self_echo_suppression | double | [0, 1] | 0 | factor для подсвинка (own-speech) |
 | cold_threshold | double | [0, 1] | 0 | below this score → archive candidate |
+| cooldown_factor | double | [0, 1] | 0.1 | multiplier when in cooldown (default 0.1) |
 
 ### 2.3. Формулы scoring
 
-**Exponential decay:**
+Decay и boost разделены на две независимые компоненты:
 
-```
-score(unit, now) = base_score
-                  + use_boost * log1p(use_count)
-                  * exp(-elapsed_ms / half_life_ms)
+- `decay_factor` затухает экспоненциально (по `half_life_ms`) — старые facts становятся менее релевантными.
+- `use_boost` применяется через `log1p(use_count)` — `use_count` НЕ затухает (часто используемое остаётся частым).
+- Cooldown и self_echo suppression — отдельные мультипликативные post-filters (см. §2.4), не часть decay.
+
+**Canonical apply_decay_and_boost (Exponential — default mode):**
+
+```cpp
+// decay_factor (экспоненциально): exp(-elapsed_ms / half_life_ms)
+// score = base_score * decay_factor + use_boost * log1p(use_count)
+
+double decay_factor(uint64_t elapsed_ms, double half_life_ms) {
+    if (half_life_ms <= 0) return 1.0;
+    return std::exp(-double(elapsed_ms) / half_life_ms);
+}
+
+double apply_decay_and_boost(
+    double base_score,
+    const UsageStatsComponent& usage,
+    const DecayPolicy& policy,
+    uint64_t now_ms) {
+
+    if (policy.mode == DecayMode::None) {
+        return base_score + policy.use_boost * std::log1p(double(usage.use_count));
+    }
+    uint64_t elapsed = (now_ms >= usage.last_used_at_ms)
+        ? (now_ms - usage.last_used_at_ms) : 0;
+    double factor = decay_factor(elapsed, policy.half_life_ms);
+    return base_score * factor + policy.use_boost * std::log1p(double(usage.use_count));
+}
 ```
 
-**Linear decay:**
+**Упрощённые формулы по режимам (применяются через `apply_decay_and_boost`):**
 
-```
-score(unit, now) = base_score
-                  + use_boost * log1p(use_count)
-                  * max(0, 1 - elapsed_ms / (2 * half_life_ms))
+```cpp
+// Exponential (canonical default):
+score = base_score * exp(-elapsed_ms / half_life_ms)
+      + use_boost * log1p(use_count)
+
+// Linear:
+score = base_score * max(0, 1 - elapsed_ms / (2 * half_life_ms))
+      + use_boost * log1p(use_count)
+
+// Logistic:
+score = base_score / (1 + exp((elapsed_ms - half_life_ms) / (half_life_ms * 2)))
+      + use_boost * log1p(use_count)
 ```
 
-**Logistic decay:**
+**Post-filters (cooldown + self_echo — применяются ПОСЛЕ apply_decay_and_boost):**
 
-```
-score(unit, now) = base_score
-                  + use_boost * log1p(use_count)
-                  / (1 + exp((elapsed_ms - half_life_ms) / half_life_ms * 2))
+```cpp
+double apply_post_filters(
+    double score,
+    const UsageStatsComponent& usage,
+    const SpeakerComponent* speaker,
+    SpeakerId agent_self_id,
+    uint64_t now_ms,
+    const DecayPolicy& policy) {
+
+    if (usage.cooldown_until_ms > now_ms) {
+        score *= policy.cooldown_factor;  // default 0.1
+    }
+    if (speaker && speaker->speaker_id == agent_self_id) {
+        score *= policy.self_echo_suppression;  // default 0.3
+    }
+    return score;
+}
 ```
 
 ### 2.4. Anti-loop Cooldown
 
 После retrieval unit получает SoftSuppressed state на `cooldown_ms`. В течение cooldown unit:
 - Исключается из default retrieval (если `AntiLoopCooldown` retriever включён).
-- Score умножается на `self_echo_suppression` (если SpeakerId == agent_self_id).
+- Применяется `apply_post_filters`: если cooldown активен → `score *= cooldown_factor`; если own-speech (`SpeakerId == agent_self_id`) → `score *= self_echo_suppression`.
 
 ### 2.5. Tier-specific decay (future)
 
@@ -73,7 +122,7 @@ score(unit, now) = base_score
 |---|---|
 | BasicRag | None (no decay) |
 | QAKnowledgeBase | None (frequency-based via use_count) |
-| AgentLongTermMemory | Exponential, half_life=7d, use_boost=0.35, cooldown=60s, self_echo=0.3, cold_threshold=0.01 |
+| AgentLongTermMemory | Exponential, half_life=7d, use_boost=0.35, cooldown=60s, self_echo=0.3, cooldown_factor=0.1, cold_threshold=0.01 |
 | SpeakerAwareChat | None (recent-based via temporal ordering) |
 | CompiledWiki | None (no decay, статьи обновляются через re-compile) |
 | TemporalFactStore | None (bi-temporal) |
@@ -107,7 +156,7 @@ enum class WriteFlushTrigger {
 | flush_interval_ms | uint64 | [0, infinity) | 0 | интервал для OnTimer |
 | size_threshold_bytes | uint64 | [0, infinity) | 0 | порог для OnSizeThreshold |
 | importance_threshold | double | [0, 1] | 0 | skip writes below |
-| dedupe_distance_threshold | double | [0, 2] | 0 | skip if vector distance > this |
+| dedupe_distance_threshold | double | [0.0, 2.0] | 0.15 | skip/merge if cosine_distance <= threshold. Cosine distance, не L2. Default 0.15. |
 | allow_supersede | bool | — | true | разрешить supersede operation |
 | allow_merge | bool | — | true | разрешить merge similar units |
 | allow_episode_compaction | bool | — | true | разрешить episode compaction |
@@ -124,7 +173,7 @@ class WriteGate {
 
     // 2. dedupe check (vector distance)
     auto nearest = embedding_store.search(req.embedding, limit=1);
-    if (nearest && nearest[0].distance < policy.dedupe_distance_threshold)
+    if (nearest && nearest[0].distance <= policy.dedupe_distance_threshold)
         return GateDecision::Deduplicate(nearest[0].unit_id);
 
     // 3. supersede check (bi-temporal)
@@ -206,6 +255,8 @@ std::optional<SpeakerScopePolicy> speaker_filter;
 | SpeakerAwareChat | self=true, owner=true, cohost=true, audience=false, quote=true |
 | AgentLongTermMemory | self=true, owner=true, cohost=true, audience=true (для stream-аудитории), quote=true |
 | Другие | N/A (SpeakerAttribution не включён) |
+
+> Self-echo suppression применяется через `apply_post_filters` при decay scoring (см. §2.3). `SpeakerScopePolicy` отвечает только за фильтрацию retrieval по scope (include_self/owner/cohost/audience); мультипликативное подавление собственной речи — зона ответственности `DecayPolicy`.
 
 ## 5. RetrievalMode
 
@@ -304,7 +355,7 @@ score(unit) = sum_r (weight_r / (k_constant + rank_r))
 |---|---|---|---|---|---|
 | BasicRag | None | OnEveryEvent | N/A | Hybrid | {1.0, 1.0} |
 | QAKnowledgeBase | None | OnEveryEvent | N/A | Targeted | {0.5, 0.8, 2.0, 0, 0.3} |
-| AgentLongTermMemory | Exp/7d | OnTimer 30s | full | Hybrid | {1.0, 1.0, 1.5, 0.5, 1.0} |
+| AgentLongTermMemory | mode=Exponential, half_life_ms=604800000 (7d), use_boost=0.35, cooldown_ms=60000 (60s), self_echo_suppression=0.3, cooldown_factor=0.1, cold_threshold=0.01 | OnTimer 30s, importance=0.4, dedupe_distance_threshold=0.15 (cosine_distance), supersede=true, merge=true | full | Hybrid | {1.0, 1.0, 1.5, 0.5, 1.0} |
 | SpeakerAwareChat | None | OnTimer 5s | chat | Targeted | {1.0, 0, 0, 0, 1.0} |
 | CompiledWiki | None | OnEveryEvent | N/A | Targeted | {1.0, 1.0, 0, 0.3, 0} |
 | TemporalFactStore | None | OnEveryEvent | N/A | Targeted | {1.0, 0, 0, 0.7, 2.0} |
@@ -322,6 +373,8 @@ score(unit) = sum_r (weight_r / (k_constant + rank_r))
 | WritePolicy.OnImportance → importance_threshold > 0 | "Invalid WritePolicy" |
 | HybridRetrievalConfig → retriever_weights.size() == enabled retrievers count | "Weights size mismatch" |
 | ContextBudget → sum(per_block) <= total_tokens | "ContextBudget overflow" |
+| DecayPolicy.cooldown_factor в [0, 1] | "Invalid DecayPolicy.cooldown_factor" |
+| WritePolicy.dedupe_distance_threshold в [0.0, 2.0] | "Invalid WritePolicy.dedupe_distance_threshold" |
 
 ## 9. References
 
