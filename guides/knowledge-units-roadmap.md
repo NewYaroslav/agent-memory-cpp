@@ -609,6 +609,10 @@ enum class DerivedRecordKind : uint32_t {
     KnowledgeUnitKey = 121,
     SourceRefSummary = 122,
     SourceRef = 123,
+    // NB: KnowledgeUnitRevision НЕ существует как отдельный manifest record —
+    // revision — это поле KnowledgeUnitEnvelope.revision, не отдельный kind.
+    // Per-record stale-check живёт в LexicalPosting.unit_revision и
+    // EmbeddingMetaComponent.unit_revision_at_compute.
 };
 ```
 
@@ -651,7 +655,7 @@ Operational components живут в единой `unit_components` DBI чере
 
 При `MemoryStack::open(spec)`:
 
-1. Всегда создаются core DBI: `knowledge_units`, `knowledge_units_by_kind`, `generation_index`, `schema_info`.
+1. Всегда создаются core DBI: `knowledge_units`, `knowledge_units_by_kind`, `schema_info`.
 2. По capability флагам создаются дополнительные DBI (см. таблицу 8.1).
 3. При drift detected (см. `memory-stacks-roadmap.md` секция 14): error или auto-migrate (per ADR-003, ADR-004).
 

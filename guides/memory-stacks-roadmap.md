@@ -732,8 +732,9 @@ compaction_jobs                         // если Compaction
 compaction_handoffs                     // если Compaction
   key = SessionId → HandoffRecord
 
-generation_index                        // всегда
-  key = (kind, generation) → unit_id (stale filter)
+// УДАЛЕНО: generation_index (replaced by per-posting unit_revision check).
+// Stale-filter через LexicalPosting.unit_revision < envelope.revision
+// (см. §17.11 Stale-filter pattern).
 
 prompt_prefix_cache_meta                // если PromptPrefixCache включён
   key = (scope_id, provider_id, model_id, prefix_hash) → PromptPrefixCacheMetadata
@@ -910,10 +911,18 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 ### Шаг 1: Envelope + базовые DBI
 
 - Создать `KnowledgeUnitEnvelope` struct (lean hot-path envelope, ~16 полей: id, kind, scope_id, primary_text, display_text, lifecycle_state, sources, timestamps, revision, lineage fields, priority_weight).
-- MDBX DBI: `knowledge_units`, `knowledge_units_by_kind`, `generation_index`, `schema_info`.
+- MDBX DBI: `knowledge_units`, `knowledge_units_by_kind`, `schema_info`.
 - Сериализация envelope через flat binary (msgpack или custom).
 - `MemoryStack::open()` для пустой spec (только envelope + lexical).
 - Lifecycle FSM с 5 состояниями.
+
+### Шаг 1.5: Revision semantics + stale-filter
+
+- Определить revision++ правила (на content-bearing changes: primary_text, display_text, sources, payload, lifecycle, projections regeneration). НЕ инкрементить на UsageStats / Decay / priority_weight / EmbeddingMeta.
+- `LexicalPosting` хранит `unit_revision` (envelope.revision на момент постинга).
+- `EmbeddingMetaComponent` хранит `unit_revision_at_compute`.
+- Retrieval-time: skip posting if `posting.unit_revision < envelope.revision`; recompute/skip embedding if `embedding.unit_revision_at_compute < envelope.revision`.
+- Подробности — §17.11 Stale-filter pattern.
 
 ### Шаг 2: Scope-aware keys + metadata filters
 
@@ -1116,6 +1125,15 @@ double apply_filters(
 - AsyncIndexer батчит inserts в lexical/vector индексы. Где граница batch size?
 - Решение: configurable, default 1000 units или 50 MB, whichever first.
 
+### 17.11. Stale-filter pattern — revision-based per-record check
+
+- `LexicalPosting.unit_revision < envelope.revision` → skip posting (defer to async reindex).
+- `EmbeddingMetaComponent.unit_revision_at_compute < envelope.revision` → recompute or skip.
+- Постинг может быть stale даже если unit не удалён (например, payload изменился, и в BM25F-индексе застрял старый term frequency).
+- Реализация M0: per-posting check inline в retrieval pipeline.
+- Реализация M2 (при >1M units): `unit_revision_index` DBI для batch reindex.
+- `generation_index` (старая схема) УДАЛЁН; заменён на per-posting `unit_revision` + retrieval-time check (см. §18 Glossary).
+
 ## 18. Glossary
 
 - **Envelope** — минимальный lookup-critical набор полей KnowledgeUnit (id, kind, scope, primary_text, display_text, lifecycle, sources, timestamps, priority_weight).
@@ -1127,6 +1145,8 @@ double apply_filters(
 - **Profile** — см. MemoryProfileSpec.
 - **Stack** — см. MemoryStack.
 - **Maturity Level** — M0/M1/M2, определяет ship-it критерии и scope функциональности.
-- **Generation index** — stale filter: (kind, generation) → unit_id, для отсева устаревших revisions.
+- **Revision** — per-unit version, monotonically increasing per UnitId. Поле `KnowledgeUnitEnvelope.revision` (`uint64_t`). Инкрементится на content-bearing changes (primary_text, display_text, sources, payload, lifecycle, projections regeneration). НЕ инкрементится на UsageStats / Decay / priority_weight / EmbeddingMeta changes.
+- **Generation** — per-resource / per-derived-record version, НЕ часть `KnowledgeUnitEnvelope`. Живёт в `ResourceManifest.generation` и per-record metadata (`LexicalPosting.resource_generation`, `EmbeddingMetaComponent.unit_revision_at_compute`). Envelope-level versioning — это `revision`, не `generation`.
+- **Stale filter** — per-record check: `LexicalPosting.unit_revision < envelope.revision` → skip; `EmbeddingMetaComponent.unit_revision_at_compute < envelope.revision` → recompute или skip. M0: inline в retrieval pipeline; M2: `unit_revision_index` DBI для batch reindex (см. §17.11).
 - **Profile signature** — hash от MemoryProfileSpec, используется для drift detection.
 - **ADR** — Architecture Decision Record, раздел в этом документе с фиксированным решением.

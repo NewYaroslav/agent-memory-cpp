@@ -51,14 +51,15 @@ struct KnowledgeUnitEnvelope {
     int64_t created_at_ms;
     int64_t updated_at_ms;
     int64_t observed_at_ms;         // когда source наблюдался
-    uint64_t generation;            // инкремент при content change
-    uint32_t revision;              // монотонный внутри unit, инкремент при supersede/regenerate
+    uint64_t revision;              // монотонный per UnitId, инкремент при content-bearing changes (см. §3.5)
     double priority_weight;         // [0.0, 1.0], ranking boost
     std::vector<KnowledgeUnitId> supersedes;     // lineage вперёд (vector: может быть несколько predecessors)
     std::optional<KnowledgeUnitId> superseded_by; // lineage назад (single, immediate successor)
     std::optional<KnowledgeUnitId> derived_from; // compilation/aggregation origin
 };
 ```
+
+> **Замечание:** `KnowledgeUnitEnvelope` НЕ содержит поля `generation`. `generation` — per-resource / per-derived-record version, живёт в `ResourceManifest.generation` (per-resource) и в per-record metadata (`LexicalPosting.resource_generation`, `EmbeddingMetaComponent.unit_revision_at_compute`). Envelope-level versioning — это `revision` (uint64_t), не `generation`.
 
 ### 3.1. Lookup-critical поля
 
@@ -96,6 +97,29 @@ std::string generate_primary_text(KnowledgeUnitKind kind, const ComponentView& c
 
 `display_text` — отделён от `primary_text`: используется в `ContextBuilder` для LLM-friendly форматирования (markdown, code blocks inline). `primary_text` — для индексов, retrieval, trace logging. Разделение предотвращает "мусорный" текст в retrieval hits при красивом отображении в context.
 
+### 3.5. Revision semantics (canonical)
+
+`revision++` on content-bearing changes:
+
+- `primary_text` changed
+- `display_text` changed (если retrieval-relevant)
+- `sources` changed
+- `payload` changed (QAPayload, FactPayload, и т.д.)
+- `lifecycle_state` changed
+- `projections` regeneration
+
+`revision` НЕ инкрементится на:
+
+- `UsageStatsComponent` changes (use_count, cooldown, и т.д.)
+- `Decay` scoring metadata changes
+- `priority_weight` изменения (scoring metadata)
+- `EmbeddingMetaComponent` changes (производные данные; используется `unit_revision_at_compute` для stale-check)
+
+`DecayAwareRetriever` / `HybridRetriever` stale-filter:
+
+- Skip unit if `envelope.revision > any cached projection revision` (LexicalPosting.unit_revision, EmbeddingMetaComponent.unit_revision_at_compute).
+- Подробности stale-filter pattern — `memory-stacks-roadmap.md` §17.11.
+
 ## 4. Components (operational + per-kind)
 
 Layer B в ADR-001. Два семейства: operational (общие для всех kinds) и per-kind payloads (kind-specific данные).
@@ -130,6 +154,7 @@ struct TemporalComponent {
 struct EmbeddingMetaComponent {
     std::string model_id;             // e.g. "bge-small-en-v1.5"
     std::string model_version;
+    uint64_t unit_revision_at_compute; // envelope.revision на момент вычисления embedding (stale-check)
     int64_t computed_at_ms;
     std::optional<VectorRef> vector_ref;
 };
