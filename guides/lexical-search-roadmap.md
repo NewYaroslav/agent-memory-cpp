@@ -1,8 +1,23 @@
 # Lexical Search Roadmap
 
+> **Scope.** This document details **Layer 2 (Retrieval Primitives)** from
+> [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md). BM25F operates on
+> the `SearchProjection` DBI (`unit_projections`) rather than on
+> `envelope.search_text`. All posting keys below are
+> `(scope_id, projection_kind, field_id, …)`-shaped to match the projection
+> model defined in ADR-001 / ADR-005 of the stacks roadmap.
+>
+> Related roadmaps:
+> - [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — envelopes, components,
+>   projections, profile/stack model, MDBX layout.
+> - [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) — knowledge units,
+>   `KnowledgeUnitId`, retrieval flow contracts.
+> - [`knowledge-units-roadmap.md`](knowledge-units-roadmap.md) — per-kind payload
+>   components (QAPayload, FactPayload, ChunkPayload, …).
+
 ## Purpose
 
-This guide captures the planned keyword, BM25, and hybrid lexical retrieval
+This guide captures the planned keyword, BM25, and BM25F lexical retrieval
 direction. Lexical search is a first-version retrieval capability, not a
 late optimization, because it handles exact technical terms better than dense
 embeddings: APIs, macros, file paths, class names, error messages, command
@@ -19,13 +34,21 @@ adapters.
   enabled.
 - Use UTF-32/code point buffers only temporarily inside tokenizer backends that
   need them.
-- Keep lexical contracts dependency-free.
-- Use `ChunkId` as the primary retrieval key.
+- Keep lexical contracts dependency-free (backends may opt into ICU, simdutf,
+  etc., but the public API stays std-only).
+- Use `KnowledgeUnitId` as the primary retrieval key; `ChunkId` is a typed
+  alias for chunk-shaped hits.
+- All posting keys are scope-aware and projection-aware (see the
+  `Lexical Projections And BM25F` section).
+- BM25F indexes `SearchProjection` records, not `envelope.primary_text`. The
+  flat-body baseline is a special case where `projection_kind = Original` and
+  the only active `field_id` is `body`.
 - Store `ResourceId` and generation with postings for targeted reindexing and
   stale-entry filtering.
 - Use `ResourceManifest` records for lexical postings so one resource can be
   reindexed without rebuilding the whole corpus.
-- Keep BM25 as the first ranked lexical baseline.
+- Keep BM25 as the first ranked lexical scorer; BM25F is the fielded
+  generalisation and ships after the projection model is in place.
 - Treat phrase, proximity, fuzzy, SPLADE, ColBERT-like, and graph retrieval as
   later layers unless a PR introduces focused contracts for them.
 - Prefer RRF as the first hybrid fusion method because it does not require
@@ -57,22 +80,51 @@ BM25F/fuzzy/hybrid pipeline.
 The logical indexing pipeline is:
 
 ```text
-UTF-8 source text
+SearchProjection (scope_id, unit_id, projection_kind, field_id)
     -> tokenizer
     -> normalized tokens
     -> token ids
-    -> per-chunk postings and stats
-    -> BM25 / keyword search
+    -> per-field postings and stats
+    -> BM25F scoring (or BM25 for the flat-body baseline)
 ```
 
-Suggested value types:
+The retrieval key changes from the older plan. `ChunkId` survives only as a
+typed alias for chunk-shaped hits; the canonical key is `KnowledgeUnitId`. Each
+hit also carries the `projection_kind` it was scored under so downstream
+fusion can disambiguate multi-projection sources.
+
+### Value Types
 
 ```cpp
 using TokenId = std::uint64_t;
 
+enum class ProjectionKind : std::uint16_t {
+    Original        = 1,
+    DenseContextual = 2,
+    QAQuestion      = 3,
+    QAAnswer        = 4,
+    Summary         = 5,
+    CodeSymbols     = 6,
+};
+
+enum class FieldId : std::uint16_t {
+    title     = 1,
+    heading   = 2,
+    body      = 3,
+    code      = 4,
+    tag       = 5,
+    symbol    = 6,
+    meta      = 7,
+    qa_q      = 8,
+    qa_a      = 9,
+    summary   = 10,
+};
+
 struct LexicalPosting final {
     TokenId token_id = 0;
-    ChunkId chunk_id;
+    KnowledgeUnitId unit_id;
+    ProjectionKind projection_kind = ProjectionKind::Original;
+    FieldId field_id = FieldId::body;
     ResourceId resource_id;
     std::uint64_t generation = 0;
     std::uint32_t term_frequency = 0;
@@ -80,37 +132,40 @@ struct LexicalPosting final {
 };
 
 struct ChunkLexicalStats final {
-    ChunkId chunk_id;
+    KnowledgeUnitId unit_id;
     ResourceId resource_id;
     std::uint64_t generation = 0;
     std::uint32_t token_count = 0;
     std::uint32_t unique_token_count = 0;
+    std::array<std::uint32_t, 11> per_field_token_count{}; // index by FieldId
 };
 
 struct LexicalTokenStats final {
     TokenId token_id = 0;
+    ProjectionKind projection_kind = ProjectionKind::Original;
     std::uint64_t document_frequency = 0;
     std::uint64_t collection_frequency = 0;
 };
 
 struct LexicalCollectionStats final {
-    std::uint64_t chunk_count = 0;
+    ProjectionKind projection_kind = ProjectionKind::Original;
+    std::uint64_t unit_count = 0;
     std::uint64_t total_token_count = 0;
 };
 ```
 
-BM25 only needs term frequency and chunk length. Positions are included in the
-roadmap because phrase search, proximity search, snippets, and highlighting need
-token order.
+BM25F only needs per-field term frequency and per-field token count. Positions
+are included in the roadmap because phrase search, proximity search, snippets,
+and highlighting need token order.
 
 The first implementation may expose two storage modes:
 
 ```text
-BM25-only:
-    postings store chunk_id + tf
+BM25F-only:
+    postings store (unit_id, projection_kind, field_id, tf)
 
 positional:
-    postings store chunk_id + tf + positions
+    postings store (unit_id, projection_kind, field_id, tf, positions)
 ```
 
 The public value types should not prevent positions, but a backend should be
@@ -142,25 +197,30 @@ Deletion of the last posting for a token does not have to immediately remove the
 token dictionary entry. A later compaction pass can reclaim unused tokens after
 checking token stats and posting segments.
 
-Stats updates must keep these counters coherent:
+Stats updates must keep these counters coherent (per `projection_kind`):
 
 ```text
 document_frequency:
-    number of chunks containing the token
+    number of units containing the token in that projection_kind
 
 collection_frequency:
-    total token occurrences across indexed chunks
+    total token occurrences across indexed units in that projection_kind
 
-chunk_count:
-    number of chunks with lexical stats
+unit_count:
+    number of units with lexical stats for that projection_kind
 
 total_token_count:
-    sum of token_count across indexed chunks
+    sum of token_count across indexed units in that projection_kind
 ```
 
 When a resource is reindexed, old token stats must be decremented before new
 stats are added, unless the backend uses generation filtering and delayed
 compaction.
+
+A **token-level cache** keyed by `(scope_id, token_id, projection_kind)` keeps
+warm-up reads cheap: when a query term is reused across sessions or scopes, the
+postings and per-projection-kind stats are loaded once and reused for the
+duration of the lexical session.
 
 ## Tokenization
 
@@ -185,7 +245,9 @@ Optional tokenizer backends can be introduced later:
 - `simdutf` for fast UTF-8 validation and UTF-8/UTF-32 transcoding;
 - `utfcpp` for lightweight scalar UTF-8 validation, conversion, and code point
   iteration when SIMD support is unnecessary;
-- ICU for normalization, Unicode case folding, and word boundary segmentation.
+- ICU for normalization, Unicode case folding, word boundary segmentation,
+  and optional Cyrillic morphology (see the Cyrillic Morphology section
+  below).
 
 Libraries such as `tiny-utf8` are useful references, but the core tokenizer
 contract should remain project-owned. Do not replace public `std::string` text
@@ -204,21 +266,24 @@ term1 NOT term2
 exact NEAR/5 index
 field:path guides/
 metadata:language=cpp
+projection:summary summary-of-x
 ```
 
 Query parsing should stay separate from tokenization so programmatic callers can
 construct structured queries without round-tripping through a textual query
-language.
+language. Structured queries can pin a `projection_kind` to bias the scorer
+towards `Summary`, `QAQuestion`, or `CodeSymbols` without changing the parser
+API.
 
 ## UTF Storage Rule
 
 Canonical persisted text is UTF-8:
 
 ```text
-resource text -> UTF-8, optionally compressed later
-chunk text    -> UTF-8, optionally compressed later
-tokenization  -> temporary UTF-32/code points only when needed
-index storage -> token ids, stats, postings, and positions
+SearchProjection.text  -> UTF-8, optionally compressed later
+envelope.primary_text  -> UTF-8, optionally compressed later
+tokenization          -> temporary UTF-32/code points only when needed
+index storage         -> token ids, stats, postings, and positions
 ```
 
 Zstd may compress UTF-32 zero bytes well, but decompression still produces a
@@ -228,12 +293,13 @@ text storage format is used.
 
 ## BM25 Baseline
 
-Use Okapi BM25 as the first ranked lexical scorer:
+Use Okapi BM25 as the first ranked lexical scorer for the
+`projection_kind = Original, field_id = body` path:
 
 ```text
-score(chunk, query) =
+score(unit, query) =
 sum over query terms:
-    idf(term) * tf_saturation(term, chunk) * length_normalization(chunk)
+    idf(term) * tf_saturation(term, unit) * length_normalization(unit)
 ```
 
 Default tunables:
@@ -249,16 +315,16 @@ public contract.
 BM25 scoring inputs come from the lexical index:
 
 ```text
-tf      = term frequency in the chunk
-df      = number of chunks containing the token
-doc_len = token_count for the chunk
-avgdl   = total_token_count / chunk_count
+tf      = term frequency in the unit body
+df      = number of units containing the token (Original projection)
+doc_len = token_count for the unit body
+avgdl   = total_token_count / unit_count
 ```
 
 Use the common Okapi IDF variant as the first baseline:
 
 ```text
-idf = log(1 + (chunk_count - df + 0.5) / (df + 0.5))
+idf = log(1 + (unit_count - df + 0.5) / (df + 0.5))
 ```
 
 If a query repeats a term, the first implementation may either de-duplicate
@@ -272,13 +338,19 @@ Planned dependency-free contracts:
 ```cpp
 struct LexicalQuery final {
     std::string text;
+    std::vector<ScopeId> scope_ids;
+    std::optional<ProjectionKind> pin_projection_kind; // nullopt = stack default
     std::size_t limit = 10;
     std::vector<MetadataFilter> metadata_filters;
 };
 
 struct LexicalSearchResult final {
-    ChunkId chunk_id;
+    KnowledgeUnitId unit_id;
+    ChunkId chunk_id{}; // empty unless the hit is chunk-shaped
+    KnowledgeUnitKind kind = KnowledgeUnitKind::Unknown;
+    ProjectionKind projection_kind = ProjectionKind::Original;
     double score = 0.0;
+    std::string retriever_name = "lexical";
     Metadata metadata;
 };
 
@@ -289,12 +361,16 @@ public:
     [[nodiscard]] virtual std::size_t size() const noexcept = 0;
 
     virtual void upsert(
-        const ResourceRevision& revision,
-        const std::vector<DocumentChunk>& chunks
+        const KnowledgeUnitRevision& revision,
+        std::span<const SearchProjection> projections
     ) = 0;
 
     [[nodiscard]] virtual std::vector<LexicalSearchResult> search(
         const LexicalQuery& query
+    ) const = 0;
+
+    [[nodiscard]] virtual std::vector<LexicalSearchResult> search(
+        const RetrievalPlan& plan
     ) const = 0;
 
     [[nodiscard]] virtual bool erase_resource(
@@ -305,14 +381,31 @@ public:
 };
 ```
 
+The `search(RetrievalPlan)` overload participates in the unified retrieval
+pipeline from `memory-stacks-roadmap.md` section 7.3: it surfaces
+`retriever_name = "lexical"` on every hit for RRF, emits a `RetrievalTrace`
+segment per call, and applies the `RetrievalPlan.metadata_filter` and
+`scope_ids` constraints before scoring. The flat `LexicalQuery` overload stays
+for callers that want a standalone lexical lookup without a full plan.
+
 Exact method names can change during implementation. The important part is that
-lexical indexing is resource-aware and chunk-addressed.
+lexical indexing is unit-aware, projection-aware, and plan-aware.
 
 ## MDBX Layout
 
-The first MDBX lexical backend can use simple blobs:
+The lexical DBI set is part of the stack-wide layout described in
+[`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) section 12.3. The DBI
+names and key shapes from that section are normative; this section adds the
+payload shapes and explains the design.
 
 ```text
+inverted_token_to_unit:          // DUPSORT secondary index
+    key   = (scope_id, token_id, projection_kind, field_id) -> DUPSORT unit_id
+
+field_to_postings:
+    key   = (scope_id, projection_kind, field_id, token_id, unit_id)
+    value = PostingStats { tf, positions_count, generation, resource_id }
+
 lexical_token_by_text:
     key   = normalized token
     value = token_id
@@ -321,26 +414,24 @@ lexical_token_by_id:
     key   = token_id
     value = normalized token
 
-lexical_postings:
-    key   = token_id
-    value = posting list blob
-
 lexical_chunk_stats:
-    key   = chunk_id
-    value = token_count, unique_token_count, resource_id, generation
+    key   = (scope_id, unit_id, projection_kind)
+    value = { token_count, unique_token_count,
+              per_field_token_count[11], resource_id, generation }
 
 lexical_token_stats:
-    key   = token_id
-    value = document_frequency, collection_frequency
+    key   = (scope_id, projection_kind, token_id)
+    value = { document_frequency, collection_frequency }
 
 lexical_collection_stats:
-    key   = fixed stats key
-    value = chunk_count, total_token_count
+    key   = (scope_id, projection_kind)
+    value = { unit_count, total_token_count }
 ```
 
-The first implementation may rewrite a full posting list on resource updates.
-For larger mutable corpora, add segmented postings, tombstones, generation
-filtering, and compaction.
+The first implementation may collapse `field_to_postings` to a single
+`(scope_id, Original, body, token_id, unit_id)` row while keeping the schema
+ready for the other projections and fields. That keeps the BM25-only path fast
+without locking the schema.
 
 ### Posting Segments
 
@@ -349,43 +440,51 @@ storage:
 
 ```text
 lexical_posting_segments:
-    key   = token_id + segment_id
+    key   = (scope_id, projection_kind, field_id, token_id, segment_id)
     value = posting segment blob
 ```
 
 Segments allow resource updates to touch fewer bytes and make tombstone cleanup
 more incremental. The simple blob layout is still the right first backend
-because it is easier to test against the in-memory BM25 baseline.
+because it is easier to test against the in-memory BM25F baseline.
 
 ## Targeted Reindexing
 
-When a resource is replaced:
+When a unit is reindexed for a given `projection_kind`:
 
 ```text
-1. Load the old resource manifest.
+1. Load the old unit manifest (per projection_kind).
 2. Remove or invalidate lexical postings referenced by the old manifest.
-3. Tokenize the new chunks.
-4. Upsert token dictionary entries.
-5. Write postings and chunk stats.
-6. Update token and collection stats.
-7. Write new lexical manifest refs.
-8. Commit through a backend transaction where available.
+3. Load the new SearchProjection set for the unit.
+4. Tokenize each (projection_kind, field_id) text.
+5. Upsert token dictionary entries (shared across projection_kinds).
+6. Write field_to_postings and inverted_token_to_unit entries.
+7. Update lexical_token_stats and lexical_chunk_stats per projection_kind.
+8. Update lexical_collection_stats per projection_kind.
+9. Write new lexical manifest refs and bump generation.
+10. Commit through a backend transaction where available.
 ```
 
 Lexical `DerivedRecordRef` entries can use:
 
 ```text
 kind = LexicalPosting
-key  = token_id or an encoded posting segment key
+key  = (scope_id, projection_kind, field_id, token_id) or an encoded
+       posting segment key
 ```
 
 The manifest does not need stable offsets into compressed posting blobs. Removal
-should filter by `chunk_id`, `resource_id`, and generation.
+should filter by `unit_id`, `resource_id`, and generation.
 
 For mutable memory, a backend may leave stale postings in place and skip them at
 query time when their generation does not match the current resource generation.
 That path needs a cheap current-generation lookup or cache; otherwise stale
 filtering can turn lexical search into too many random reads.
+
+The reindex path is **projection-aware**: an update that only changes a
+`Summary` projection does not invalidate `Original`, `QAQuestion`, or
+`QAAnswer` postings. The `projection_kind` participates in the staleness key
+so unrelated projections stay live.
 
 ## Raw Resource Stores
 
@@ -427,9 +526,8 @@ FileSystemResourceStore
 
 PDF and office document support should be separate parser adapters. They should
 produce UTF-8 resource text and metadata rather than forcing lexical indexing to
-understand PDF/docx internals.
-
-The same indexing pipeline should support two source modes:
+understand PDF/docx internals. The same indexing pipeline should support two
+source modes:
 
 ```text
 raw-first mode:
@@ -439,30 +537,222 @@ memory-native mode:
     agent-created notes/facts live in storage; indexes are still derived
 ```
 
+## Lexical Projections And BM25F
+
+BM25F is the first BM25 variant because agent-memory resources naturally
+have fields. The data is stored in projection-aware form from day one
+so the BM25F scorer is a pure scoring change on top of the existing
+`SearchProjection` DBI, not a migration.
+
+### SearchProjection Model
+
+A `SearchProjection` is a per-unit text view optimized for one retrieval
+method:
+
+```cpp
+struct SearchProjection final {
+    ScopeId scope_id;
+    KnowledgeUnitId unit_id;
+    ProjectionKind kind = ProjectionKind::Original;
+    std::uint64_t revision = 0;
+
+    // Canonical fielded text. Empty fields are skipped at index time.
+    std::string title;
+    std::string heading;
+    std::string body;
+    std::string code;
+    std::vector<std::string> tags;
+    std::vector<std::string> symbols;
+    TypedMetadata metadata_typed;
+    std::string qa_question;   // populated when kind = QAQuestion
+    std::string qa_answer;     // populated when kind = QAAnswer
+    std::string summary;       // populated when kind = Summary
+};
+```
+
+The projection is persisted in `unit_projections`
+(`memory-stacks-roadmap.md` section 12.2). The flat-body BM25 baseline is the
+special case where `kind = Original` and only `body` is non-empty; BM25F
+generalises it by reading additional fields from the same projection.
+
+### Field Model Per ProjectionKind
+
+Each `ProjectionKind` consumes a subset of the `FieldId` slots. The mapping
+below is normative for BM25F scoring and for the post-fusion secondary
+retrieval path.
+
+| ProjectionKind   | Active Field IDs (weights)                                                     |
+|------------------|---------------------------------------------------------------------------------|
+| Original         | title (w_title), heading (w_heading), body (w_body), code (w_code), tag (w_tag), symbol (w_symbol), meta (w_meta) |
+| DenseContextual  | body (w_body), meta (w_meta), summary (w_summary)                               |
+| QAQuestion       | qa_q (w_qa_q), tag (w_tag)                                                      |
+| QAAnswer         | qa_a (w_qa_a), body (w_body)                                                    |
+| Summary          | summary (w_summary), tag (w_tag), title (w_title)                               |
+| CodeSymbols      | symbol (w_symbol), code (w_code)                                                |
+
+`DenseContextual` is consumed by the dense retriever; BM25F still indexes the
+projection so secondary lexical retrieval can fall back to it after fusion.
+
+### Posting Keys With Projection Kind
+
+Postings are projection-aware. The previous draft keyed postings only by
+`(token_id, field_id)`; the new model adds `projection_kind` and `scope_id` so
+weights and stats do not bleed across projection families or tenants:
+
+```text
+inverted_token_to_unit:
+    key   = (scope_id, token_id, projection_kind, field_id)
+    value = DUPSORT unit_id
+
+field_to_postings:
+    key   = (scope_id, projection_kind, field_id, token_id, unit_id)
+    value = PostingStats { tf, positions_count, generation, resource_id }
+```
+
+A `unit_id` may appear multiple times for the same token — once per
+projection_kind/field_id combination that contains it. The scorer joins these
+postings at query time using the per-field weights defined below.
+
+### Projection-Weighted BM25F Scoring
+
+The BM25F score for a unit `u` under query `q` is:
+
+```text
+score(u, q) = sum over query terms t:
+    idf(t) *
+    sum over fields f that hold t in the active projection_kind:
+        w_f * tf_sat(t, u, f)
+    /
+    1 - b + b * len_norm(u)
+
+where:
+    idf(t)              = log(1 + (N - df(t) + 0.5) / (df(t) + 0.5))
+    df(t)               = units containing t (Original projection stats)
+    N                   = unit_count (Original projection)
+    tf_sat(t, u, f)     = tf(t, u, f) * (k1 + 1) /
+                          (tf(t, u, f) + k1 *
+                           (1 - b + b * len_f(u) / avg_len_f))
+    len_f(u)            = per_field token count from ChunkLexicalStats
+    avg_len_f           = average len_f over units with that field
+    w_f                 = LexicalFieldWeights entry for FieldId f
+```
+
+Per-field weights are explicit index options, applied at score time:
+
+```cpp
+struct LexicalFieldWeights final {
+    double w_title   = 3.0;
+    double w_heading = 2.5;
+    double w_body    = 1.0;
+    double w_code    = 1.5;
+    double w_tag     = 2.0;
+    double w_symbol  = 2.0;
+    double w_meta    = 0.5;
+    double w_qa_q    = 4.0;
+    double w_qa_a    = 1.5;
+    double w_summary = 1.5;
+};
+```
+
+The default `LexicalFieldWeights` differ per projection_kind in spirit but the
+scorer reads the same struct: when `kind = QAQuestion` the only active fields
+are `qa_q` and `tag`, so the rest of the weights have no effect on that
+projection. Changing weights never requires re-indexing; the weight is applied
+at score time, not stored in each posting.
+
+#### Worked Example
+
+A QAPair unit `u` has two projections:
+
+- `QAQuestion`: `qa_q = "how does cyrillic morphology help retrieval?"`,
+  `tags = ["russian", "morphology"]`.
+- `Original`: `title = "Cyrillic Morphology"`, `body = "Lemmatization
+  collapses word forms …"`.
+
+Query: `"cyrillic morphology"`.
+
+For `QAQuestion`, the active fields are `qa_q` (w=4.0) and `tag` (w=2.0).
+`cyrillic` and `morphology` appear in `qa_q`; the tag field contributes no
+matching tokens. The BM25F score is dominated by `w_qa_q = 4.0`.
+
+For `Original`, the same tokens appear in `body` with `w_body = 1.0` and
+`title` (one occurrence) with `w_title = 3.0`. The Original projection score
+is materially smaller than the QAQuestion score for the same unit.
+
+When the retrieval plan requests both projection_kinds, RRF combines the two
+ranked lists and the unit floats to the top from both sides — exactly the
+behavior expected for a `QAKnowledgeBase` stack.
+
+### Generation Rules Per Projection Kind
+
+Each `ProjectionKind` has a deterministic generation rule applied at write
+time. The rule is part of the projection adapter and is documented next to
+the kind enum:
+
+```text
+Original:
+    title   = envelope.title (if any)
+    heading = envelope.heading_path joined by newline
+    body    = envelope.primary_text (or chunk payload body)
+    code    = chunk.payload.code_blocks joined
+    tags    = envelope.tags
+    symbols = chunk.payload.symbols
+    meta    = envelope.metadata_typed
+
+QAQuestion:
+    qa_q    = QAPayload.question
+    tag     = QAPayload.tags ∪ envelope.tags
+
+QAAnswer:
+    qa_a    = QAPayload.answer
+    body    = QAPayload.answer (when question-only answer is empty)
+
+Summary:
+    summary = CompiledArticlePayload.summary (or projection-specific summary)
+    tag     = envelope.tags
+    title   = envelope.title
+
+CodeSymbols:
+    symbol  = chunk.payload.symbols
+    code    = chunk.payload.code_blocks joined
+
+DenseContextual:
+    body    = envelope.primary_text
+    meta    = envelope.metadata_typed
+    summary = nearest Summary projection if present, else empty
+```
+
+Open question 17.4 from `memory-stacks-roadmap.md` (`When does a SearchProjection
+regenerate?`) is resolved for the lexical path: projections regenerate on
+write for the active revision. Old revisions stay until compaction purges them.
+Targeted reindexing is responsible for the BM25F posting refresh.
+
+### Targeted Reindexing Per Projection Kind
+
+The reindex pipeline in the Targeted Reindexing section above is parameterised
+by `projection_kind`. The additional rules are:
+
+- A `SearchProjection` write for `kind = Summary` triggers reindexing of
+  `(Summary)` projections only. `Original`, `QAQuestion`, and `QAAnswer`
+  postings are untouched unless their source text changed.
+- A `QAPayload` write triggers reindexing of both `QAQuestion` and `QAAnswer`
+  in the same transaction (atomic with the unit write).
+- A `ChunkPayload` write triggers reindexing of `Original` and `CodeSymbols`
+  for that chunk-shaped unit.
+- `DenseContextual` is owned by the dense retriever; BM25F only reindexes it
+  when the dense retriever hands a new projection back to the lexical pipeline.
+
+This keeps reindex cost proportional to the change rather than to the full
+unit.
+
 ## Future Search Layers
 
 ### Boolean Search
 
 Support `AND`, `OR`, and `NOT` as an exact filtering layer. This is useful for
-technical queries, user constraints, and structured query builders.
-
-### BM25F
-
-BM25F should be the first BM25 variant because agent-memory resources naturally
-have fields:
-
-```text
-title
-path
-markdown headings
-body
-code blocks
-tags
-symbol names
-metadata
-```
-
-Field weights should be explicit index options.
+technical queries, user constraints, and structured query builders. Boolean
+search works on the same `field_to_postings` table as BM25F; the projection_kind
+filter is just another predicate in the boolean expression.
 
 ### Phrase And Proximity Search
 
@@ -473,11 +763,13 @@ Use token positions to support exact phrases and near-term windows:
 exact NEAR/5 index
 ```
 
-This should also support snippets and highlighting.
+This should also support snippets and highlighting. Phrase/proximity search
+needs positions, so backends that omit positions until phrase support lands
+must clearly advertise the limitation.
 
 ### Fuzzy Search
 
-Add fuzzy search after the BM25 baseline. Initial candidates:
+Add fuzzy search after the BM25F baseline. Initial candidates:
 
 ```text
 Levenshtein distance
@@ -487,7 +779,8 @@ BK-tree over token dictionary
 ```
 
 Technical identifiers need careful thresholds because a one-character change can
-mean a different symbol.
+mean a different symbol. Fuzzy search is applied per-field per
+projection_kind; the result list is merged with the exact-match list using RRF.
 
 ### N-Gram Search
 
@@ -499,19 +792,23 @@ storage size and noise.
 
 Graph retrieval is likely needed earlier than learned sparse or late-interaction
 methods for agent assistants and expert-system style workflows. It should expand
-from retrieved chunks/resources to related symbols, concepts, people, tasks, and
-dependencies.
+from retrieved units/resources to related symbols, concepts, people, tasks, and
+dependencies. Graph retrieval operates on `graph_edges_by_src` /
+`graph_edges_by_dst` from `memory-stacks-roadmap.md` section 12.3 and joins
+its hits into the RRF stream with `retriever_name = "graph"`.
 
 ### SPLADE And Learned Sparse Retrieval
 
 SPLADE-like learned sparse retrieval is future work. It needs a model, inference
-adapter, vocabulary management, and sparse vector storage.
+adapter, vocabulary management, and sparse vector storage. The same
+`(scope_id, token_id, projection_kind)`-style cache used by BM25F is a
+natural place to land learned-sparse postings when they arrive.
 
 ### ColBERT-Like Late Interaction
 
 ColBERT-like retrieval is future research work. It stores token-level embeddings
 and has much higher storage and indexing complexity than one embedding per
-chunk.
+unit.
 
 ## Hybrid Retrieval
 
@@ -519,12 +816,26 @@ The first hybrid pipeline should be:
 
 ```text
 metadata filters
-    -> BM25 / keyword search
-    -> vector search
+    -> BM25F / keyword search (per active projection_kind from RetrievalPlan)
+    -> vector search (per active projection_kind from RetrievalPlan)
     -> optional graph expansion
-    -> fusion
+    -> fusion (RRF default)
     -> optional rerank
 ```
+
+The `RetrievalPlan` from `memory-stacks-roadmap.md` section 7.3 drives which
+projection_kinds each retriever runs against. The default mapping for
+`AgentLongTermMemory` is:
+
+```text
+BM25F active projection_kinds  = { Original, QAQuestion, QAAnswer, Summary }
+vector active projection_kinds = { Original, DenseContextual }
+graph  active projection_kinds  = { Original }
+```
+
+Secondary retrieval (post-fusion) may load `CodeSymbols` or `DenseContextual`
+if RRF confidence is below a threshold or if the query parser hints at code
+search. The decision belongs to the HybridRetriever, not to the lexical index.
 
 Start with Reciprocal Rank Fusion:
 
@@ -532,8 +843,10 @@ Start with Reciprocal Rank Fusion:
 score = sum(1 / (k + rank_i))
 ```
 
-RRF is robust because BM25 scores, vector similarities, graph weights, and future
-reranker scores do not need to be normalized into one scale.
+RRF is robust because BM25F scores, vector similarities, graph weights, and
+future reranker scores do not need to be normalized into one scale. Per-stack
+weights (`HybridRetrievalConfig.retriever_weights`) modulate the contribution
+of each retriever.
 
 Other future fusion modes:
 
@@ -559,11 +872,14 @@ language = cpp
 resource_id = resource:indexer
 timestamp in range
 tags contains memory
+projection_kind = Summary
+field_id = body AND token contains "cyrillic"
 ```
 
-The first lexical contracts can reuse exact `MetadataFilter` semantics from the
-vector index. More expressive structured filters should be introduced only when
-both lexical and vector retrieval can share them.
+The first lexical contracts reuse exact `MetadataFilter` semantics from the
+vector index. The knowledge base roadmap's new variants — `MetadataRangeFilter`,
+`MetadataInFilter`, `MetadataTagFilter`, and the `all_of` / `any_of` combinators
+— slot into the same BM25F candidate pipeline.
 
 ## Planner-Guided Retrieval
 
@@ -575,14 +891,90 @@ database:
 ```text
 root planner:
     inspect metadata and corpus stats
-    call lexical/vector/graph retrieval functions
+    call lexical/vector/graph retrieval functions (each pin-able to a
+        projection_kind)
     split large result sets
     request sub-summaries or sub-answers from an external model adapter
     aggregate final context or answer
 ```
 
 This belongs in a later retrieval planning or context assembly layer, not in
-`ILexicalIndex`.
+`ILexicalIndex`. The lexical index's only responsibility is to honour the
+`projection_kind` pin in `RetrievalPlan` when the planner asks for it.
+
+## Cyrillic Morphology
+
+Russian (and other Cyrillic) text needs morphology-aware tokenization for the
+lexical scorer to work well. Without it, `"каталог"`, `"каталога"`,
+`"каталогу"`, `"каталогом"`, `"каталоге"` index as five unrelated tokens and
+queries that mix cases lose recall.
+
+### Backend Selection
+
+The first morphology backend is **optional** and gated by the
+`AGENT_MEMORY_ENABLE_MORPHOLOGY` CMake flag:
+
+```cmake
+option(AGENT_MEMORY_ENABLE_MORPHOLOGY
+       "Enable Cyrillic morphology backend for lexical tokenization"
+       OFF)
+```
+
+When the flag is off, the default tokenizer is the std-only code-aware
+ASCII/Latin tokenizer described above. The default stack on Cyrillic-heavy
+content degrades to lower recall; users opt into the morphology backend when
+their corpus warrants it.
+
+When the flag is on, the backend plugs in through a thin C ABI so the project
+does not pull a heavy dependency into core. Candidates:
+
+- **ICU** — full Unicode normalization, case folding, word boundary
+  segmentation, and Russian stemming/lemmatization via the ICU BreakIterator
+  and the dictionary-based stemmer. Heavy dependency but already common in
+  C++ projects.
+- **pymorphy2 C-API** — battle-tested Russian lemmatizer with alias
+  resolution (e.g. `"ё"` → `"е"`), packaged behind a small C shim.
+- **Lightweight rule-based stemmer** — Snowball Russian stemmer or similar;
+  no external dependency, slightly lower quality than pymorphy2.
+
+The first default picks ICU if available and falls back to the lightweight
+stemmer otherwise. The morphological backend is selected at compile time and
+exposed as a single `IMorphologyProvider` interface so additional backends can
+be added later.
+
+### Tokenization Pipeline For Russian
+
+When morphology is enabled, the tokenizer:
+
+1. Normalizes Unicode (NFC, case folding, `"ё"` → `"е"` alias).
+2. Segments on ICU word boundaries.
+3. Maps each surface form to a lemma via the morphology backend.
+4. Records both the surface form (for snippets and highlighting) and the
+   lemma (for posting keys and BM25F scoring).
+
+Alias resolution (e.g. `"сервер"` ↔ `"серер"` typos, transliteration pairs) is
+applied as a post-lemma step so dedup works the same way as in the СВИНОПАС
+system described in `ai-agent-playbook` (`concepts/rag-knowledge/Внешняя
+память LLM-агентов — система СВИНОПАС.md`).
+
+The ASCII/Latin tokenizer stays in core and continues to own the code-aware
+behaviour. Cyrillic routing is opt-in per stack config; the default
+`AgentLongTermMemory` profile enables morphology when the flag is on.
+
+### Maturity Mapping
+
+Per open issue 17.5 in `memory-stacks-roadmap.md`:
+
+- **M0:** morphology is **not required**. The std-only ASCII tokenizer is
+  enough for the MVP smoke tests.
+- **M1:** morphology is **required** for any stack that lists Russian in its
+  supported languages. The `AGENT_MEMORY_ENABLE_MORPHOLOGY` flag becomes the
+  toggle for the build.
+- **M2:** morphology is **required by default** for all stacks, with the
+  flag retained as an escape hatch for minimal builds.
+
+The flag is read once at `MemoryStack::open()` time; runtime morphology
+fallback per unit is not supported in the first version.
 
 ## Benchmark Expectations
 
@@ -590,10 +982,11 @@ Lexical work should add benchmark gates before optimized storage or external
 adapters become defaults. Track at least:
 
 ```text
-query latency
+query latency (BM25 flat body)
+query latency (BM25F per projection_kind)
 index build time
-resource reindex time
-posting bytes per token
+resource reindex time (per projection_kind)
+posting bytes per token (per projection_kind)
 token dictionary size
 chunk stats size
 candidate count
@@ -606,15 +999,26 @@ compaction time
 Compare:
 
 ```text
-BM25-only
+BM25 (Original.body)
+BM25F (Original)
+BM25F (Summary)
+BM25F (Original + QAQuestion + QAAnswer + Summary)
 vector-only
-BM25 + vector with RRF
-BM25 + vector + metadata filters
-later: graph expansion and rerank
+hybrid BM25F + vector with RRF
+hybrid + metadata filters
+hybrid + graph expansion
+later: rerank
 ```
 
 Use small curated corpora for behavior tests and larger markdown/code corpora
-for latency, storage, and update benchmarks.
+for latency, storage, and update benchmarks. Add a Cyrillic corpus for the
+morphology gates:
+
+```text
+russian_wikipedia_subset
+code_with_cyrillic_comments
+mixed_ru_en_corpus
+```
 
 ## Reference Projects
 
@@ -625,29 +1029,109 @@ for latency, storage, and update benchmarks.
 - simdutf / lemire-simdutf: optional Unicode validation and transcoding backend.
 - utfcpp: lightweight optional scalar UTF-8 validation and code point iteration
   backend.
-- ICU: optional heavy Unicode normalization, case folding, and word boundary
-  backend.
+- ICU: optional heavy Unicode normalization, case folding, word boundary, and
+  Russian morphology backend.
+- pymorphy2: Python Russian morphology; a thin C shim is an option for the
+  Cyrillic backend.
+- Snowball Russian stemmer: lightweight rule-based fallback.
 - tiny-utf8: useful UTF handling reference, not a planned public string type.
 - symgraph and OpenWiki: useful references for graph/document retrieval shapes.
 - RLM and rlm-minimal: references for planner-guided, recursive retrieval.
+- СВИНОПАС (in `ai-agent-playbook`): reference design for Cyrillic morphology
+  and alias resolution in agent memory.
 
 ## Recommended Implementation Order
+
+The lexical work is interleaved with the 16 implementation steps in
+`memory-stacks-roadmap.md` section 16. The mapping below is the lexical view
+of that ordering; each substep is its own PR.
+
+### L1. BM25 baseline + lexical DBI (memory-stacks step 3)
 
 1. Add this roadmap.
 2. Add tokenizer value types and `ITokenizer`.
 3. Add a std-only code-aware tokenizer.
-4. Add lexical query, result, posting, and stats value types.
+4. Add lexical query, result, posting, and stats value types
+   (`ProjectionKind`, `FieldId`, projection-aware `LexicalPosting`).
 5. Add token dictionary and token-id allocation contracts.
-6. Add `ILexicalIndex`.
-7. Add in-memory BM25 lexical index.
-8. Integrate lexical indexing into resource reindexing.
-9. Add hybrid retrieval with BM25 + vector through RRF.
-10. Add file-system raw resource store for `.md` and `.txt`.
-11. Add phrase/proximity over positions.
-12. Add MDBX lexical index with simple posting-list blobs.
-13. Add segmented postings, tombstones, and compaction.
-14. Add BM25F field weighting.
-15. Add fuzzy and n-gram search.
-16. Add graph retrieval integration.
-17. Add optional Unicode backends.
-18. Add optional external search adapters if benchmarks justify them.
+6. Add `ILexicalIndex` with `search(LexicalQuery)` and the flat-body
+   `projection_kind = Original, field_id = body` path.
+7. Add an in-memory BM25 lexical index for tests and the `BasicRag` smoke
+   gate.
+8. Integrate lexical indexing into the resource reindex path using the
+   targeted reindexing protocol from this document.
+9. Add hybrid retrieval with BM25 + vector through RRF. The lexical retriever
+   reports `retriever_name = "lexical"` on every hit.
+
+### L2. SearchProjections and projection-aware BM25F (memory-stacks step 7)
+
+10. Add the `SearchProjection` value type and the `unit_projections` DBI
+    (`memory-stacks-roadmap.md` section 12.2).
+11. Add `projection_kind` and `scope_id` to the `inverted_token_to_unit`
+    and `field_to_postings` keys (see MDBX Layout above).
+12. Add generation rules per `ProjectionKind` for `Original`, `QAQuestion`,
+    `QAAnswer`, `Summary`, and `CodeSymbols` (see Generation Rules Per
+    Projection Kind).
+13. Promote the MDBX layout so `field_to_postings` is keyed by
+    `(scope_id, projection_kind, field_id, token_id, unit_id)` and BM25F,
+    BM25, and future fielded sparse retrievers share the same posting
+    table.
+14. Add the BM25F scorer over the fielded view with explicit per-field
+    weights and the `LexicalFieldWeights` configuration.
+15. Extend `LexicalSearchResult` to carry `KnowledgeUnitId` and
+    `KnowledgeUnitKind`, and add a `pin_projection_kind` to `LexicalQuery`
+    so callers can bias the scorer.
+16. Wire targeted reindexing per `projection_kind` so an update that only
+    changes a `Summary` projection does not invalidate `Original`,
+    `QAQuestion`, or `QAAnswer` postings.
+
+### L3. RetrievalPlan integration (memory-stacks step 13)
+
+17. Extend `ILexicalIndex::search` to accept a `RetrievalPlan` (in addition
+    to the existing `LexicalQuery` overload) and surface
+    `retriever_name = "lexical"` on every hit for RRF.
+18. Add the new `MetadataFilter` variants
+    (`MetadataRangeFilter`, `MetadataInFilter`, `MetadataTagFilter`) and the
+    `all_of` / `any_of` combinators from the knowledge base roadmap.
+19. Wire the lexical index into the `RetrievalPlan` lifecycle: emission of
+    `RetrievalTrace` per call, RRF contribution, and participation in
+    `IContextBuilder` budgeted assembly.
+20. Add the token-level cache keyed by `(scope_id, token_id,
+    projection_kind)` for fast warm-up across sessions and scopes.
+
+### L4. MDBX and secondary indexes (memory-stacks steps 3 cont. and 12.3)
+
+21. Add the MDBX-backed lexical index with simple posting-list blobs
+    (start from the flat-body path, then add the projection keys).
+22. Add segmented postings, tombstones, and compaction. Compaction must
+    preserve generation filtering so BM25F and BM25 score over the same
+    live-posting set.
+23. Wire MDBX-backed secondary indexes for the lexical pipeline
+    (resource -> token set, metadata_key -> unit_id, generation -> unit_id)
+    so reindex and stale filtering stay fast. See
+    [`optimization-roadmap.md`](optimization-roadmap.md) "Secondary
+    Indexes" and `memory-stacks-roadmap.md` section 12.3.
+
+### L5. Morphology, raw stores, and later layers
+
+24. Add the Cyrillic morphology backend behind the
+    `AGENT_MEMORY_ENABLE_MORPHOLOGY` CMake flag (see Cyrillic Morphology
+    section). Required for M1 Russian-language stacks.
+25. Add file-system raw resource store for `.md` and `.txt`.
+26. Add phrase/proximity over positions. The phrase path runs per
+    projection_kind and joins candidates into the same RRF stream.
+27. Add fuzzy and n-gram search.
+28. Add graph retrieval integration with `retriever_name = "graph"` and
+    RRF merge against BM25F hits.
+29. Add optional Unicode backends (simdutf, utfcpp) as accelerators behind
+    the existing std-only tokenizer.
+30. Add optional external search adapters if benchmarks justify them.
+
+### L6. Eval gate (memory-stacks step 15)
+
+31. Land the golden dataset loader and the `RetrievalMetrics` CI gate
+    over the lexical index. The lift target from
+    `knowledge-base-roadmap.md` (Recall@10 hybrid >= 1.20x BM25-only) is
+    the release gate.
+32. Add Cyrillic golden datasets to the eval suite so the morphology
+    backend's lift is measured, not assumed.
