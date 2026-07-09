@@ -1,0 +1,1064 @@
+# memory-stacks-roadmap.md
+
+Центральная спецификация архитектуры памяти `agent-memory-cpp`. Определяет модель данных (envelope + components + projections), декларативную спецификацию профилей, runtime-стек, capability matrix, валидационные правила и MDBX layout. Документ supersede'ит компонент-агностичные части `knowledge-base-roadmap.md` и `knowledge-units-roadmap.md` для разделов, относящихся к profiles/stacks.
+
+## 1. Purpose
+
+Этот документ фиксирует архитектурные решения для подсистемы памяти `agent-memory-cpp`:
+
+- Какие структуры данных используются (Envelope, Components, SearchProjections).
+- Как пользователь описывает нужный тип памяти (MemoryProfileSpec).
+- Как пользователь открывает и использует память (MemoryStack).
+- Какие готовые конфигурации предоставляет библиотека.
+- Как MDBX environment раскладывается по DBI в зависимости от профиля.
+- Какие уровни зрелости (M0/M1/M2) определяют ship-it критерии.
+- Какие cross-cutting runtime-сервисы ортогональны профилям.
+
+Non-goals документа:
+
+- Детальная спецификация payload-компонентов (см. `knowledge-units-roadmap.md`).
+- Детальная спецификация BM25F / postings / tokenization (см. `lexical-search-roadmap.md`).
+- Детальная спецификация dense vector / binary signature / secondary indexes (см. `optimization-roadmap.md`).
+- Детальная спецификация compaction-воркера (см. `compaction-roadmap.md`, future).
+- Детальная спецификация runtime-сервисов prompt-cache/write-gate (см. `runtime-services-roadmap.md`, future).
+
+## 2. Architectural Decision Records (ADR Index)
+
+Сводка архитектурных решений. Полный текст каждого ADR — в секции 3 и далее.
+
+| ID | Название | Решение |
+|---|---|---|
+| ADR-001 | Memory Data Model | Envelope + Components + SearchProjections (не монолитный struct) |
+| ADR-002 | MemoryStack vs MemoryProfileSpec | Spec декларативный, Stack — runtime-объект |
+| ADR-003 | Profile/Scope ортогональность | Profile = capabilities, Scope = namespace, ortho |
+| ADR-004 | KnowledgeUnit миграция | v0.x breaking refactor, v1.x additive migrations |
+| ADR-005 | Search text в envelope | primary_text (256-1024 байт) + SearchProjections отдельно |
+| ADR-006 | GraphStorage | DBI внутри одного MDBX env, не внешний graph DB |
+| ADR-007 | Embedding storage | embedding_meta + embedding_vectors, multi-projection/multi-model |
+| ADR-008 | Decay/anti-loop | Меняет retrieval score, не удаляет записи; defaults для AgentLTM |
+| ADR-009 | Compaction strategy | Hybrid: on-write cheap ops + on-schedule heavy jobs |
+| ADR-010 | MDBX environment | Один env, много DBI. Multi-env — только при обоснованной потребности |
+| ADR-011 | Lifecycle FSM | Active / SoftSuppressed / Superseded / Deprecated / Erased |
+| ADR-012 | Multi-tenancy | Все secondary indexes — scope-aware |
+| ADR-013 | Runtime services | PromptCache, CompactionWorker, WriteGate, AsyncIndexer — отдельный слой |
+| ADR-014 | CLI | Отдельный target `agent-memory-cli`, не core library |
+| ADR-015 | Maturity Levels | M0 (MVP) / M1 (Production) / M2 (Advanced) с ship-it критериями |
+
+## 3. ADR-001: Memory Data Model
+
+### 3.1. Решение
+
+Данные memory unit разделяются на три независимых слоя:
+
+```
+Layer A: KnowledgeUnitEnvelope (lookup-critical, hot path)
+  id, kind, scope_id, primary_text, display_text,
+  lifecycle_state, sources, timestamps, priority_weight
+
+Layer B: Components (operational + per-kind payloads)
+  UsageStatsComponent, SpeakerComponent, TemporalComponent,
+  EmbeddingMetaComponent, CompactionMetaComponent,
+  QAPayload, FactPayload, ConversationEpisodePayload,
+  CompiledArticlePayload, ChunkPayload
+
+Layer C: SearchProjections (retrieval-specific text views)
+  Original, DenseContextual, Bm25Body/Title/Heading/Symbols,
+  QAQuestion, QAAnswer, Summary, CodeSymbols
+```
+
+Каждый слой имеет собственный MDBX layout и обновляется независимо (но атомарно через MultiTableWriter при coordinated writes).
+
+### 3.2. Обоснование
+
+Монолитный `KnowledgeUnit` struct с 30+ полями приводит к распуханию value envelope при сериализации, неясным инвариантам, раздуванию индексов, необходимости additive migration каждого нового поля, дублированию данных при нескольких представлениях.
+
+Компонентная модель даёт hot path с минимум I/O, lazy load компонентов по запросу retrieval layer, добавление нового компонента без модификации envelope, естественное место для kind-специфичных данных в payload-компонентах.
+
+### 3.3. Альтернативы, отклонённые
+
+- Монолитный KnowledgeUnit с 50 optional полями. Отклонён: нарушает инварианты, раздувает I/O.
+- Полностью отдельные storage типы для каждого use-case. Отклонён: дублирование кода, невозможность RRF fusion, нет единого API.
+- JSON-value envelope с произвольными полями. Отклонён: теряем строгие типы C++, schema validation, индексы по typed fields.
+
+## 4. ADR-002: MemoryStack vs MemoryProfileSpec
+
+### 4.1. Решение
+
+Два разных уровня API: `MemoryProfileSpec` (декларативный, сериализуемый) и `MemoryStack` (runtime-объект с handles). Конструкция `MemoryStack::open(path, spec)` валидирует spec, открывает env, создаёт DBI по capability, возвращает stack.
+
+### 4.2. Обоснование
+
+- `MemoryProfileSpec` — это данные: сериализуются, версионируются, читаются из YAML.
+- `MemoryStack` — это объект с открытыми handles, prepared statements, транзакциями.
+- Разделение позволяет сохранять spec в metadata файла и проверять при открытии (drift detection через profile_signature hash).
+- Stack закрывается через `stack.close()` — handles освобождаются, env остаётся на диске.
+
+### 4.3. Naming rationale
+
+`MemoryStack` выбран вместо `MemoryProfile` (конфликт с `std::execution::MemoryProfile`), `MemoryConfiguration` (слишком общее), `MemoryKit` (маркетинговый звук). `MemoryStack` передаёт композицию runtime-компонентов и интуитивен.
+
+## 5. ADR-003: Profile/Scope ортогональность
+
+### 5.1. Решение
+
+Profile (через `MemoryStack`) и Scope — независимые оси: Profile задаёт capabilities/schema/policies, Scope задаёт data ownership/namespace. Каждый KnowledgeUnit имеет `ScopeId scope_id`. Все secondary indexes начинаются с `scope_id` в ключе.
+
+### 5.2. Пример
+
+```cpp
+// Один стек, много scopes
+auto stack = MemoryStack::open("agent.mdbx", MemoryProfiles::AgentLongTermMemory());
+
+stack.write_unit(WriteRequest{
+    .envelope = make_envelope(...).with_scope("user:yaroslav"),
+    .payload = ...,
+});
+stack.write_unit(WriteRequest{
+    .envelope = make_envelope(...).with_scope("agent:nika"),
+    .payload = ...,
+});
+
+// Retrieval с фильтром
+auto hits = stack.retrieve(RetrievalPlan{
+    .raw_query = "...",
+    .scope_ids = {"user:yaroslav"},
+});
+```
+
+### 5.3. Обоснование
+
+Profile ортогональна scope: один стек может обслуживать данные разных пользователей/проектов. Изменение profile (capabilities) — major migration. Изменение scope фильтра — обычный query filter.
+
+## 6. MemoryProfileSpec — декларативная спецификация
+
+### 6.1. Capability flags
+
+```cpp
+enum class MemoryCapability : uint64_t {
+    None               = 0,
+    LexicalBm25F       = 1ull << 0,
+    DenseVectors       = 1ull << 1,
+    QAPairs            = 1ull << 2,
+    TemporalValidity   = 1ull << 3,
+    UsageStats         = 1ull << 4,
+    Decay              = 1ull << 5,
+    SpeakerAttribution = 1ull << 6,
+    Compaction         = 1ull << 7,
+    PromptCache        = 1ull << 8,
+    GraphRelations     = 1ull << 9,
+    EmbeddingMigration = 1ull << 10,
+    CompiledArticles   = 1ull << 11,
+    ConversationMemory = 1ull << 12,
+};
+
+using CapabilitySet = std::underlying_type_t<MemoryCapability>;
+```
+
+### 6.2. Политики
+
+```cpp
+enum class DecayMode { None, Linear, Exponential, Logistic };
+
+struct DecayPolicy {
+    DecayMode mode = DecayMode::None;
+    double half_life_ms = 0;
+    double use_boost = 0;
+    double cooldown_ms = 0;
+    double self_echo_suppression = 0;
+    double cold_threshold = 0;
+};
+
+enum class WriteFlushTrigger {
+    OnEveryEvent, OnTimer, OnSizeThreshold, OnImportance
+};
+
+struct WritePolicy {
+    WriteFlushTrigger trigger = WriteFlushTrigger::OnEveryEvent;
+    uint64_t flush_interval_ms = 0;
+    uint64_t size_threshold_bytes = 0;
+    double importance_threshold = 0;
+    double dedupe_distance_threshold = 0;
+    bool allow_supersede = true;
+    bool allow_merge = true;
+    bool allow_episode_compaction = true;
+};
+
+struct SpeakerScopePolicy {
+    bool include_self = true;
+    bool include_owner = true;
+    bool include_cohost = true;
+    bool include_audience = false;
+    bool attribute_quote = true;
+};
+
+enum class RetrievalMode { Associative, Targeted, Hybrid, Disabled };
+enum class FusionStrategy { RRF, WeightedMax, Learned, Planner };
+
+struct HybridRetrievalConfig {
+    FusionStrategy fusion = FusionStrategy::RRF;
+    double rrf_k_constant = 60.0;
+    std::vector<double> retriever_weights;
+    size_t candidate_pool_size = 200;
+};
+
+struct ContextBudget {
+    size_t total_tokens = 4096;
+    size_t qa_tokens = 512;
+    size_t chunk_tokens = 2048;
+    size_t graph_tokens = 512;
+    size_t summary_tokens = 512;
+    size_t evidence_tokens = 256;
+};
+```
+
+### 6.3. Полная спецификация
+
+```cpp
+struct MemoryProfileSpec {
+    std::string name;
+
+    CapabilitySet capabilities = 0;
+
+    bool enable_lexical_bm25f = true;
+    bool enable_dense_vectors = false;
+    bool enable_graph = false;
+
+    bool enable_usage_stats = false;
+    bool enable_temporal_validity = false;
+    bool enable_speaker = false;
+    bool enable_qa_payload = false;
+    bool enable_fact_payload = false;
+    bool enable_conversation_episode = false;
+    bool enable_compiled_article = false;
+    bool enable_embedding_meta = false;
+    bool enable_compaction = false;
+    bool enable_prompt_cache = false;
+
+    std::optional<DecayPolicy> decay_policy;
+    std::optional<WritePolicy> write_policy;
+    std::optional<SpeakerScopePolicy> speaker_policy;
+    std::optional<HybridRetrievalConfig> hybrid_config;
+    std::optional<ContextBudget> context_budget;
+    std::optional<RetrievalMode> default_retrieval_mode;
+
+    uint32_t envelope_schema_version = 1;
+    uint32_t component_schema_versions[kNumComponentKinds] = {};
+
+    std::array<uint8_t, 32> reserved = {};
+};
+```
+
+`capabilities` bitmask вычисляется из high-level флагов при `MemoryStack::open()` для единообразия проверок.
+
+## 7. MemoryStack — runtime API
+
+### 7.1. Открытие стека
+
+```cpp
+class MemoryStack {
+public:
+    static MemoryStack open(
+        const std::string& path,
+        const MemoryProfileSpec& spec);
+
+    static MemoryStack open_existing(
+        const std::string& path,
+        const MemoryProfileSpec* expected_spec = nullptr);
+
+    void close() noexcept;
+
+    bool is_open() const noexcept;
+    MemoryProfileSpec spec() const;
+    CapabilitySet capabilities() const;
+
+    IKnowledgeUnitStore& units();
+    IComponentStore& components();
+    IProjectionStore& projections();
+    IEmbeddingStore& embeddings();
+
+    RetrievalResult retrieve(const RetrievalPlan& plan);
+    WriteResult write_unit(const WriteRequest& request);
+    BulkWriteResult write_units(std::span<const WriteRequest> requests);
+
+    CompactionWorker& compaction();
+    bool has_compaction() const;
+
+    PromptCache& prompt_cache();
+    bool has_prompt_cache() const;
+
+    StackStats stats() const;
+    SchemaInfo schema_info() const;
+};
+```
+
+### 7.2. Запись unit
+
+```cpp
+struct WriteRequest {
+    KnowledgeUnitEnvelope envelope;
+    std::optional<QAPayload> qa_payload;
+    std::optional<FactPayload> fact_payload;
+    std::optional<ChunkPayload> chunk_payload;
+    std::optional<ConversationEpisodePayload> episode_payload;
+    std::optional<CompiledArticlePayload> article_payload;
+    std::vector<ComponentVariant> components;
+    std::vector<SearchProjection> projections;
+    std::vector<GraphEdge> graph_edges;
+    std::optional<double> importance_score;
+};
+
+struct WriteResult {
+    KnowledgeUnitId unit_id;
+    bool deduplicated = false;
+    std::optional<KnowledgeUnitId> merged_into;
+    std::vector<JobId> enqueued_jobs;
+};
+```
+
+### 7.3. Retrieval
+
+```cpp
+struct RetrievalPlan {
+    std::string raw_query;
+    QueryType query_type = QueryType::Unknown;
+
+    std::vector<ScopeId> scope_ids;
+    std::optional<ScopeId> default_scope;
+
+    std::vector<MemoryTier> tiers = {MemoryTier::Hot, MemoryTier::Warm};
+    RetrievalMode mode = RetrievalMode::Hybrid;
+
+    std::vector<RetrieverSpec> retrievers;
+
+    std::vector<KnowledgeUnitKind> kinds;
+    std::optional<TemporalWindow> temporal_window;
+    std::optional<SpeakerScopePolicy> speaker_filter;
+    std::optional<TypedMetadataFilter> metadata_filter;
+
+    double associative_timeout_ms = 50.0;
+    double targeted_timeout_ms = 4000.0;
+
+    size_t candidate_pool_size = 200;
+    size_t limit = 32;
+    std::optional<ContextBudget> context_budget;
+
+    std::optional<DecayPolicy> decay_policy_override;
+};
+
+struct RetrievalResult {
+    std::vector<RetrievalHit> hits;
+    std::optional<Context> assembled_context;
+    RetrievalTrace trace;
+};
+```
+
+## 8. Default Memory Stacks (готовые профили)
+
+Готовые спецификации в namespace `MemoryProfiles::`.
+
+### 8.1. BasicRagStack
+
+```cpp
+inline MemoryProfileSpec BasicRag() {
+    MemoryProfileSpec s;
+    s.name = "basic_rag";
+    s.envelope_schema_version = 1;
+    s.enable_lexical_bm25f = true;
+    s.enable_dense_vectors = true;
+    s.enable_graph = false;
+    s.enable_usage_stats = false;
+    s.enable_qa_payload = false;
+    s.enable_fact_payload = false;
+    s.enable_compaction = false;
+    s.context_budget = ContextBudget{
+        .total_tokens = 4096,
+        .chunk_tokens = 3072,
+        .summary_tokens = 512,
+        .evidence_tokens = 256,
+    };
+    s.hybrid_config = HybridRetrievalConfig{
+        .fusion = FusionStrategy::RRF,
+        .rrf_k_constant = 60.0,
+        .retriever_weights = {1.0, 1.0},
+    };
+    return s;
+}
+```
+
+### 8.2. QAKnowledgeBaseStack
+
+```cpp
+inline MemoryProfileSpec QAKnowledgeBase() {
+    MemoryProfileSpec s;
+    s.name = "qa_kb";
+    s.enable_lexical_bm25f = true;
+    s.enable_dense_vectors = true;
+    s.enable_qa_payload = true;
+    s.enable_usage_stats = true;
+    s.enable_temporal_validity = true;
+    s.enable_compaction = false;
+    s.context_budget = ContextBudget{
+        .total_tokens = 2048,
+        .qa_tokens = 1024,
+        .chunk_tokens = 512,
+        .evidence_tokens = 256,
+    };
+    return s;
+}
+```
+
+### 8.3. AgentLongTermMemoryStack
+
+```cpp
+inline MemoryProfileSpec AgentLongTermMemory() {
+    MemoryProfileSpec s;
+    s.name = "agent_ltm";
+    s.enable_lexical_bm25f = true;
+    s.enable_dense_vectors = true;
+    s.enable_graph = true;
+    s.enable_usage_stats = true;
+    s.enable_temporal_validity = true;
+    s.enable_fact_payload = true;
+    s.enable_embedding_meta = true;
+    s.enable_compaction = true;
+    s.context_budget = ContextBudget{
+        .total_tokens = 4096,
+        .qa_tokens = 512,
+        .chunk_tokens = 2048,
+        .graph_tokens = 512,
+        .summary_tokens = 512,
+        .evidence_tokens = 256,
+    };
+    s.decay_policy = DecayPolicy{
+        .mode = DecayMode::Exponential,
+        .half_life_ms = 7.0 * 24.0 * 3600.0 * 1000.0,
+        .use_boost = 0.35,
+        .cooldown_ms = 60.0 * 1000.0,
+        .self_echo_suppression = 0.3,
+        .cold_threshold = 0.01,
+    };
+    s.write_policy = WritePolicy{
+        .trigger = WriteFlushTrigger::OnTimer,
+        .flush_interval_ms = 30.0 * 1000.0,
+        .importance_threshold = 0.4,
+        .dedupe_distance_threshold = 0.15,
+        .allow_supersede = true,
+        .allow_merge = true,
+    };
+    s.hybrid_config = HybridRetrievalConfig{
+        .fusion = FusionStrategy::RRF,
+        .rrf_k_constant = 60.0,
+        .retriever_weights = {1.0, 1.0, 1.5, 0.5, 1.0},
+    };
+    s.default_retrieval_mode = RetrievalMode::Hybrid;
+    return s;
+}
+```
+
+### 8.4. SpeakerAwareChatStack
+
+```cpp
+inline MemoryProfileSpec SpeakerAwareChat() {
+    MemoryProfileSpec s;
+    s.name = "speaker_chat";
+    s.enable_lexical_bm25f = true;
+    s.enable_dense_vectors = false;
+    s.enable_speaker = true;
+    s.enable_temporal_validity = true;
+    s.enable_conversation_episode = true;
+    s.enable_usage_stats = true;
+    s.context_budget = ContextBudget{
+        .total_tokens = 3000,
+        .chunk_tokens = 1500,
+        .summary_tokens = 800,
+        .evidence_tokens = 256,
+    };
+    s.speaker_policy = SpeakerScopePolicy{
+        .include_self = true,
+        .include_owner = true,
+        .include_cohost = true,
+        .include_audience = false,
+        .attribute_quote = true,
+    };
+    s.write_policy = WritePolicy{
+        .trigger = WriteFlushTrigger::OnTimer,
+        .flush_interval_ms = 5.0 * 1000.0,
+        .importance_threshold = 0.2,
+    };
+    return s;
+}
+```
+
+### 8.5. CompiledWikiStack
+
+```cpp
+inline MemoryProfileSpec CompiledWiki() {
+    MemoryProfileSpec s;
+    s.name = "compiled_wiki";
+    s.enable_lexical_bm25f = true;
+    s.enable_dense_vectors = true;
+    s.enable_compiled_article = true;
+    s.enable_fact_payload = true;
+    s.enable_embedding_meta = true;
+    s.enable_compaction = true;
+    s.context_budget = ContextBudget{
+        .total_tokens = 6000,
+        .chunk_tokens = 2000,
+        .summary_tokens = 2000,
+        .evidence_tokens = 512,
+    };
+    return s;
+}
+```
+
+### 8.6. TemporalFactStoreStack
+
+```cpp
+inline MemoryProfileSpec TemporalFactStore() {
+    MemoryProfileSpec s;
+    s.name = "temporal_facts";
+    s.enable_lexical_bm25f = true;
+    s.enable_dense_vectors = false;
+    s.enable_temporal_validity = true;
+    s.enable_fact_payload = true;
+    s.enable_graph = true;
+    s.context_budget = ContextBudget{
+        .total_tokens = 3000,
+        .chunk_tokens = 1500,
+        .graph_tokens = 800,
+        .evidence_tokens = 256,
+    };
+    return s;
+}
+```
+
+### 8.7. FullResearchMemoryStack
+
+```cpp
+inline MemoryProfileSpec FullResearchMemory() {
+    MemoryProfileSpec s = AgentLongTermMemory();
+    s.name = "full_research";
+    s.enable_speaker = true;
+    s.enable_qa_payload = true;
+    s.enable_conversation_episode = true;
+    s.enable_compiled_article = true;
+    return s;
+}
+```
+
+## 9. Capability Matrix
+
+| Capability | BasicRag | QAKB | AgentLTM | SpeakerChat | CompiledWiki | TemporalFact | FullResearch |
+|---|---|---|---|---|---|---|---|
+| LexicalBm25F | yes | yes | yes | yes | yes | yes | yes |
+| DenseVectors | yes | yes | yes | no | yes | no | yes |
+| QAPairs | no | yes | no | no | no | no | yes |
+| TemporalValidity | no | yes | yes | yes | no | yes | yes |
+| UsageStats | no | yes | yes | yes | no | no | yes |
+| Decay | no | no | yes | no | no | no | yes |
+| SpeakerAttribution | no | no | no | yes | no | no | yes |
+| Compaction | no | no | yes | no | yes | no | yes |
+| PromptCache | opt | opt | opt | opt | opt | opt | opt |
+| GraphRelations | no | no | yes | no | no | yes | yes |
+| EmbeddingMigration | no | no | yes | no | yes | no | yes |
+| CompiledArticles | no | no | no | no | yes | no | yes |
+| ConversationMemory | no | no | no | yes | no | no | yes |
+
+`opt` — capability не включена по умолчанию, но может быть добавлена через minor in-place migration.
+
+## 10. Validation Rules
+
+При `MemoryStack::open()` валидируются инварианты. Ошибки валидации выбрасывают `std::invalid_argument` с диагностикой.
+
+| Правило | Если нарушено |
+|---|---|
+| Включён LexicalBm25F или DenseVectors (хотя бы один retrieval path) | "Stack must enable at least one retrieval path" |
+| Decay=true требует UsageStats=true | "DecayPolicy requires UsageStatsComponent" |
+| SpeakerAttribution=true требует UsageStats=true | "SpeakerAttribution requires UsageStats" |
+| Compaction=true требует UsageStats=true | "Compaction requires UsageStats" |
+| CompiledArticles=true требует Compaction=true | "CompiledArticles requires Compaction" |
+| ConversationMemory=true требует SpeakerAttribution=true | "ConversationMemory requires SpeakerAttribution" |
+| EmbeddingMigration=true требует DenseVectors=true | "EmbeddingMigration requires DenseVectors" |
+| DecayPolicy: cooldown_ms >= 0, half_life_ms > 0 (если mode != None) | "Invalid DecayPolicy" |
+| WritePolicy: flush_interval_ms > 0 (если trigger == OnTimer) | "Invalid WritePolicy" |
+| ContextBudget: сумма per-block <= total_tokens | "ContextBudget overflow" |
+| HybridRetrievalConfig: retriever_weights.size() == number of retrievers | "Weights size mismatch" |
+| envelope_schema_version в spec соответствует сохранённому | "Schema version mismatch (migration required)" |
+
+Дополнительно: `profile_signature` (hash от spec) сохраняется в `schema_info` DBI. При `open_existing()` без `expected_spec` сравнивается с текущим и диагностируется drift.
+
+## 11. Layer Architecture
+
+```
+Layer 4: Applications (examples/, apps/)
+  ChatBotApp, WikiMaintainerApp, StreamMemoryApp, ...
+
+Layer 3: Memory Stacks (см. секцию 7)
+  MemoryStack — runtime объект с handles к storage/retrieval
+  MemoryProfileSpec — декларативная спецификация
+
+Layer 2: Retrieval Primitives (retrieval/)
+  ILexicalIndex, IDenseIndex, IGraphIndex, ITemporalIndex,
+  HybridRetriever, RRF, ContextBuilder, IntentRouter,
+  RetrievalTrace, DecayAwareRetriever, AntiLoopCooldown
+
+Layer 1: Storage Primitives (storage/)
+  EnvelopeStore, ComponentStore, ProjectionStore,
+  MDBX tables, MultiTableWriter, ReverseIndexTable,
+  RangeIndexTable, TypeDiscriminatedTable, CompositeKey
+
+Cross-cutting Runtime Services (runtime/) — orthogonal
+  PromptCache, CompactionWorker, WriteGate, AsyncIndexer
+  Используют Layer 1 + Layer 2 через интерфейсы
+```
+
+Ключевые свойства:
+
+- Layer 4 не зависит от Layer 1 (только через Layer 2 + Layer 3).
+- Layer 3 не зависит от Layer 4.
+- Layer 2 не зависит от Layer 3 (можно использовать напрямую).
+- Runtime services могут вызываться из любого layer, но сами не зависят от конкретного MemoryStack.
+
+## 12. MDBX Storage Layout
+
+Один MDBX environment, набор DBI в зависимости от профиля.
+
+### 12.1. Всегда открываются (core DBI)
+
+```
+knowledge_units
+  key = UnitId → KnowledgeUnitEnvelope (msgpack/flat binary)
+
+knowledge_units_by_kind
+  key = (kind, UnitId) → empty
+  [DUPSORT secondary index]
+```
+
+### 12.2. Открываются по capability
+
+```
+unit_components                         // если любой компонент включён
+  key = (ComponentKind tag, UnitId) → ValueVariant<UsageStats | Speaker | Temporal | EmbeddingMeta | CompactionMeta>
+  [TypeDiscriminatedTable из mdbx-containers]
+
+qa_payloads                             // если QAPayload включён
+  key = UnitId → QAPayload
+
+fact_payloads                           // если FactPayload включён
+  key = UnitId → FactPayload
+
+conversation_episode_payloads           // если ConversationEpisode включён
+  key = UnitId → ConversationEpisodePayload
+
+compiled_article_payloads               // если CompiledArticle включён
+  key = UnitId → CompiledArticlePayload
+
+chunk_payloads                          // всегда для Chunk kind
+  key = UnitId → ChunkPayload
+
+unit_projections                        // всегда для indexed retrieval
+  key = (scope_id, UnitId, ProjectionKind, revision) → SearchProjection
+
+embedding_meta                          // если EmbeddingMetaComponent или EmbeddingMigration
+  key = (scope_id, UnitId, ProjectionKind, model_id, version) → EmbeddingMeta
+
+embedding_vectors                       // если DenseVectors
+  key = (scope_id, model_id, ProjectionKind, UnitId) → vector_blob
+```
+
+### 12.3. Secondary indexes (по capability)
+
+```
+inverted_token_to_unit                  // если LexicalBm25F
+  key = (scope_id, token_id, projection_kind, field_id) → DUPSORT unit_id
+
+field_to_postings                       // если LexicalBm25F
+  key = (scope_id, projection_kind, field_id, token_id, unit_id) → PostingStats
+
+metadata_filters                        // всегда (lightweight metadata)
+  key = (scope_id, metadata_key, metadata_value, unit_id) → empty
+  [ReverseIndexTable]
+
+graph_edges_by_src                      // если GraphRelations
+  key = (scope_id, from_unit_id, edge_kind, to_unit_id) → GraphEdgePayload
+
+graph_edges_by_dst                      // если GraphRelations
+  key = (scope_id, to_unit_id, edge_kind, from_unit_id) → GraphEdgePayload
+
+temporal_event_index                    // если TemporalValidity
+  key = (scope_id, valid_from_ms, valid_until_ms, unit_id) → empty
+
+temporal_unit_index                     // если TemporalValidity
+  key = (scope_id, observed_at_ms, unit_id) → empty
+
+speaker_to_units                        // если SpeakerAttribution
+  key = (scope_id, speaker_id, unit_id) → empty
+
+session_to_units                        // если SpeakerAttribution
+  key = (scope_id, session_id, unit_id) → empty
+
+usage_stats_index                       // если UsageStats
+  key = (scope_id, unit_id) → UsageStatsComponent (копия для быстрого ranking)
+```
+
+### 12.4. Compaction / runtime
+
+```
+compaction_jobs                         // если Compaction
+  key = JobId → JobState
+
+compaction_handoffs                     // если Compaction
+  key = SessionId → HandoffRecord
+
+generation_index                        // всегда
+  key = (kind, generation) → unit_id (stale filter)
+
+prompt_cache                            // если PromptCache
+  key = cache_key_hash → cached_response
+```
+
+### 12.5. Schema metadata
+
+```
+schema_info
+  key = "schema" → SchemaInfo{envelope_version, component_versions[NUM_KINDS], profile_signature}
+```
+
+### 12.6. DBI budget
+
+Целевой максимум — 64 DBI на один MemoryStack (расширение `max_dbs` 16→64 в `mdbx-containers`). При M1-профилях типичный usage — 18-22 DBI. При FullResearch — до 30 DBI. Headroom есть.
+
+## 13. Maturity Levels
+
+### 13.1. M0 — MVP
+
+Цель: запустить первый end-to-end pipeline на минимальном стеке.
+
+Включено:
+
+- KnowledgeUnitEnvelope (lean, 13 полей).
+- primary_text + display_text в envelope.
+- BM25F по primary_text (как fallback-индекс, без projection_kind в posting keys).
+- Lifecycle FSM с состояниями Active / SoftSuppressed / Superseded / Deprecated / Erased.
+- BasicRagStack, QAKnowledgeBaseStack.
+- Чтение через ILexicalIndex, запись через простой write API.
+- scope_id во всех DBI keys (multi-tenancy с самого начала).
+
+Не включено (M1+): Components, Payloads per kind, SearchProjections, DecayPolicy/WritePolicy, Compaction, PromptCache.
+
+Ship-it критерии:
+
+- BasicRag retrieve+write на 10k unit работает с p95 latency ≤ 50 ms.
+- Все unit-тесты на envelope serialization проходят.
+- Lifecycle FSM покрыт тестами для всех 5 состояний.
+
+### 13.2. M1 — Production
+
+Цель: полноценные профили для реальных use-cases.
+
+Включено (поверх M0):
+
+- Все компоненты (UsageStats, Speaker, Temporal, EmbeddingMeta, CompactionMeta).
+- Все payload-компоненты (QAPayload, FactPayload, ConversationEpisodePayload, CompiledArticlePayload, ChunkPayload).
+- SearchProjections DBI с 4 стандартными kind: Original, QAQuestion, QAAnswer, Summary.
+- BM25F по projections (projection_kind в posting keys).
+- DecayPolicy + WritePolicy + SpeakerScopePolicy.
+- MemoryStacks: AgentLongTermMemoryStack, SpeakerAwareChatStack, CompiledWikiStack, TemporalFactStoreStack, FullResearchMemoryStack.
+- CompactionWorker с базовыми job types: DecayJob, DedupeJob, ArchiveColdJob.
+- PromptCache (LRU + AnthropicCacheControlAdapter).
+- IRetrievalTrace с метриками cache_hit_rate, anti_loop_skip_rate, decay_score_distribution.
+
+Не включено (M2+):
+
+- Полный набор projection kinds (DenseContextual, Bm25Fields, CodeSymbols).
+- Multi-vector embeddings с cross-model RRF.
+- Compaction jobs: MergeJob, SummaryPromotionJob, EmbeddingRecomputeJob.
+- CLI tool.
+- Distributed scope routing.
+- Eval pipeline с intent-класс-специфичными golden datasets.
+
+Ship-it критерии:
+
+- Все 7 MemoryStacks открываются и проходят round-trip write/read тесты.
+- AgentLongTermMemory retrieve с decay показывает Recall@10(hybrid) ≥ 1.20 * Recall@10(BM25-only) на golden dataset.
+- Cooldown-фильтр работает корректно (fact не возвращается в течение cooldown_ms после retrieval).
+- Compaction worker не теряет данные при crash (write-ahead job state).
+- Anti-loop подсвинок (self_echo_suppression) применяется в DecayAwareRetriever.
+
+### 13.3. M2 — Advanced
+
+Цель: полный набор возможностей, edge cases, production hardening.
+
+Включено (поверх M1):
+
+- Полный набор projection kinds.
+- Multi-vector embeddings (multi-model, multi-projection) с cross-model RRF.
+- Compaction: MergeJob, SummaryPromotionJob, EmbeddingRecomputeJob.
+- CLI tool (`agent-memory-cli`).
+- Eval pipeline с intent-классами: TemporalPointLookup, SupersedenceChain, CooldownRespect, SpeakerFilter, CompactionHandoff.
+- Distributed scope routing (multi-process / multi-host scope namespaces).
+- Compaction metrics и self-tuning.
+- Embedding recompute migration с progress tracking.
+
+Ship-it критерии:
+
+- 50+ golden test cases покрывают все intent-классы.
+- p95 latency ≤ 2x baseline BM25 для всех профилей.
+- Migration script `basic_rag → agent_ltm` работает без потери данных.
+- CLI tool покрывает inspect/stats/check/vacuum/reindex/profile-info/profile-migrate.
+
+## 14. Profile Migration Strategy
+
+### 14.1. In-place minor upgrade (допустимо)
+
+Добавление одной capability к существующему профилю:
+
+```cpp
+// Пример: BasicRag → BasicRagWithUsageStats
+MemoryProfileSpec old_spec = MemoryProfiles::BasicRag();
+MemoryProfileSpec new_spec = old_spec;
+new_spec.enable_usage_stats = true;
+new_spec.decay_policy = MemoryProfiles::DefaultAgentDecay();
+
+// migration in-place:
+// 1. Создать usage_stats_index DBI (если не существует)
+// 2. Заполнить нулевыми UsageStatsComponent для всех существующих units
+// 3. Обновить profile_signature в schema_info
+// 4. Vacuum (опционально)
+```
+
+Это additive: новая DBI создаётся, существующие данные не трогаются. `profile_signature` обновляется.
+
+### 14.2. Major migration (новая БД)
+
+Смена профиля с существенными изменениями:
+
+```cpp
+// Пример: BasicRag → AgentLongTermMemory
+auto source = MemoryStack::open("old.mdbx", MemoryProfiles::BasicRag());
+auto target = MemoryStack::open("new.mdbx", MemoryProfiles::AgentLongTermMemory());
+for (auto& unit : source.units().scan_all()) {
+    WriteRequest req;
+    req.envelope = unit.envelope();
+    req.components = derive_components_from_envelope(unit.envelope());
+    req.projections = generate_default_projections(unit);
+    target.write_unit(req);
+}
+```
+
+Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
+
+### 14.3. Schema versioning
+
+`envelope_schema_version` и `component_schema_versions[]` хранятся в `schema_info`. При `open_existing()`:
+
+- Версия совпадает → нормальный запуск.
+- Версия выше (target старее source) → ошибка "downgrade not supported".
+- Версия ниже (target новее source) → автоматическая additive migration (если поддержана) или ошибка "migration script required".
+
+## 15. Cross-References
+
+Этот документ связан с:
+
+- `knowledge-base-roadmap.md` — детальная спецификация envelope + retrieval flow (будет переписан после ADR).
+- `knowledge-units-roadmap.md` — per-kind payload-компоненты (будет переименован в `knowledge-payloads-roadmap.md`).
+- `lexical-search-roadmap.md` — BM25F по projections.
+- `optimization-roadmap.md` — vector/binary storage, scope-aware secondary indexes.
+- `mdbx-containers-extension-tz.md` — TypeDiscriminatedTable для components, MultiTableWriter.
+- `architecture.md` — 4-слойная модель + Maturity Levels.
+- `guides/mdbx-stack-boundaries.md` — границы ответственности между agent-memory-cpp и external/mdbx-containers/.
+- `policies-roadmap.md` (future) — детальная спецификация DecayPolicy/WritePolicy/SpeakerScopePolicy с диапазонами и defaults.
+- `compaction-roadmap.md` (future) — CompactionWorker, job types, handoff structure.
+- `runtime-services-roadmap.md` (future) — PromptCache, AsyncIndexer, WriteGate.
+- `cli-roadmap.md` (future) — agent-memory-cli target.
+
+## 16. Recommended Implementation Order
+
+Шаги упорядочены по зависимостям. Каждый шаг — отдельный PR или под-PR.
+
+### Шаг 1: Envelope + базовые DBI
+
+- Создать `KnowledgeUnitEnvelope` struct (13 полей, lean).
+- MDBX DBI: `knowledge_units`, `knowledge_units_by_kind`, `generation_index`, `schema_info`.
+- Сериализация envelope через flat binary (msgpack или custom).
+- `MemoryStack::open()` для пустой spec (только envelope + lexical).
+- Lifecycle FSM с 5 состояниями.
+
+### Шаг 2: Scope-aware keys + metadata filters
+
+- Все DBI keys начинаются с `scope_id`.
+- `ScopeId` type (variant<"global", UserScope, AgentScope, ProjectScope, AppScope>).
+- `metadata_filters` DBI через `ReverseIndexTable`.
+- Profile validation: scope_id обязателен для всех write.
+
+### Шаг 3: LexicalBm25F capability
+
+- BM25F baseline (k1=1.5, b=0.75, Okapi IDF).
+- DBI: `inverted_token_to_unit`, `field_to_postings`, `lexical_*_stats`.
+- Tokenization (UTF-8 canonical, code-aware).
+- `ILexicalIndex` интерфейс.
+- BasicRagStack готов.
+
+### Шаг 4: DenseVectors capability + binary signature
+
+- `IDenseIndex` интерфейс.
+- DBI: `embedding_vectors`, `embedding_meta` (минимум — embedding_meta опционально).
+- ExactVectorIndex baseline.
+- Binary signature index (optimization-roadmap).
+- BasicRagStack расширен.
+
+### Шаг 5: Component infrastructure
+
+- `TypeDiscriminatedTable` в mdbx-containers (если ещё не реализован).
+- `ComponentStore` (CRUD с tag-prefix).
+- Компоненты: UsageStatsComponent, SpeakerComponent, TemporalComponent, EmbeddingMetaComponent, CompactionMetaComponent.
+- DBI: `unit_components` (TypeDiscriminatedTable).
+- Валидация инвариантов (Decay требует UsageStats и т.д.).
+
+### Шаг 6: Payload components per kind
+
+- QAPayload + QALookup slot.
+- FactPayload.
+- ConversationEpisodePayload.
+- CompiledArticlePayload.
+- ChunkPayload (по умолчанию для Chunk kind).
+- per-kind DBI: `qa_payloads`, `fact_payloads`, и т.д.
+
+### Шаг 7: SearchProjections
+
+- `SearchProjection` struct.
+- DBI: `unit_projections` (scope, unit, kind, revision).
+- Generation rules per kind: Original, QAQuestion, QAAnswer, Summary.
+- BM25F индексирует projections (projection_kind в posting keys).
+
+### Шаг 8: Graph + Temporal indexes
+
+- `GraphEdgePayload` struct + EdgeKind enum.
+- DBI: `graph_edges_by_src`, `graph_edges_by_dst`.
+- Bounded graph expansion (max_depth, max_edges, budget_tokens).
+- TemporalComponent + DBI: `temporal_event_index`, `temporal_unit_index`.
+- `floating subgraph` как retrieval view.
+
+### Шаг 9: Speaker + Session indexes
+
+- SpeakerComponent обязательный для SpeakerChatStack.
+- DBI: `speaker_to_units`, `session_to_units`.
+- SpeakerScopePolicy в RetrievalPlan.
+
+### Шаг 10: Decay + Anti-loop
+
+- DecayPolicy в MemoryProfileSpec.
+- DecayAwareRetriever: применяет decay_score = base + use_boost * log1p(use_count) - elapsed_ms / half_life_ms.
+- AntiLoopCooldown фильтр: пропускает units с cooldown_until_ms > now_ms.
+- self_echo_suppression для подсвинка (SpeakerId == agent_self_id).
+
+### Шаг 11: WritePolicy + WriteGate
+
+- WriteGate применяет WritePolicy: trigger, importance_threshold, dedupe_distance_threshold.
+- Flush policies (OnTimer, OnSizeThreshold, OnImportance).
+- Bulk write с atomic enqueue compaction jobs.
+
+### Шаг 12: All default MemoryStacks
+
+- Готовые спецификации: BasicRag, QAKnowledgeBase, AgentLongTermMemory, SpeakerAwareChat, CompiledWiki, TemporalFactStore, FullResearchMemory.
+- Round-trip тесты для каждой (open → write 100 units → close → reopen → verify).
+
+### Шаг 13: Retrieval Plan + Hybrid + RRF
+
+- HybridRetriever orchestrator.
+- RRF fusion с дефолтными весами per stack.
+- ContextBudget per-block + trim order.
+- IntentRouter (lightweight non-LLM).
+- IRetrievalTrace с метриками.
+
+### Шаг 14: CompactionWorker (M1 минимум)
+
+- ICompactionJob interface.
+- Job types: DecayJob, DedupeJob, ArchiveColdJob.
+- TaskQueue из mdbx-containers TZ.
+- CompactionHandoff structure.
+- Async worker thread.
+
+### Шаг 15: Eval pipeline (M1 baseline)
+
+- Golden dataset: ≥50 test cases, ≥3 интента.
+- RetrievalMetrics: Recall@K, MRR, NDCG@K, ContextPrecision, NoAnswerAccuracy, CitationFidelity, Latency p50/p95/p99.
+- HybridLiftTarget: Recall@10(hybrid) ≥ 1.20 * Recall@10(BM25-only).
+
+### Шаг 16: CLI tool (M2, отложен)
+
+- `agent-memory-cli` target.
+- Команды: inspect, stats, check, vacuum, reindex, profile-info, profile-migrate, dump-unit, dump-components, run-eval.
+
+## 17. Open Issues
+
+Вопросы, требующие решения до или во время реализации.
+
+### 17.1. Migration test fixtures
+
+- Где хранить миграционные тестовые базы? В `tests/fixtures/` или отдельный `tests/migration/`?
+- Как покрывать round-trip миграцию `basic_rag → agent_ltm` без ручного труда?
+
+### 17.2. Profile drift detection
+
+- Что делать, если `schema_info.profile_signature` не совпадает с текущим `spec`?
+- Стратегии: error / auto-migrate / warn-and-continue?
+- Решение: по умолчанию error, для additive capabilities — auto-migrate, для breaking — error + migration tool.
+
+### 17.3. Embedding metadata size
+
+- EmbeddingMeta хранит model_id + version. Сколько версий держать онлайн?
+- Per unit может быть 5+ embedding versions (при активной migration).
+- Решение: CompactionJob удаляет versions старше N дней при отсутствии ссылок.
+
+### 17.4. Search projection regeneration
+
+- Когда SearchProjection регенерируется? На write? На compaction tick? По требованию?
+- Решение: на write (для active revision), если projection kind включён в WriteRequest. Старые revisions остаются до compaction purge.
+
+### 17.5. Cyrillic morphology
+
+- Tokenization backend для русского языка: optional или required?
+- Внешняя зависимость (например, ICU) vs встроенный лёгкий стеммер?
+- Решение: required в M1, optional backend через `AGENT_MEMORY_ENABLE_MORPHOLOGY` CMake flag.
+
+### 17.6. CompactionWorker thread safety
+
+- Один worker на MemoryStack или пул?
+- Синхронизация с on-write operations (MultiTableWriter)?
+- Решение: один worker thread, write/compaction используют одну транзакцию через MultiTableWriter (compaction jobs ждут в очереди).
+
+### 17.7. PromptCache scope
+
+- PromptCache хранит по prompt_prefix_hash → response. Должен ли он быть scope-aware?
+- Решение: да, scope_id входит в cache_key, чтобы разные пользователи не видели чужие responses.
+
+### 17.8. Embedding model migration
+
+- EmbeddingRecomputeJob требует source embeddings + target model. Где взять target model?
+- Решение: target model регистрируется в EmbeddingModelRegistry (config-level), worker читает оттуда.
+
+### 17.9. Multi-process / multi-host
+
+- Если два процесса открывают один MDBX env (read-only) — поддерживается ли?
+- Решение: MDBX поддерживает multi-process; MemoryStack open в shared mode только для read.
+
+### 17.10. AsyncIndexer batching
+
+- AsyncIndexer батчит inserts в lexical/vector индексы. Где граница batch size?
+- Решение: configurable, default 1000 units или 50 MB, whichever first.
+
+## 18. Glossary
+
+- **Envelope** — минимальный lookup-critical набор полей KnowledgeUnit (id, kind, scope, primary_text, display_text, lifecycle, sources, timestamps, priority_weight).
+- **Component** — optional typed payload, прикреплённый к unit (operational или per-kind).
+- **SearchProjection** — отдельное текстовое представление unit для конкретного retrieval method.
+- **MemoryProfileSpec** — декларативная спецификация capabilities + policies.
+- **MemoryStack** — runtime-объект, открытый через `MemoryStack::open(path, spec)`.
+- **ScopeId** — namespace identifier для multi-tenancy.
+- **Profile** — см. MemoryProfileSpec.
+- **Stack** — см. MemoryStack.
+- **Maturity Level** — M0/M1/M2, определяет ship-it критерии и scope функциональности.
+- **Generation index** — stale filter: (kind, generation) → unit_id, для отсева устаревших revisions.
+- **Profile signature** — hash от MemoryProfileSpec, используется для drift detection.
+- **ADR** — Architecture Decision Record, раздел в этом документе с фиксированным решением.
