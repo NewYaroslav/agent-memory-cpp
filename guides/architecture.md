@@ -474,6 +474,24 @@ semantics, and the schema versioning rules are tracked in
 "Domain Stores", "Graph Storage", "Temporal Index", and "Metadata
 Filters".
 
+Optimization strategy — Eigen vs SIMD разделение:
+
+M0/M1: std-only baseline, popcount64 intrinsics для Hamming. Eigen НЕ обязателен.
+M2: optional Eigen adapter через `AGENT_MEMORY_ENABLE_EIGEN`, AutoencoderBinarySignatureEncoder inference.
+M2/M3: SIMD HammingTopK kernel с AVX2/AVX-512 dispatch (после benchmark).
+Never first: hand-written AVX matrix-vector encoder.
+
+Hot path: Hamming scan (real bottleneck), не encoder (1 matrix-vector per query).
+Детальная спецификация: см. [`guides/optimization-roadmap.md`](optimization-roadmap.md) → "Eigen и SIMD стратегия".
+
+CMake flags (planned):
+- `AGENT_MEMORY_ENABLE_EIGEN` (default OFF)
+- `AGENT_MEMORY_ENABLE_ZSTD` (default OFF)
+- `AGENT_MEMORY_HAS_POPCNT` (default ON)
+- `AGENT_MEMORY_HAS_AVX2` (default OFF)
+- `AGENT_MEMORY_HAS_AVX512` (default OFF)
+- `AGENT_MEMORY_HAS_NEON` (default OFF)
+
 ## References
 
 - [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) —

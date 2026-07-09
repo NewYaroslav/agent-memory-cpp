@@ -77,6 +77,148 @@ AGENT_MEMORY_HAS_EIGEN
   other dependency-free contracts.
 - Benchmark Eigen paths against the std-only baseline before making them the
   default for any algorithm.
+- Подробнее см. "Eigen и SIMD стратегия" секция ниже для maturity breakdown,
+  hot path analysis, SIMD dispatch и HammingTopK kernel.
+
+### Eigen и SIMD стратегия
+
+Разделение ответственности:
+
+- Eigen: matrix-vector (encoder inference), batch cosine/dot, dense math.
+- Custom SIMD: popcount, Hamming scan, бинарные hot-path kernels.
+
+Hot path analysis (ВАЖНО):
+
+- Encoder inference: 1 matrix-vector per query (~98,304 FLOPs для 768×128).
+- Hamming scan: thousands of XOR+popcount per query (128-bit × N candidates).
+- Реальный bottleneck — Hamming, НЕ encoder.
+
+Maturity breakdown:
+
+- M0/M1: std-only baseline (float math через `std::vector` + scalar loops);
+  `popcount64` intrinsics для Hamming (cross-platform wrapper); Eigen
+  НЕ обязателен. Optional `AGENT_MEMORY_ENABLE_EIGEN` только для
+  экспериментов.
+- M2: optional Eigen adapter через `AGENT_MEMORY_ENABLE_EIGEN`;
+  `AutoencoderBinarySignatureEncoder` inference on Eigen (matmul + sign);
+  decoder support (если `ApproximateVector` mode); training pipeline — Python,
+  C++ только inference.
+- M2/M3: specialized SIMD `HammingTopK` kernel (после benchmark).
+  - AVX2 (4-way parallelism): `_mm256_xor_si256` + `_mm256_popcnt_u64`.
+  - AVX-512 (8-way parallelism): `_mm512_xor_si64` + `_mm512_popcnt_epi64`.
+  - Runtime CPU detection (не compile-time).
+- NEVER first: hand-written AVX matrix-vector encoder (complexity vs benefit
+  плохой).
+
+CMake flags:
+
+```cmake
+# Optional dependencies.
+option(AGENT_MEMORY_ENABLE_EIGEN "Enable Eigen for dense vector math" OFF)
+option(AGENT_MEMORY_ENABLE_ZSTD  "Enable Zstd compression"           OFF)
+
+# CPU feature detection (prefer runtime over compile-time).
+option(AGENT_MEMORY_HAS_POPCNT   "Has popcnt instruction" ON)
+option(AGENT_MEMORY_HAS_AVX2     "Has AVX2"               OFF)
+option(AGENT_MEMORY_HAS_AVX512   "Has AVX-512"            OFF)
+option(AGENT_MEMORY_HAS_NEON     "Has ARM NEON"           OFF)
+```
+
+Рекомендация: runtime detection через `cpu_features` library (Google) или
+platform intrinsics. Compile-time опции — для special builds.
+
+SIMD abstraction layer:
+
+```cpp
+namespace simd {
+
+// Cross-platform popcount.
+inline uint32_t popcount64(uint64_t x) {
+#if defined(_MSC_VER)
+    return static_cast<uint32_t>(__popcnt64(x));
+#elif defined(__GNUC__) || defined(__clang__)
+    return static_cast<uint32_t>(__builtin_popcountll(x));
+#else
+    return fallback_popcount64_sw_ar(x);
+#endif
+}
+
+uint32_t hamming_distance_u64(
+    const uint64_t* a,
+    const uint64_t* b,
+    size_t word_count);
+
+}  // namespace simd
+```
+
+HammingTopK kernel (для после M2 benchmark):
+
+- Алгоритм: bucket-based prefiltering через `binary_bucket_index`
+  (O(log N)); per-bucket — linear scan с Hamming distance; top-K maintained
+  в binary heap size K.
+- AVX2 ускорение (4-way parallelism): параллельно XOR 4× `uint64_t` через
+  `_mm256_xor_si256`; параллельно popcount через `_mm256_popcnt_u64`
+  (AVX2 + POPCNT); 4-8x speedup vs scalar loop на 128/256-bit signatures.
+- AVX-512 ускорение (8-way parallelism): параллельно XOR 8× `uint64_t`
+  через `_mm512_xor_si64`; VPOPCNTDQ через `_mm512_popcnt_epi64`;
+  8-16x speedup на 256-bit signatures.
+- Реализация: runtime CPU detection в `MemoryStack::open`; dispatch table
+  scalar / SSE4.2 / AVX2 / AVX-512; benchmark-driven выбор (не
+  преждевременная оптимизация).
+
+Eigen encoder memory sizes (per encoder registry, НЕ per unit):
+
+- `W_encoder`: `[bit_count × input_dim]`:
+  - `bit_count=128, input_dim=768`:   384 KB.
+  - `bit_count=256, input_dim=768`:   768 KB.
+  - `bit_count=128, input_dim=1024`:  512 KB.
+- `b_encoder`: `[bit_count]`:
+  - 128-bit: 512 B.
+  - 256-bit: 1 KB.
+- Decoder (optional, для `ApproximateVector` mode):
+  - `W_decoder`: `[input_dim × bit_count]` — same size as `W_encoder`.
+  - `b_decoder`: `[input_dim]` — 3-4 KB.
+- Итого encoder + decoder memory:
+  - 128-bit + decoder: ~770 KB per encoder.
+  - 256-bit + decoder: ~1.5 MB per encoder.
+- Per encoder registry (НЕ per unit): один экземпляр на `MemoryStack`.
+
+Eigen interface pattern:
+
+```cpp
+// В core — interface только.
+class IAutoencoderEncoder {
+public:
+    virtual ~IAutoencoderEncoder() = default;
+    virtual BinarySignature encode(const Embedding& x) const = 0;
+};
+
+// Optional Eigen adapter (только если AGENT_MEMORY_ENABLE_EIGEN).
+#ifdef AGENT_MEMORY_ENABLE_EIGEN
+class EigenAutoencoderEncoder final : public IAutoencoderEncoder {
+    Eigen::MatrixXf m_W_encoder;  // [bit_count × input_dim]
+    Eigen::VectorXf m_b_encoder;
+public:
+    BinarySignature encode(const Embedding& x) const override {
+        Eigen::VectorXf z = m_W_encoder * x + m_b_encoder;
+        BinarySignature sig(m_bit_count);
+        for (uint32_t i = 0; i < m_bit_count; ++i) {
+            sig.set_bit(i, z[i] > 0.0f);
+        }
+        return sig;
+    }
+};
+#endif
+```
+
+Training pipeline (НЕ в core):
+
+- Core library (C++): inference encoder (encode only); decoder (optional,
+  для `ApproximateVector` mode).
+- Tools/experiments (Python recommended): trainer (autoencoder); dataset
+  preparation (sample embeddings из corpus); weight export в `.bse` file.
+- НЕ core: backward pass, optimizer, batching, shuffling — это отдельный
+  tool, не часть библиотеки.
 
 ### Compression Contracts
 
@@ -1402,6 +1544,37 @@ storage estimates, quality targets и per-stack defaults).
       из §"Quality Targets Per Mode" — experimental thresholds, не
       production.
 
+### Steps 26-28: SIMD abstraction и HammingTopK kernel (M2 → M3)
+
+26. **Step 26 (M2): SIMD abstraction layer.**
+    - `simd::popcount64()` — cross-platform wrapper (MSVC / GCC / Clang /
+      software fallback).
+    - `simd::hamming_distance_u64()` — scalar baseline + AVX2 / AVX-512
+      dispatch (через runtime detection).
+    - CPU feature detection через `cpu_features` library (Google) или
+      platform intrinsics (`__cpuid` / `getauxval`).
+    - Покрытие тестами: cross-platform popcount identity, Hamming distance
+      reference vector, dispatch path selection per detected CPU.
+
+27. **Step 27 (M2/M3): HammingTopK kernel.**
+    - Bucket prefilter → linear Hamming scan → top-K binary heap.
+    - AVX2 dispatch: 4-way XOR + popcount, 4-8x speedup vs scalar.
+    - AVX-512 dispatch: 8-way XOR + popcount, 8-16x speedup.
+    - Runtime CPU detection в `MemoryStack::open` (НЕ compile-time
+      dispatch).
+    - Benchmark-driven выбор kernel (НЕ преждевременная оптимизация);
+      см. §"Benchmark Tasks" выше.
+
+28. **Step 28 (M3): Eigen encoder optional adapter.**
+    - `IAutoencoderEncoder` interface в core (dependency-free contract).
+    - `EigenAutoencoderEncoder` implementation guarded by
+      `AGENT_MEMORY_ENABLE_EIGEN` (default OFF).
+    - `IAutoencoderDecoder` interface (optional, для `ApproximateVector`
+      mode).
+    - Decoder inference на Eigen (если `ApproximateVector` mode).
+    - Сравнительный benchmark Eigen vs std-only baseline; targets из
+      §"Per-Bit-Size Recall Targets" остаются обязательными.
+
 ## Non-Goals For The First Optimization Pass
 
 - Do not replace `std::vector<float>` in `Embedding`.
@@ -1450,3 +1623,18 @@ storage estimates, quality targets и per-stack defaults).
   ApproximateVector), `DenseIndexConfig` shape, storage estimates, quality
   targets, per-stack defaults, multi-mode migration flow и
   `RetrievalPlan::dense_index_mode_override`.
+- Eigen library: optional dependency для dense vector math
+  (`AGENT_MEMORY_ENABLE_EIGEN`, default OFF). Используется за
+  `IAutoencoderEncoder` / `IAutoencoderDecoder` interface boundary;
+  см. §"Eigen и SIMD стратегия" выше для maturity breakdown и hot path
+  analysis.
+- `cpu_features` library (Google): cross-platform CPU feature detection
+  (POPCNT, SSE4.2, AVX2, AVX-512, NEON). Рекомендован для runtime SIMD
+  dispatch в `HammingTopK` kernel (Step 27).
+- Intel Intrinsics Guide: AVX2/AVX-512 POPCNT intrinsics
+  (`_mm256_popcnt_u64`, `_mm512_popcnt_epi64`) — reference для Hamming
+  scan kernel implementation.
+- §"Eigen и SIMD стратегия" (this document) — maturity breakdown, hot
+  path analysis, CMake flags, `simd::` abstraction layer, `HammingTopK`
+  kernel design, Eigen encoder memory sizes, `IAutoencoderEncoder`
+  interface pattern, training pipeline boundaries.
