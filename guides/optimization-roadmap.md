@@ -162,6 +162,17 @@ enum class VectorEncoding {
 };
 ```
 
+Binary signature encoder ID taxonomy (parallel enum для binary encoders,
+используется в `BinarySignatureInfo` и `EncoderRegistry`):
+
+```cpp
+enum class BinarySignatureEncoderId {
+    RandomHyperplaneLSH = 0,
+    AutoencoderBinarizer = 1,
+    HaarLikeExperimental = 2,  // reserved
+};
+```
+
 Possible follow-up tasks:
 
 - Add `EncodedVector` value types for persisted or index-specific encodings.
@@ -408,6 +419,70 @@ bit_i = sign(dot(embedding, random_hyperplane_i))
 - Reject or rebuild indexes when model id, projection kind, dimension,
   encoder id, seed, or signature bit count does not match.
 
+### Learned Autoencoder Binary Encoder (M2 experimental)
+
+Reference: arXiv 1803.09065 — "Near-lossless Binarization of Word Embeddings".
+
+Принцип: pretrained float embedding → обученный encoder W → binary code →
+optional decoder W^T → reconstruction.
+
+Properties (per arXiv 1803.09065):
+
+- ~97% size reduction vs float.
+- ~2% accuracy loss.
+- ~30x speedup на top-k retrieval benchmark.
+
+Training pipeline (offline, Python):
+
+1. Sample N (10k-1M) embeddings из целевого корпуса.
+2. Train autoencoder с objective:
+   `minimize ||x - decoder(encoder(x))||^2 + decorrelation_penalty`.
+3. Export matrix W (encoder) и W^T (decoder, optional) в `.bse` файл.
+
+C++ inference (hot path):
+
+```text
+bit_i = sign(dot(W_i, embedding))
+```
+
+Один matmul `[bit_count × input_dim] × [input_dim]` + `sign()`.
+
+```cpp
+BinarySignature encode(const Embedding& x) const {
+    BinarySignature sig(m_bit_count);
+    for (uint32_t i = 0; i < m_bit_count; ++i) {
+        float dot = 0.0f;
+        for (uint32_t j = 0; j < m_input_dim; ++j) {
+            dot += m_W[i * m_input_dim + j] * x[j];
+        }
+        sig.set_bit(i, dot > 0.0f);  // sign() function
+    }
+    return sig;
+}
+```
+
+Storage tradeoff:
+
+- M0/M1 default: float + binary (binary только candidate filter, float для
+  exact rerank).
+- M2 experimental: optional binary-only mode (без float, decoder
+  реконструирует approximate float).
+
+Bit sizes (CPU register alignment):
+
+- 32 bit  — эксперимент / super-fast coarse filter (НЕ default).
+- 64 bit  — default для BasicRag, минимальный практический.
+- 128 bit — default для AgentLTM, нормальный candidate filter.
+- 256 bit — quality-oriented для CompiledWiki.
+
+Аргументация: 64/128/256 бит выровнены по CPU register sizes (`uint64_t`,
+SSE, AVX); 32 бит не alignment-friendly для popcount/Hamming через
+`__builtin_popcount`.
+
+Training data dependency: autoencoder обучен на sample embeddings из
+конкретного корпуса. Если корпус сильно меняется (новые домены) — encoder
+нужно ретренировать. Operational consideration, не bug.
+
 ### Experimental Encoder
 
 - Add a Haar-like encoder only after the random-hyperplane baseline:
@@ -536,6 +611,97 @@ query text
 ```
 
 Float rerank remains mandatory for quality-sensitive retrieval.
+
+### Encoder Registry и Versioning
+
+ID taxonomy:
+
+```text
+random_hyperplane_lsh      // baseline, обучение не нужно
+autoencoder_binarizer      // обученный autoencoder поверх float embeddings
+haar_like_experimental     // reserved для future экспериментов
+```
+
+`IBinarySignatureEncoder` interface:
+
+```cpp
+class IBinarySignatureEncoder {
+public:
+    virtual ~IBinarySignatureEncoder() = default;
+
+    virtual BinarySignature encode(const Embedding& x) const = 0;
+    virtual std::optional<Embedding> decode(const BinarySignature& s) const {
+        return std::nullopt;
+    }
+    virtual std::string encoder_id() const = 0;  // "random_hyperplane_lsh_v1",
+                                                // "autoencoder_binarizer_v1"
+    virtual uint32_t bit_count() const = 0;
+};
+```
+
+`BinarySignatureEncoderRegistry`:
+
+```cpp
+class BinarySignatureEncoderRegistry {
+public:
+    void register_encoder(
+        const std::string& encoder_id,                  // "autoencoder_binarizer_v1"
+        uint32_t bit_count,                             // 128
+        uint32_t input_dim,                             // 768 (для bge-m3 и т.п.)
+        const std::vector<float>& weights_W,            // matrix [bit_count x input_dim]
+        std::optional<std::vector<float>> weights_WT_decoder,  // optional decoder
+        const std::string& source_description);          // "trained on 100k embeddings 2026-07-10"
+
+    std::shared_ptr<IBinarySignatureEncoder> create(
+        const std::string& encoder_id) const;
+};
+```
+
+File format (offline training exports this):
+
+```text
+BinarySignatureEncoderFile (.bse):
+  magic:         "BSE1" (4 bytes)
+  version:       uint32 (= 1)
+  bit_count:     uint32
+  input_dim:     uint32
+  has_decoder:   uint8 (0 or 1)
+  weights_W:     float[bit_count x input_dim]    # ~768 KB для 128-bit × 768-dim
+  weights_WT:    float[input_dim x bit_count]    # optional decoder
+```
+
+Loaded через `MemoryStack::open(...)` — registry читает `.bse` файлы из
+stack config dir.
+
+Per-stack default encoder (см. §11 Memory Stacks Integration, рекомендация):
+
+```text
+BasicRag:          random_hyperplane_lsh_64bit
+QAKnowledgeBase:   random_hyperplane_lsh_64bit
+AgentLTM:          autoencoder_binarizer_128bit (если обучен,
+                   иначе random_hyperplane_128bit)
+SpeakerAwareChat:  random_hyperplane_lsh_64bit (chat keyword-heavy,
+                   не semantic-heavy)
+CompiledWiki:      autoencoder_binarizer_256bit (quality-oriented)
+TemporalFactStore: random_hyperplane_lsh_64bit
+FullResearch:      autoencoder_binarizer_128bit
+```
+
+Per (unit, encoder) signatures (для migration):
+
+```text
+binary_signature_by_unit
+    key = (scope_id, UnitId, encoder_id, model_version) → BinarySignature
+    [Sparse — только если encoder был запущен на этом unit]
+```
+
+Multi-encoder migration flow:
+
+1. Phase 1: write-new (новый encoder пишется рядом со старым).
+2. Phase 2: read-both (retrieval берёт max candidates из обоих).
+3. Phase 3: bg-reindex (background job переписывает signatures под новый
+   encoder).
+4. Phase 4: compaction-delete-old (compaction удаляет старые signatures).
 
 ## Secondary & Reverse Indexes
 
@@ -795,6 +961,35 @@ latency below brute force for large enough datasets
 storage overhead acceptable for embedded use
 ```
 
+### Per-Bit-Size Recall Targets
+
+Targets для binary encoder variants (значения — `Recall@10(binary_only)`,
+нормализованное против `Recall@10(float_baseline)`):
+
+```text
+autoencoder_binarizer_128bit:
+  Recall@10(binary_only) >= 0.95 x Recall@10(float_baseline)
+  candidate_count: ~1.5x float top-K при Recall@10 = 0.95
+
+autoencoder_binarizer_64bit:
+  Recall@10(binary_only) >= 0.90 x Recall@10(float_baseline)
+
+random_hyperplane_lsh_64bit (baseline):
+  Recall@10(binary_only) >= 0.85 x Recall@10(float_baseline)
+
+random_hyperplane_lsh_128bit (baseline):
+  Recall@10(binary_only) >= 0.90 x Recall@10(float_baseline)
+```
+
+Метрики для сравнения encoder'ов:
+
+```text
+- Recall@1/5/10/50 binary vs float ground-truth
+- candidate count (size of bucket)
+- latency p50/p95 (encoder + bucket lookup + rerank)
+- index size (binary codes только vs binary + float)
+```
+
 ### Matrix
 
 Benchmark:
@@ -945,6 +1140,19 @@ add projection-aware benchmarks.
     BM25-only) is asserted, including the projection-aware and
     cross-model slices.
 
+### Step 22: Encoder Registry + Autoencoder Binary Encoder (M2 experimental)
+
+22. `BinarySignatureEncoderRegistry` с `.bse` file loading.
+    - `AutoencoderBinarySignatureEncoder` implementation (matmul + sign).
+    - Multi-encoder per `(unit, encoder_id)` storage с sparse
+      `binary_signature_by_unit` table.
+    - Migration flow (write-new → read-both → bg-reindex → delete-old).
+    - Per-stack default encoder selection (см. §"Encoder Registry и Versioning").
+    - Evaluation harness: autoencoder vs random-hyperplane, per bit size
+      (32/64/128/256), с recall@1/5/10/50 targets из §"Per-Bit-Size Recall
+      Targets".
+    - Stack config dir loading через `MemoryStack::open(...)`.
+
 ## Non-Goals For The First Optimization Pass
 
 - Do not replace `std::vector<float>` in `Embedding`.
@@ -981,3 +1189,6 @@ add projection-aware benchmarks.
 - [`architecture.md`](architecture.md) — 4-layer model and Maturity Levels.
 - [`cli-roadmap.md`](cli-roadmap.md) (future) — `agent-memory-cli` target,
   embedding-migration telemetry inspection.
+- arXiv 1803.09065: "Near-lossless Binarization of Word Embeddings".
+  <https://arxiv.org/abs/1803.09065>
+- ai-agent-playbook: related materials on embedding binarization patterns.
