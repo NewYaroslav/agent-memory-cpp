@@ -1018,10 +1018,10 @@ double apply_filters(
     uint64_t now_ms,
     const DecayPolicy& policy) {
     if (usage.cooldown_until_ms > now_ms) {
-        return score * policy.cooldown_factor;        // default 0.1
+        score *= policy.cooldown_factor;        // default 0.1
     }
     if (speaker && speaker->speaker_id == agent_self_id) {
-        return score * policy.self_echo_suppression;  // default 0.3
+        score *= policy.self_echo_suppression;  // default 0.3
     }
     return score;
 }
