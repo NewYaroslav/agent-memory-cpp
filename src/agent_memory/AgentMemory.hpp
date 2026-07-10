@@ -5,17 +5,17 @@
 /// \file AgentMemory.hpp
 /// \brief Public aggregate include for Agent Memory C++.
 
-#include <agent_memory/chat/Chat.hpp>
-#include <agent_memory/core/Core.hpp>
-#include <agent_memory/domain/Domain.hpp>
-#include <agent_memory/embedding/EmbeddingApi.hpp>
-#include <agent_memory/eval/Eval.hpp>
-#include <agent_memory/facts/Facts.hpp>
-#include <agent_memory/index/Index.hpp>
-#include <agent_memory/ingestion/Ingestion.hpp>
-#include <agent_memory/lexical/LexicalApi.hpp>
-#include <agent_memory/memory/Memory.hpp>
-#include <agent_memory/retrieval/RetrievalApi.hpp>
-#include <agent_memory/storage/Storage.hpp>
+#include <agent_memory/core.hpp>
+#include <agent_memory/domain.hpp>
+#include <agent_memory/embedding.hpp>
+#include <agent_memory/eval.hpp>
+#include <agent_memory/index.hpp>
+#include <agent_memory/lexical.hpp>
+#include <agent_memory/memory.hpp>
+#include <agent_memory/facts.hpp>
+#include <agent_memory/storage.hpp>
+#include <agent_memory/ingestion.hpp>
+#include <agent_memory/retrieval.hpp>
+#include <agent_memory/chat.hpp>
 
 #endif
