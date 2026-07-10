@@ -15,6 +15,7 @@
 #include "domain/SourceKind.hpp"
 #include "embedding/Embedding.hpp"
 #include "embedding/IEmbedder.hpp"
+#include "eval/Evaluation.hpp"
 #include "facts/Fact.hpp"
 #include "ingestion/ResourceIndexer.hpp"
 #include "index/ExactVectorIndex.hpp"

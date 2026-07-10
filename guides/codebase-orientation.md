@@ -32,6 +32,9 @@ src/agent_memory/
         Embedding.cpp
         IEmbedder.hpp
         IEmbedder.cpp
+    eval/
+        Evaluation.hpp
+        Evaluation.cpp
     ingestion/
         ResourceIndexer.hpp
         ResourceIndexer.cpp
@@ -82,6 +85,8 @@ tests/
         resource_manifest_test.cpp
     embedding/
         embedding_contracts_test.cpp
+    eval/
+        evaluation_contracts_test.cpp
     index/
         vector_index_contracts_test.cpp
         exact_vector_index_test.cpp
@@ -256,12 +261,28 @@ backend-specific details must stay behind adapter boundaries.
 - Embedding contracts: `src/agent_memory/embedding/`.
 - Lexical search contracts and implementations: `src/agent_memory/lexical/`.
 - Retrieval/ranking behavior: `src/agent_memory/retrieval/`.
+- Retrieval evaluation contracts: `src/agent_memory/eval/`.
 - Resource ownership and targeted reindexing: start with domain/storage
   contracts, then add infrastructure adapters.
 - Memory policies and composition: `src/agent_memory/memory/`.
 - Context builders and formatting: `src/agent_memory/context/`.
 
 Create a new area only when the PR introduces real code for that area.
+
+## Evaluation Contracts
+
+Retrieval evaluation value types and metric helpers live in
+`src/agent_memory/eval/`:
+
+- `RetrievalEvalDataset` models a BEIR-style corpus/query/qrels dataset shape;
+- `RetrievalRun` models one retriever configuration's ordered hits and optional
+  per-query latency;
+- `evaluate_retrieval()` computes Recall@K, MRR, nDCG@K, no-answer accuracy,
+  and latency summaries.
+
+This layer intentionally does not load external datasets, invoke embedders, or
+own benchmark executables. Those belong in follow-up benchmark runner/tooling
+PRs.
 
 ## Tests And Examples
 

@@ -22,6 +22,8 @@ The repository is in the project-skeleton stage. The current code provides:
 - dependency-free vector index value types and index contract;
 - exact in-memory vector index baseline;
 - dependency-free retrieval value types and retriever contract;
+- dependency-free retrieval evaluation dataset/run value types and metric
+  helpers;
 - dependency-free resource indexer orchestration over storage, embedding, and
   vector index contracts;
 - dependency-free tokenizer value types and tokenizer contract;
@@ -77,6 +79,7 @@ src/agent_memory/
     embedding/
     index/
     retrieval/
+    eval/
     compression/
     math/
     ingestion/

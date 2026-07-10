@@ -121,6 +121,8 @@ src/agent_memory/
 |-- embedding/
 |   |-- Embedding.hpp
 |   `-- IEmbedder.hpp
+|-- eval/
+|   `-- Evaluation.hpp
 |-- ingestion/
 |   `-- ResourceIndexer.hpp
 |-- index/
@@ -222,6 +224,14 @@ Retrieval contracts stay dependency-free and describe text, embedding, or mixed
 queries with result limits and metadata filters. `IRetriever` returns ordered
 scored chunks; concrete retrieval pipelines can compose embedders, indexes, and
 document storage without leaking backend details into the public contract.
+
+## Evaluation
+
+The evaluation layer provides dependency-free dataset/run value types and metric
+helpers for retrieval experiments. It can represent BEIR-style corpus, queries,
+and relevance judgments, then compute Recall@K, MRR, nDCG@K, no-answer accuracy,
+and latency summaries for BM25, exact vector, hybrid, and future approximate
+search runs.
 
 ## Ingestion
 
