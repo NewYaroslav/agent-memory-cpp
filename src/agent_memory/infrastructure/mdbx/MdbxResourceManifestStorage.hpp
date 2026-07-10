@@ -5,7 +5,7 @@
 /// \file MdbxResourceManifestStorage.hpp
 /// \brief MDBX-backed resource manifest storage adapter.
 
-#include "../../storage/IResourceManifestStorage.hpp"
+#include <agent_memory/storage/IResourceManifestStorage.hpp>
 
 #include <memory>
 #include <optional>

@@ -112,36 +112,56 @@ external/
 `-- mdbx-containers/
 src/agent_memory/
 |-- AgentMemory.hpp
+|-- chat/
+|   |-- Chat.hpp
+|   `-- Message.hpp
+|-- core/
+|   |-- Core.hpp
+|   |-- LibraryInfo.hpp
+|   `-- LibraryInfo.cpp
 |-- domain/
+|   |-- Domain.hpp
 |   |-- Document.hpp
 |   |-- Identifiers.hpp
 |   |-- Metadata.hpp
 |   |-- Resource.hpp
 |   `-- SourceKind.hpp
 |-- embedding/
+|   |-- EmbeddingApi.hpp
 |   |-- Embedding.hpp
 |   `-- IEmbedder.hpp
 |-- eval/
+|   |-- Eval.hpp
 |   `-- Evaluation.hpp
 |-- ingestion/
+|   |-- Ingestion.hpp
 |   `-- ResourceIndexer.hpp
 |-- index/
+|   |-- Index.hpp
 |   |-- ExactVectorIndex.hpp
 |   |-- VectorIndex.hpp
 |   `-- IVectorIndex.hpp
+|-- lexical/
+|   |-- LexicalApi.hpp
+|   |-- Lexical.hpp
+|   |-- ExactLexicalIndex.hpp
+|   `-- StandardTokenizer.hpp
+|-- memory/
+|   |-- Memory.hpp
+|   `-- MemoryObject.hpp
 |-- retrieval/
+|   |-- RetrievalApi.hpp
 |   |-- Retrieval.hpp
 |   `-- IRetriever.hpp
 |-- infrastructure/
 |   `-- mdbx/
+|       |-- Mdbx.hpp
 |       |-- MdbxDocumentStorage.hpp
 |       `-- MdbxResourceManifestStorage.hpp
 |-- storage/
+|   |-- Storage.hpp
 |   |-- IDocumentStorage.hpp
 |   `-- IResourceManifestStorage.hpp
-`-- core/
-    |-- LibraryInfo.hpp
-    `-- LibraryInfo.cpp
 ```
 
 Consumers include public headers through the `agent_memory` include prefix:

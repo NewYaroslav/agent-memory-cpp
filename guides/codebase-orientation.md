@@ -14,9 +14,11 @@ external/
 src/agent_memory/
     AgentMemory.hpp
     core/
+        Core.hpp
         LibraryInfo.hpp
         LibraryInfo.cpp
     domain/
+        Domain.hpp
         Document.hpp
         Document.cpp
         Identifiers.hpp
@@ -28,17 +30,21 @@ src/agent_memory/
         SourceKind.hpp
         SourceKind.cpp
     embedding/
+        EmbeddingApi.hpp
         Embedding.hpp
         Embedding.cpp
         IEmbedder.hpp
         IEmbedder.cpp
     eval/
+        Eval.hpp
         Evaluation.hpp
         Evaluation.cpp
     ingestion/
+        Ingestion.hpp
         ResourceIndexer.hpp
         ResourceIndexer.cpp
     index/
+        Index.hpp
         ExactVectorIndex.hpp
         ExactVectorIndex.cpp
         VectorIndex.hpp
@@ -46,6 +52,7 @@ src/agent_memory/
         IVectorIndex.hpp
         IVectorIndex.cpp
     lexical/
+        LexicalApi.hpp
         Tokenizer.hpp
         Tokenizer.cpp
         Lexical.hpp
@@ -62,18 +69,25 @@ src/agent_memory/
         ITokenizer.cpp
         StandardTokenizer.hpp
         StandardTokenizer.cpp
+    memory/
+        Memory.hpp
+        MemoryObject.hpp
+        MemoryObject.cpp
     retrieval/
+        RetrievalApi.hpp
         Retrieval.hpp
         Retrieval.cpp
         IRetriever.hpp
         IRetriever.cpp
     infrastructure/
         mdbx/
+            Mdbx.hpp
             MdbxDocumentStorage.hpp
             MdbxDocumentStorage.cpp
             MdbxResourceManifestStorage.hpp
             MdbxResourceManifestStorage.cpp
     storage/
+        Storage.hpp
         IDocumentStorage.hpp
         IDocumentStorage.cpp
         IResourceManifestStorage.hpp

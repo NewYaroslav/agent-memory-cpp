@@ -5,8 +5,7 @@
 /// \file Evaluation.hpp
 /// \brief Dependency-free retrieval evaluation value types and metrics.
 
-#include "../domain/Metadata.hpp"
-#include "../domain/MetadataFilter.hpp"
+#include <agent_memory/domain/Domain.hpp>
 
 #include <cstddef>
 #include <cstdint>

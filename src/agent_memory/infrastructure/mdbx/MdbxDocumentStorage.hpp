@@ -5,7 +5,7 @@
 /// \file MdbxDocumentStorage.hpp
 /// \brief MDBX-backed document storage adapter.
 
-#include "../../storage/IDocumentStorage.hpp"
+#include <agent_memory/storage/IDocumentStorage.hpp>
 
 #include <memory>
 #include <optional>

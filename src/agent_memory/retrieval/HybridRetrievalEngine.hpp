@@ -16,10 +16,10 @@
 /// identity, so the engine is observably equivalent to calling the
 /// underlying ILexicalIndex::search().
 
-#include "../lexical/ILexicalIndex.hpp"
-#include "../lexical/IQueryAnalyzer.hpp"
-#include "../lexical/IReranker.hpp"
-#include "IRetrievalEngine.hpp"
+#include <agent_memory/lexical/ILexicalIndex.hpp>
+#include <agent_memory/lexical/IQueryAnalyzer.hpp>
+#include <agent_memory/lexical/IReranker.hpp>
+#include <agent_memory/retrieval/IRetrievalEngine.hpp>
 
 #include <memory>
 

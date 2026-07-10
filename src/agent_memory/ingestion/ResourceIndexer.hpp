@@ -5,10 +5,9 @@
 /// \file ResourceIndexer.hpp
 /// \brief Resource indexing orchestration over storage, embedding, and index contracts.
 
-#include "../embedding/IEmbedder.hpp"
-#include "../index/IVectorIndex.hpp"
-#include "../storage/IDocumentStorage.hpp"
-#include "../storage/IResourceManifestStorage.hpp"
+#include <agent_memory/embedding/EmbeddingApi.hpp>
+#include <agent_memory/index/Index.hpp>
+#include <agent_memory/storage/Storage.hpp>
 
 namespace agent_memory {
 

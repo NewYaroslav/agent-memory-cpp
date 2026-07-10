@@ -5,7 +5,7 @@
 /// \file Tokenizer.hpp
 /// \brief Dependency-free tokenizer value types.
 
-#include "../domain/Document.hpp"
+#include <agent_memory/domain/Domain.hpp>
 
 #include <cstddef>
 #include <string>

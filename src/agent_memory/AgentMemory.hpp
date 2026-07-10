@@ -5,41 +5,17 @@
 /// \file AgentMemory.hpp
 /// \brief Public aggregate include for Agent Memory C++.
 
-#include "chat/Message.hpp"
-#include "core/LibraryInfo.hpp"
-#include "domain/Document.hpp"
-#include "domain/Identifiers.hpp"
-#include "domain/Metadata.hpp"
-#include "domain/MetadataFilter.hpp"
-#include "domain/Resource.hpp"
-#include "domain/SourceKind.hpp"
-#include "embedding/Embedding.hpp"
-#include "embedding/IEmbedder.hpp"
-#include "eval/Evaluation.hpp"
-#include "facts/Fact.hpp"
-#include "ingestion/ResourceIndexer.hpp"
-#include "index/ExactVectorIndex.hpp"
-#include "index/IVectorIndex.hpp"
-#include "index/VectorIndex.hpp"
-#include "lexical/ExactLexicalIndex.hpp"
-#include "lexical/IChunkEnricher.hpp"
-#include "lexical/ILexicalIndex.hpp"
-#include "lexical/IQueryAnalyzer.hpp"
-#include "lexical/IReranker.hpp"
-#include "lexical/ITokenDictionary.hpp"
-#include "lexical/ITokenizer.hpp"
-#include "lexical/Lexical.hpp"
-#include "lexical/LexicalHash.hpp"
-#include "lexical/QueryAnalysis.hpp"
-#include "lexical/StandardTokenizer.hpp"
-#include "lexical/TokenDictionary.hpp"
-#include "lexical/Tokenizer.hpp"
-#include "memory/MemoryObject.hpp"
-#include "retrieval/HybridRetrievalEngine.hpp"
-#include "retrieval/IRetrievalEngine.hpp"
-#include "retrieval/IRetriever.hpp"
-#include "retrieval/Retrieval.hpp"
-#include "storage/IDocumentStorage.hpp"
-#include "storage/IResourceManifestStorage.hpp"
+#include <agent_memory/chat/Chat.hpp>
+#include <agent_memory/core/Core.hpp>
+#include <agent_memory/domain/Domain.hpp>
+#include <agent_memory/embedding/EmbeddingApi.hpp>
+#include <agent_memory/eval/Eval.hpp>
+#include <agent_memory/facts/Facts.hpp>
+#include <agent_memory/index/Index.hpp>
+#include <agent_memory/ingestion/Ingestion.hpp>
+#include <agent_memory/lexical/LexicalApi.hpp>
+#include <agent_memory/memory/Memory.hpp>
+#include <agent_memory/retrieval/RetrievalApi.hpp>
+#include <agent_memory/storage/Storage.hpp>
 
 #endif

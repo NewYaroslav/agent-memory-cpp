@@ -5,10 +5,8 @@
 /// \file Lexical.hpp
 /// \brief Dependency-free lexical search value types.
 
-#include "../domain/Metadata.hpp"
-#include "../domain/MetadataFilter.hpp"
-#include "../domain/Resource.hpp"
-#include "Tokenizer.hpp"
+#include <agent_memory/domain/Domain.hpp>
+#include <agent_memory/lexical/Tokenizer.hpp>
 
 #include <cstddef>
 #include <cstdint>

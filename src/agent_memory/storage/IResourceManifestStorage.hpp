@@ -5,7 +5,7 @@
 /// \file IResourceManifestStorage.hpp
 /// \brief Storage contract for resource ownership manifests.
 
-#include "../domain/Resource.hpp"
+#include <agent_memory/domain/Domain.hpp>
 
 #include <optional>
 

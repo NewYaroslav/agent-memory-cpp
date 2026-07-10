@@ -10,11 +10,13 @@ namespace agent_memory {
 
     namespace {
 
+        /// \brief Relevance judgments grouped for one query.
         struct QueryJudgments final {
             std::map<std::string, std::int32_t> grades_by_item;
             std::vector<std::int32_t> positive_grades;
         };
 
+        /// \brief Returns the explicit hit rank or falls back to one-based vector position.
         [[nodiscard]] std::size_t effective_rank(
             const RetrievalRunHit& hit,
             std::size_t position
@@ -25,6 +27,10 @@ namespace agent_memory {
             return position + 1;
         }
 
+        /// \brief Builds a query-id to relevance-judgment map and sorted ideal grades.
+        ///
+        /// Invalid qrels with empty ids or negative grades are ignored. Positive
+        /// grades are sorted descending once so nDCG can compute IDCG cheaply.
         [[nodiscard]] std::map<std::string, QueryJudgments> build_judgment_map(
             const std::vector<RelevanceJudgment>& judgments
         ) {
@@ -59,6 +65,10 @@ namespace agent_memory {
             return result;
         }
 
+        /// \brief Builds a query-id to retrieval-run map.
+        ///
+        /// Later duplicate query runs replace earlier ones, which mirrors the
+        /// "last writer wins" behavior used by benchmark result files.
         [[nodiscard]] std::map<std::string, const RetrievalQueryRun*> build_run_map(
             const std::vector<RetrievalQueryRun>& query_runs
         ) {
@@ -72,6 +82,7 @@ namespace agent_memory {
             return result;
         }
 
+        /// \brief Converts a graded relevance label to DCG gain.
         [[nodiscard]] double relevance_gain(std::int32_t grade) noexcept {
             if(grade <= 0) {
                 return 0.0;
@@ -79,6 +90,7 @@ namespace agent_memory {
             return std::pow(2.0, static_cast<double>(grade)) - 1.0;
         }
 
+        /// \brief Returns the logarithmic rank discount used by DCG/nDCG.
         [[nodiscard]] double rank_discount(std::size_t rank) noexcept {
             if(rank == 0) {
                 return 0.0;
@@ -86,6 +98,10 @@ namespace agent_memory {
             return 1.0 / std::log2(static_cast<double>(rank) + 1.0);
         }
 
+        /// \brief Computes DCG@K for one query run.
+        ///
+        /// Duplicate item ids are counted only once so fusion bugs cannot
+        /// inflate graded relevance metrics.
         [[nodiscard]] double dcg_at(
             const std::vector<RetrievalRunHit>& hits,
             const QueryJudgments& judgments,
@@ -112,6 +128,7 @@ namespace agent_memory {
             return result;
         }
 
+        /// \brief Computes the ideal DCG@K from sorted positive relevance grades.
         [[nodiscard]] double ideal_dcg_at(
             const std::vector<std::int32_t>& positive_grades,
             std::size_t cutoff
@@ -125,6 +142,10 @@ namespace agent_memory {
             return result;
         }
 
+        /// \brief Computes Recall@K for one query run.
+        ///
+        /// Duplicate relevant hits are counted once. This keeps Recall@K stable
+        /// for hybrid/fused runs that accidentally emit the same item twice.
         [[nodiscard]] double recall_at(
             const std::vector<RetrievalRunHit>& hits,
             const QueryJudgments& judgments,
@@ -154,6 +175,7 @@ namespace agent_memory {
                 static_cast<double>(judgments.positive_grades.size());
         }
 
+        /// \brief Computes reciprocal rank of the first relevant hit.
         [[nodiscard]] double reciprocal_rank(
             const std::vector<RetrievalRunHit>& hits,
             const QueryJudgments& judgments
@@ -180,6 +202,7 @@ namespace agent_memory {
             return 1.0 / static_cast<double>(best_rank);
         }
 
+        /// \brief Computes a percentile using the nearest-rank method.
         [[nodiscard]] double percentile_nearest_rank(
             const std::vector<double>& sorted_values,
             double percentile
@@ -200,6 +223,7 @@ namespace agent_memory {
             return sorted_values[index - 1];
         }
 
+        /// \brief Summarizes measured query latencies in milliseconds.
         [[nodiscard]] LatencyStats compute_latency_stats(std::vector<double> values) {
             LatencyStats stats;
             stats.sample_count = values.size();
@@ -218,34 +242,42 @@ namespace agent_memory {
 
     } // namespace
 
+    /// \brief Checks whether a corpus item has no externally useful payload.
     bool EvalCorpusItem::empty() const noexcept {
         return id.empty() && title.empty() && text.empty();
     }
 
+    /// \brief Checks whether an evaluation query has neither id nor text.
     bool EvalQuery::empty() const noexcept {
         return id.empty() && text.empty();
     }
 
+    /// \brief Checks whether a relevance judgment marks an item as relevant.
     bool RelevanceJudgment::relevant() const noexcept {
         return relevance_grade > 0;
     }
 
+    /// \brief Checks whether a dataset has no queries to evaluate.
     bool RetrievalEvalDataset::empty() const noexcept {
         return queries.empty();
     }
 
+    /// \brief Returns the number of evaluation queries in the dataset.
     std::size_t RetrievalEvalDataset::query_count() const noexcept {
         return queries.size();
     }
 
+    /// \brief Checks whether a query run emitted no hits.
     bool RetrievalQueryRun::empty() const noexcept {
         return hits.empty();
     }
 
+    /// \brief Checks whether a retrieval run contains no per-query runs.
     bool RetrievalRun::empty() const noexcept {
         return queries.empty();
     }
 
+    /// \brief Finds a metric value by cutoff.
     std::optional<double> metric_value_at(
         const std::vector<MetricAtK>& metrics,
         std::size_t k
@@ -258,6 +290,7 @@ namespace agent_memory {
         return std::nullopt;
     }
 
+    /// \brief Computes aggregate retrieval metrics for a dataset/run pair.
     RetrievalMetrics evaluate_retrieval(
         const RetrievalEvalDataset& dataset,
         const RetrievalRun& run,
