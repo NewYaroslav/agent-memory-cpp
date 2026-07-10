@@ -930,9 +930,10 @@ Multi-encoder migration flow:
 ```cpp
 enum class DenseIndexMode : uint8_t {
     Exact = 0,                      // brute-force float cosine, ground truth
-    BinaryCandidateFilter = 1,      // binary filter + float rerank (default production)
-    BinaryOnly = 2,                 // binary only, Hamming ranking (experimental/compact)
-    ApproximateVector = 3,          // binary + decoder → approx vector → rerank (experimental)
+    BinaryCandidateFilter = 1,      // binary filter + float rerank (M1 default)
+    BinaryOnly = 2,                 // binary only, Hamming ranking (M2 experimental/compact)
+    ApproximateVector = 3,          // binary + decoder → approx vector → rerank (M2 experimental)
+    Hnsw = 4,                       // M2+ experimental ANN backend
 };
 
 class IDenseIndex {
@@ -963,6 +964,13 @@ class BinaryOnlyIndex final : public IDenseIndex {
 class ApproximateVectorIndex final : public IDenseIndex {
     // Hamming bucket lookup → decoder → approx vector → cosine rerank.
     // Два варианта: Safe (binary + float + decoder) vs Compact (binary + decoder only).
+};
+
+// 5. HNSW graph ANN. Mainline M2+ backend.
+class HnswVectorIndex final : public IDenseIndex {
+    // M-level proximity graph, greedy traversal на верхних уровнях,
+    // beam search на нижних. O(log N) average search complexity.
+    // Storage: graph edges adjacency + nodes array.
 };
 ```
 
@@ -1139,7 +1147,8 @@ Reference: arXiv:1603.09320 — "Efficient and robust approximate nearest neighb
   - Storage: edges в adjacency list, nodes в flat array.
 
 Параметры per stack:
-  BasicRag:       HNSW (M=16, efConstruction=100, efSearch=50)
+  BasicRag:       usually Exact; HNSW только если corpus > 100k units AND dense retrieval enabled.
+                  Default params (когда используется): HNSW (M=16, efConstruction=100, efSearch=50).
   AgentLTM:       HNSW (M=32, efConstruction=200, efSearch=100) — quality
   CompiledWiki:   HNSW (M=32, efConstruction=200, efSearch=100)
   FullResearch:   HNSW (M=32, efConstruction=200, efSearch=100)

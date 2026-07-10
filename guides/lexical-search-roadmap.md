@@ -1134,9 +1134,9 @@ of that ordering; each substep is its own PR.
     (`memory-stacks-roadmap.md` section 12.2).
 11. Add `projection_kind` and `scope_id` to the `inverted_token_to_unit`
     and `field_to_postings` keys (see MDBX Layout above).
-12. Add generation rules per `ProjectionKind` for `Original`, `QAQuestion`,
-    `QAAnswer`, `Summary`, and `CodeSymbols` (see Generation Rules Per
-    Projection Kind).
+12. Add projection build rules per `ProjectionKind` for `Original`, `QAQuestion`,
+    `QAAnswer`, `Summary`, and `CodeSymbols` (see Projection Build Rules
+    Per ProjectionKind).
 13. Promote the MDBX layout so `field_to_postings` is keyed by
     `(scope_id, projection_kind, field_id, token_id, unit_id)` and BM25F,
     BM25, and future fielded sparse retrievers share the same posting
