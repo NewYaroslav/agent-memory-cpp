@@ -11,11 +11,15 @@ examples/
 external/
     libmdbx/
     mdbx-containers/
+src/
+    agent_memory.hpp
 src/agent_memory/
-    AgentMemory.hpp
+    chat.hpp
+    core.hpp
     core/
         LibraryInfo.hpp
         LibraryInfo.cpp
+    domain.hpp
     domain/
         Document.hpp
         Document.cpp
@@ -27,14 +31,23 @@ src/agent_memory/
         Resource.cpp
         SourceKind.hpp
         SourceKind.cpp
+    embedding.hpp
     embedding/
-        Embedding.hpp
-        Embedding.cpp
+        embedding_types.hpp
+        embedding_types.cpp
+        enums.hpp
+        enums.cpp
         IEmbedder.hpp
         IEmbedder.cpp
+    eval.hpp
+    eval/
+        Evaluation.hpp
+        Evaluation.cpp
+    ingestion.hpp
     ingestion/
         ResourceIndexer.hpp
         ResourceIndexer.cpp
+    index.hpp
     index/
         ExactVectorIndex.hpp
         ExactVectorIndex.cpp
@@ -42,6 +55,7 @@ src/agent_memory/
         VectorIndex.cpp
         IVectorIndex.hpp
         IVectorIndex.cpp
+    lexical.hpp
     lexical/
         Tokenizer.hpp
         Tokenizer.cpp
@@ -59,17 +73,25 @@ src/agent_memory/
         ITokenizer.cpp
         StandardTokenizer.hpp
         StandardTokenizer.cpp
+    memory.hpp
+    memory/
+        MemoryObject.hpp
+        MemoryObject.cpp
+    retrieval.hpp
     retrieval/
         Retrieval.hpp
         Retrieval.cpp
         IRetriever.hpp
         IRetriever.cpp
+    infrastructure.hpp
     infrastructure/
+        mdbx.hpp
         mdbx/
             MdbxDocumentStorage.hpp
             MdbxDocumentStorage.cpp
             MdbxResourceManifestStorage.hpp
             MdbxResourceManifestStorage.cpp
+    storage.hpp
     storage/
         IDocumentStorage.hpp
         IDocumentStorage.cpp
@@ -82,6 +104,8 @@ tests/
         resource_manifest_test.cpp
     embedding/
         embedding_contracts_test.cpp
+    eval/
+        evaluation_contracts_test.cpp
     index/
         vector_index_contracts_test.cpp
         exact_vector_index_test.cpp
@@ -113,7 +137,7 @@ tests/
 Consumers include project headers through the `agent_memory/` prefix:
 
 ```cpp
-#include <agent_memory/AgentMemory.hpp>
+#include <agent_memory.hpp>
 ```
 
 The build interface currently exposes `src/` as the public include root.
@@ -256,12 +280,40 @@ backend-specific details must stay behind adapter boundaries.
 - Embedding contracts: `src/agent_memory/embedding/`.
 - Lexical search contracts and implementations: `src/agent_memory/lexical/`.
 - Retrieval/ranking behavior: `src/agent_memory/retrieval/`.
+- Retrieval evaluation contracts: `src/agent_memory/eval/`.
 - Resource ownership and targeted reindexing: start with domain/storage
   contracts, then add infrastructure adapters.
 - Memory policies and composition: `src/agent_memory/memory/`.
 - Context builders and formatting: `src/agent_memory/context/`.
 
 Create a new area only when the PR introduces real code for that area.
+
+## Evaluation Contracts
+
+Retrieval evaluation value types and metric helpers live in
+`src/agent_memory/eval/`:
+
+- `RetrievalEvalDataset` models a BEIR-style corpus/query/qrels dataset shape;
+- `RetrievalRun` models one retriever configuration's ordered hits and optional
+  per-query latency;
+- `evaluate_retrieval()` computes Recall@K, MRR, nDCG@K, no-answer accuracy,
+  and latency summaries.
+
+Current MRR is intentionally unbounded. Add MRR@K in a follow-up benchmark
+runner PR once real run configuration and reporting needs are clearer.
+
+`RetrievalRunHit::score` is diagnostic payload for metric reporting. Implicit
+rank uses the vector order. If a benchmark importer receives an unordered score
+dump, add a separate normalizer/import helper instead of changing
+evaluate_retrieval() ordering.
+
+evaluate_retrieval() is metric-only and does not validate that qrel item ids
+exist in `RetrievalEvalDataset::corpus`. Add corpus id uniqueness and qrels to
+corpus integrity checks in a follow-up dataset loader/runner validation PR.
+
+This layer intentionally does not load external datasets, invoke embedders, or
+own benchmark executables. Those belong in follow-up benchmark runner/tooling
+PRs.
 
 ## Tests And Examples
 

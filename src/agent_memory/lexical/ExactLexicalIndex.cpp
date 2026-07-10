@@ -73,7 +73,7 @@ namespace agent_memory {
         //    std::map::erase is noexcept, so this step cannot leave us
         //    in a half-erased state.
         if(old_snapshot.has_value()) {
-            erase(chunk_id);
+            static_cast<void>(erase(chunk_id));
         }
 
         // 6. Commit the new record. We track every mutation via local

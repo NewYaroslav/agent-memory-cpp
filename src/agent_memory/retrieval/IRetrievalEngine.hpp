@@ -11,11 +11,11 @@
 /// with `IdentityReranker` and `PassthroughQueryAnalyzer`. Replace any of
 /// those to light up richer behaviour without changing call sites.
 
-#include "../domain/MetadataFilter.hpp"
-#include "../lexical/IQueryAnalyzer.hpp"
-#include "../lexical/IReranker.hpp"
-#include "../lexical/Lexical.hpp"
-#include "../memory/MemoryObject.hpp"
+#include <agent_memory/domain.hpp>
+#include <agent_memory/lexical/IQueryAnalyzer.hpp>
+#include <agent_memory/lexical/IReranker.hpp>
+#include <agent_memory/lexical/Lexical.hpp>
+#include <agent_memory/memory.hpp>
 
 #include <cstddef>
 #include <string>

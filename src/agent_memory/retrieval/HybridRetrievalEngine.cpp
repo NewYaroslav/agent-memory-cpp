@@ -1,7 +1,7 @@
 #include "HybridRetrievalEngine.hpp"
 
-#include "../lexical/IQueryAnalyzer.hpp"
-#include "../lexical/IReranker.hpp"
+#include <agent_memory/lexical/IQueryAnalyzer.hpp>
+#include <agent_memory/lexical/IReranker.hpp>
 
 #include <utility>
 

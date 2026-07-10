@@ -5,10 +5,8 @@
 /// \file VectorIndex.hpp
 /// \brief Dependency-free vector index value types.
 
-#include "../domain/Identifiers.hpp"
-#include "../domain/MetadataFilter.hpp"
-#include "../domain/Metadata.hpp"
-#include "../embedding/Embedding.hpp"
+#include <agent_memory/domain.hpp>
+#include <agent_memory/embedding/embedding_types.hpp>
 
 #include <cstddef>
 #include <string>

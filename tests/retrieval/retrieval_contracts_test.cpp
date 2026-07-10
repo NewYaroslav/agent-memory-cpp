@@ -1,4 +1,4 @@
-#include <agent_memory/AgentMemory.hpp>
+#include <agent_memory.hpp>
 
 #include <iostream>
 #include <optional>

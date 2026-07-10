@@ -1,4 +1,4 @@
-#include "Embedding.hpp"
+#include "enums.hpp"
 
 #include <array>
 #include <cctype>
@@ -60,30 +60,20 @@ namespace agent_memory {
         }
 
         template <typename Enum, std::size_t Size>
-        bool parse_enum(
+        ParseResult<Enum> parse_enum(
             std::string_view text,
-            const std::array<EnumName<Enum>, Size>& names,
-            Enum& value
-        ) {
+            const std::array<EnumName<Enum>, Size>& names
+        ) noexcept {
             const auto normalized = lowercase_ascii(text);
             for(const auto& item : names) {
                 if(normalized == item.name) {
-                    value = item.value;
-                    return true;
+                    return ParseResult<Enum>{true, item.value};
                 }
             }
-            return false;
+            return ParseResult<Enum>{};
         }
 
     } // namespace
-
-    bool Embedding::empty() const noexcept {
-        return values.empty();
-    }
-
-    std::size_t Embedding::dimension() const noexcept {
-        return values.size();
-    }
 
     std::string_view to_string(EmbeddingPurpose purpose) noexcept {
         return enum_to_string(purpose, EMBEDDING_PURPOSE_NAMES, "custom");
@@ -97,16 +87,25 @@ namespace agent_memory {
         return enum_to_string(mode, POOLING_MODE_NAMES, "model_default");
     }
 
-    bool parse_embedding_purpose(std::string_view text, EmbeddingPurpose& purpose) {
-        return parse_enum(text, EMBEDDING_PURPOSE_NAMES, purpose);
+    template <>
+    ParseResult<EmbeddingPurpose> to_enum<EmbeddingPurpose>(
+        std::string_view text
+    ) noexcept {
+        return parse_enum(text, EMBEDDING_PURPOSE_NAMES);
     }
 
-    bool parse_similarity_metric(std::string_view text, SimilarityMetric& metric) {
-        return parse_enum(text, SIMILARITY_METRIC_NAMES, metric);
+    template <>
+    ParseResult<SimilarityMetric> to_enum<SimilarityMetric>(
+        std::string_view text
+    ) noexcept {
+        return parse_enum(text, SIMILARITY_METRIC_NAMES);
     }
 
-    bool parse_pooling_mode(std::string_view text, PoolingMode& mode) {
-        return parse_enum(text, POOLING_MODE_NAMES, mode);
+    template <>
+    ParseResult<PoolingMode> to_enum<PoolingMode>(
+        std::string_view text
+    ) noexcept {
+        return parse_enum(text, POOLING_MODE_NAMES);
     }
 
 } // namespace agent_memory

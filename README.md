@@ -110,42 +110,40 @@ Headers and implementation files live side by side under `src/`:
 external/
 |-- libmdbx/
 `-- mdbx-containers/
-src/agent_memory/
-|-- AgentMemory.hpp
-|-- domain/
-|   |-- Document.hpp
-|   |-- Identifiers.hpp
-|   |-- Metadata.hpp
-|   |-- Resource.hpp
-|   `-- SourceKind.hpp
-|-- embedding/
-|   |-- Embedding.hpp
-|   `-- IEmbedder.hpp
-|-- ingestion/
-|   `-- ResourceIndexer.hpp
-|-- index/
-|   |-- ExactVectorIndex.hpp
-|   |-- VectorIndex.hpp
-|   `-- IVectorIndex.hpp
-|-- retrieval/
-|   |-- Retrieval.hpp
-|   `-- IRetriever.hpp
-|-- infrastructure/
-|   `-- mdbx/
-|       |-- MdbxDocumentStorage.hpp
-|       `-- MdbxResourceManifestStorage.hpp
-|-- storage/
-|   |-- IDocumentStorage.hpp
-|   `-- IResourceManifestStorage.hpp
-`-- core/
-    |-- LibraryInfo.hpp
-    `-- LibraryInfo.cpp
+src/
+|-- agent_memory.hpp
+`-- agent_memory/
+    |-- chat.hpp
+    |-- core.hpp
+    |-- domain.hpp
+    |-- embedding.hpp
+    |-- eval.hpp
+    |-- facts.hpp
+    |-- index.hpp
+    |-- infrastructure.hpp
+    |-- ingestion.hpp
+    |-- lexical.hpp
+    |-- memory.hpp
+    |-- retrieval.hpp
+    |-- storage.hpp
+    |-- embedding/
+    |   |-- embedding_types.hpp
+    |   |-- enums.hpp
+    |   `-- IEmbedder.hpp
+    |-- infrastructure/
+    |   |-- mdbx.hpp
+    |   `-- mdbx/
+    |       |-- MdbxDocumentStorage.hpp
+    |       `-- MdbxResourceManifestStorage.hpp
+    `-- storage/
+        |-- IDocumentStorage.hpp
+        `-- IResourceManifestStorage.hpp
 ```
 
-Consumers include public headers through the `agent_memory` include prefix:
+Consumers can include the full public aggregate through the include root:
 
 ```cpp
-#include <agent_memory/AgentMemory.hpp>
+#include <agent_memory.hpp>
 ```
 
 ## Storage
@@ -166,7 +164,7 @@ additional backends can be added later.
 When `AGENT_MEMORY_ENABLE_MDBX=ON`, the library also builds
 `agent_memory/infrastructure/mdbx/MdbxDocumentStorage.hpp`, an MDBX-backed
 implementation of `IDocumentStorage`. Optional infrastructure headers are not
-included by the aggregate `AgentMemory.hpp`; include the adapter header
+included by the aggregate `agent_memory.hpp`; include the adapter header
 directly when MDBX support is enabled.
 
 ## Embeddings
@@ -222,6 +220,22 @@ Retrieval contracts stay dependency-free and describe text, embedding, or mixed
 queries with result limits and metadata filters. `IRetriever` returns ordered
 scored chunks; concrete retrieval pipelines can compose embedders, indexes, and
 document storage without leaking backend details into the public contract.
+
+## Evaluation
+
+The evaluation layer provides dependency-free dataset/run value types and metric
+helpers for retrieval experiments. It can represent BEIR-style corpus, queries,
+and relevance judgments, then compute Recall@K, MRR, nDCG@K, no-answer accuracy,
+and latency summaries for BM25, exact vector, hybrid, and future approximate
+search runs.
+
+Current MRR is unbounded; MRR@K is reserved for follow-up benchmark runner
+work once reporting requirements are clearer.
+
+The metric helper treats implicit hit order as the vector order. Unordered
+score dumps should be normalized by future importer/runner tooling before
+evaluation. Corpus/qrels integrity checks are also reserved for dataset loader
+validation rather than the metric-only helper.
 
 ## Ingestion
 

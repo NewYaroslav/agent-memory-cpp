@@ -5,7 +5,7 @@
 /// \file IEmbedder.hpp
 /// \brief Backend-independent embedding provider contract.
 
-#include "Embedding.hpp"
+#include "embedding_types.hpp"
 
 #include <vector>
 

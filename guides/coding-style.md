@@ -44,6 +44,11 @@ omitting the prefix would be misleading.
 
 - In `.cpp` files, include the matching project header first.
 - Keep project headers before external or standard library headers.
+- Public project headers must not include dependencies through parent-directory
+  paths such as `../` or `../../`. Use the public include root instead, for
+  example `#include <agent_memory/domain.hpp>`.
+- Prefer subdomain/domain aggregate headers for cross-module public
+  dependencies when a leaf header does not need a single narrow type.
 - Do not use `using namespace` in headers or implementation files.
 
 ## Formatting
