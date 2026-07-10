@@ -225,17 +225,42 @@ enum class DenseIndexMode : uint8_t {
     Hnsw = 4,                       // M2+ experimental ANN backend
 };
 
+struct HnswConfig {
+    uint32_t m = 16;                     // среднее число bidirectional links per node (8-64)
+    uint32_t ef_construction = 100;      // beam size при build (64-200, trade-off build time vs quality)
+    uint32_t ef_search = 50;             // beam size при query (10-200, trade-off recall vs latency)
+};
+
 struct DenseIndexConfig {
     DenseIndexMode mode = DenseIndexMode::Exact;
 
-    // Binary modes (mode != Exact):
+    // Binary modes (mode == BinaryCandidateFilter / BinaryOnly / ApproximateVector):
     uint32_t bit_count = 128;
     std::string encoder_id = "random_hyperplane_lsh_v1";
 
     // ApproximateVector mode only:
     bool store_decoder = true;
     bool store_float_fallback = false;
+
+    // Hnsw mode only:
+    // Если mode == Hnsw и hnsw_config не задан, используются defaults (M=16, efConstruction=100, efSearch=50).
+    // Если mode != Hnsw, поле игнорируется.
+    std::optional<HnswConfig> hnsw_config;
 };
+
+// HnswConfig per-stack defaults (когда mode == Hnsw):
+//   m: average number of bidirectional links per node. Higher = better recall, more memory.
+//      Typical: 16 (default), 32 (high quality), 8 (compact).
+//   ef_construction: beam size during index build. Higher = better quality, slower build.
+//      Typical: 100 (default), 200 (high quality), 64 (fast build).
+//   ef_search: beam size during query. Higher = better recall, slower query.
+//      Typical: 50 (default), 100 (high recall), 10 (fast query).
+//
+// Per-stack defaults (при переключении на Hnsw mode):
+//   BasicRag:      M=16, efConstruction=100, efSearch=50   (только если corpus > 100k units)
+//   AgentLTM:      M=32, efConstruction=200, efSearch=100
+//   CompiledWiki:  M=32, efConstruction=200, efSearch=100
+//   FullResearch:  M=32, efConstruction=200, efSearch=100
 ```
 
 ### 6.3. Полная спецификация
@@ -579,6 +604,8 @@ inline MemoryProfileSpec AgentLongTermMemory() {
         DenseIndexMode::BinaryCandidateFilter,
         /*bit_count=*/128,
         /*encoder_id=*/"autoencoder_binarizer_v1");
+    // M2+ alternative: DenseIndexMode::Hnsw + HnswConfig{m=32, ef_construction=200, ef_search=100}
+    // for better Recall@10 at corpus > 100k units.
     return s;
 }
 ```
@@ -645,6 +672,8 @@ inline MemoryProfileSpec CompiledWiki() {
         DenseIndexMode::BinaryCandidateFilter,
         /*bit_count=*/256,
         /*encoder_id=*/"autoencoder_binarizer_v1");
+    // M2+ alternative: DenseIndexMode::Hnsw + HnswConfig{m=32, ef_construction=200, ef_search=100}
+    // for better Recall@10 at corpus > 100k units.
     return s;
 }
 ```
@@ -686,6 +715,8 @@ inline MemoryProfileSpec FullResearchMemory() {
         DenseIndexMode::BinaryCandidateFilter,
         /*bit_count=*/128,
         /*encoder_id=*/"autoencoder_binarizer_v1");
+    // M2+ alternative: DenseIndexMode::Hnsw + HnswConfig{m=32, ef_construction=200, ef_search=100}
+    // for better Recall@10 at corpus > 100k units.
     return s;
 }
 ```
