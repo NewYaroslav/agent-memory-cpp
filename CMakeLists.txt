@@ -30,6 +30,8 @@ add_library(agent_memory STATIC
     src/agent_memory/embedding/enums.cpp
     src/agent_memory/embedding/IEmbedder.cpp
     src/agent_memory/eval/Evaluation.cpp
+    src/agent_memory/eval/RetrievalEvalRunner.cpp
+    src/agent_memory/eval/StubRetriever.cpp
     src/agent_memory/facts/Fact.cpp
     src/agent_memory/ingestion/ResourceIndexer.cpp
     src/agent_memory/index/ExactVectorIndex.cpp
