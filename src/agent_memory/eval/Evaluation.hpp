@@ -158,6 +158,10 @@ namespace agent_memory {
     /// NoAnswer queries participate only in no_answer_accuracy. Ignore queries
     /// are counted and skipped. Missing query runs are evaluated as empty hit
     /// lists.
+    /// \note This metric-only helper validates queries, judgments, and runs,
+    ///       but does not require judged item ids to be present in
+    ///       RetrievalEvalDataset::corpus. Corpus/qrels integrity belongs to
+    ///       dataset loader or benchmark runner validation.
     /// \throws std::invalid_argument when query ids, qrels, runs, ranks,
     ///         scores, latency samples, or metric cutoffs violate the
     ///         evaluation contract.
