@@ -220,8 +220,8 @@ total_token_count:
 ```
 
 When a resource is reindexed, old token stats must be decremented before new
-stats are added, unless the backend uses generation filtering and delayed
-compaction.
+stats are added, unless the backend uses unit_revision filtering (see Stale
+Filter via unit_revision) and delayed compaction.
 
 A **token-level cache** keyed by `(scope_id, token_id, projection_kind)` keeps
 warm-up reads cheap: when a query term is reused across sessions or scopes, the
@@ -487,6 +487,19 @@ query time when their generation does not match the current resource generation.
 That path needs a cheap current-generation lookup or cache; otherwise stale
 filtering can turn lexical search into too many random reads.
 
+### Stale Filter via unit_revision
+
+LexicalPosting хранит unit_revision (envelope.revision на момент индексации).
+Retrieval-time stale-filter:
+  1. Posting lookup → candidates.
+  2. Bulk load current envelopes.
+  3. Skip if posting.unit_revision < envelope.revision.
+
+См. также: ResourceManifest.generation filtering только для derived records от source resource (M2+).
+
+unit_revision-based filtering — это per-posting check, не отдельная DBI.
+unit_revision_index (optional, M2+) — отдельная DBI для batch validation / debugging.
+
 The reindex path is **projection-aware**: an update that only changes a
 `Summary` projection does not invalidate `Original`, `QAQuestion`, or
 `QAAnswer` postings. The `projection_kind` participates in the staleness key
@@ -689,7 +702,7 @@ When the retrieval plan requests both projection_kinds, RRF combines the two
 ranked lists and the unit floats to the top from both sides — exactly the
 behavior expected for a `QAKnowledgeBase` stack.
 
-### Generation Rules Per Projection Kind
+### Projection Build Rules Per ProjectionKind
 
 Each `ProjectionKind` has a deterministic generation rule applied at write
 time. The rule is part of the projection adapter and is documented next to
@@ -1156,13 +1169,17 @@ of that ordering; each substep is its own PR.
 21. Add the MDBX-backed lexical index with simple posting-list blobs
     (start from the flat-body path, then add the projection keys).
 22. Add segmented postings, tombstones, and compaction. Compaction must
-    preserve generation filtering so BM25F and BM25 score over the same
-    live-posting set.
+    preserve unit_revision filtering (see Stale Filter via unit_revision) so
+    BM25F and BM25 score over the same live-posting set.
 23. Wire MDBX-backed secondary indexes for the lexical pipeline
-    (resource -> token set, metadata_key -> unit_id, generation -> unit_id)
+    (resource -> token set, metadata_key -> unit_id, unit_revision -> unit_id)
     so reindex and stale filtering stay fast. See
     [`optimization-roadmap.md`](optimization-roadmap.md) "Secondary
     Indexes" and `memory-stacks-roadmap.md` section 12.3.
+
+unit_id <-> envelope.revision:
+  - LexicalPosting.unit_revision = envelope.revision на момент индексации.
+  - Не путать с ResourceManifest.generation (resource-level version).
 
 ### L5. Morphology, raw stores, and later layers
 

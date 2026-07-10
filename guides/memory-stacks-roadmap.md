@@ -218,10 +218,11 @@ struct ContextBudget {
 };
 
 enum class DenseIndexMode : uint8_t {
-    Exact = 0,                      // brute-force float, ground truth
-    BinaryCandidateFilter = 1,      // binary filter + float rerank (default production)
-    BinaryOnly = 2,                 // binary only, Hamming ranking (experimental/compact)
-    ApproximateVector = 3,          // binary + decoder -> approx vector -> rerank (experimental)
+    Exact = 0,                      // brute-force float cosine, ground truth
+    BinaryCandidateFilter = 1,      // binary filter + float rerank (M1 default)
+    BinaryOnly = 2,                 // binary only, Hamming ranking (M2 experimental/compact)
+    ApproximateVector = 3,          // binary + decoder → approx vector → rerank (M2 experimental)
+    Hnsw = 4,                       // M2+ experimental ANN backend
 };
 
 struct DenseIndexConfig {
@@ -900,6 +901,17 @@ ApproximateVector Safe (ApproximateVector + store_float_fallback == true):
 
 ApproximateVector Compact (ApproximateVector + store_float_fallback == false):
   binary_bucket_index + decoder (embedding_vectors НЕ открывается).
+
+Hnsw mode (DenseIndexMode::Hnsw):
+  - embedding_vectors DBI (для float storage и rerank если mode hybrid).
+  - hnsw_graph_index DBI (M-level proximity graph adjacency list).
+  - graph_node_storage DBI (vector IDs + levels + neighbors).
+
+Storage estimate (1M units × 768-dim float32):
+  embedding_vectors: ~3 GB.
+  hnsw_graph_index: ~600 MB (avg M=32 edges per node × 8 bytes).
+  graph_node_storage: ~80 MB (1M units × 16-byte neighbor level header).
+  Total: ~3.7 GB (без учёта PR-curve overhead).
 ```
 
 Таким образом выбор `mode` сужает или расширяет dense-набор DBI. `MemoryStack::open()` валидирует согласованность между `enable_dense_vectors` capability и `dense_index_config.mode` (например, `mode == BinaryOnly` с `enable_dense_vectors == false` допустим, но log-warn: float index будет lazy-built при первом Exact-mode retrieval).
@@ -1099,12 +1111,13 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 
 ### Шаг 4.5: Multi-mode IDenseIndex backends
 
-- `DenseIndexConfig` (см. §6.2) и `DenseIndexMode` enum как часть MemoryProfileSpec.
-- `IDenseIndex` расширен на 4 backend-а:
-  - `ExactVectorIndex` (baseline, brute-force float).
-  - `BinaryCandidateFilterIndex` (default production: binary filter + float rerank).
-  - `BinaryOnlyIndex` (experimental, compact, Hamming ranking).
-  - `ApproximateVectorIndex` (experimental, decoder support для binary → approx vector rerank).
+- `DenseIndexConfig` (см. §6.2) и `DenseIndexMode` enum (5 значений: Exact, BinaryCandidateFilter, BinaryOnly, ApproximateVector, Hnsw) как часть MemoryProfileSpec.
+- 4 base backends + HNSW M2+:
+  - `ExactVectorIndex` (M0+, baseline, brute-force float).
+  - `BinaryCandidateFilterIndex` (M1+, default production: binary filter + float rerank).
+  - `BinaryOnlyIndex` (M2+, experimental/compact, Hamming ranking).
+  - `ApproximateVectorIndex` (M2+, experimental, decoder support для binary → approx vector → rerank).
+  - `HnswVectorIndex` (M2+ experimental, 5th mode — mainline ANN backend; см. optimization-roadmap.md §"HNSW Vector Index").
 - Mode-specific DBI creation в `MemoryStack::open(spec, mode)` с capability-aware логикой (см. §12.7).
 - `RetrievalPlan.dense_index_mode_override` для runtime override (см. §7.3).
 - Storage tradeoffs и capacity estimates документированы (см. §17.12).
@@ -1229,12 +1242,12 @@ double apply_filters(
 - `agent-memory-cli` target.
 - Команды: inspect, stats, check, vacuum, reindex, profile-info, profile-migrate, dump-unit, dump-components, run-eval.
 
-### Шаги 31-34 (M2): Retrieval hook contracts
+### Шаги R31-R34 (M2): Retrieval hook contracts
 
-- Step 31 (M2): IQueryTransformer interface + HydeQueryTransformer + RewriteQueryTransformer adapters.
-- Step 32 (M2): IRetrievalEvaluator interface + CragRetrievalEvaluator + SelfRagEvaluator adapters.
-- Step 33 (M2): HyDE integration в HybridRetriever.
-- Step 34 (M2): CRAG corrective search loop.
+- R31 (M2): IQueryTransformer interface + HydeQueryTransformer + RewriteQueryTransformer adapters.
+- R32 (M2): IRetrievalEvaluator interface + CragRetrievalEvaluator + SelfRagEvaluator adapters.
+- R33 (M2): HyDE integration в HybridRetriever.
+- R34 (M2): CRAG corrective search loop.
 
 ## 17. Open Issues
 

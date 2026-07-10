@@ -924,8 +924,8 @@ Multi-encoder migration flow:
 
 ## Dense Index Modes (Backend Selection)
 
-`IDenseIndex` interface расширен с одной реализации до 4 backend стратегий,
-выбираемых через `DenseIndexMode`:
+`IDenseIndex` interface расширен с одной реализации до 5 modes
+(4 base modes + HNSW M2+), выбираемых через `DenseIndexMode`:
 
 ```cpp
 enum class DenseIndexMode : uint8_t {
@@ -1045,6 +1045,28 @@ CompiledWiki:       BinaryCandidateFilter (AE-256)    // quality
 TemporalFactStore:  Exact (n/a)
 FullResearch:       BinaryCandidateFilter (AE-128)
 ```
+
+### Per-Stack Default Mode: M1 vs M2 Production Candidate
+
+Декомпозиция M1 production defaults и M2 candidate migration:
+
+| Stack | M1 default | M2 production candidate | Selection criteria |
+|---|---|---|---|
+| BasicRag | Exact | Exact | Small corpus, keyword-heavy, M2 не меняется |
+| QAKnowledgeBase | Exact или BinaryCandidateFilter (RH-128) | HNSW (если corpus > 50k) | Corpus size + filter usage |
+| AgentLTM | BinaryCandidateFilter (AE-128) | HNSW + BinaryCF (hybrid) | Latency vs storage tradeoff |
+| SpeakerAwareChat | Exact | Exact | Keyword-heavy, не semantic-heavy |
+| CompiledWiki | BinaryCandidateFilter (AE-256) | HNSW или BinaryCF (AE-256) | Quality priority |
+| TemporalFactStore | Exact | Exact | Smaller corpus, recency-based |
+| FullResearch | BinaryCandidateFilter (AE-128) | HNSW + BinaryCF (hybrid) | Latency vs storage tradeoff |
+
+Decision logic (M2):
+  - Filter-heavy query (>50% queries use metadata filter): BinaryCF preferred.
+  - Latency-critical (< 50ms p95): HNSW preferred.
+  - Storage-critical (memory-constrained): BinaryOnly preferred.
+  - Default: HNSW если corpus > 100k units, иначе BinaryCF.
+
+Benchmark-driven choice: profile different stacks per use case через golden dataset.
 
 Решение принимается на основании: corpus size, recall target, hardware
 budget, latency budget. См. §"Quality Targets Per Mode" выше для production

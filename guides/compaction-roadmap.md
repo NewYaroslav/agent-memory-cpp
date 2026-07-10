@@ -735,9 +735,9 @@ if (handoff && handoff->status == HandoffStatus::InProgress) {
 | 14.3 | `MergeJob` для episode compaction | `ConversationEpisodePayload` (см. `knowledge-units-roadmap.md` 5.5.4) |
 | 14.4 | `SummaryPromotionJob` (с `ITextAdapter` интерфейсом) + `EmbeddingRecomputeJob` | `CompiledArticlePayload`, `DenseVectors` capability |
 | 14.5 | CLI commands для admin operations + Eval pipeline (CompactionHandoff test case) | 14.2-14.4 |
-| 32 (M2) | `SummaryTreeJob` (RAPTOR-style summary tree) | 14.4, embedding capabilities, `ITextAdapter` |
-| 33 (M2) | `CommunitySummaryJob` (GraphRAG-style community summaries) | 32, graph retrieval, `ITextAdapter` |
-| 34 (M2) | Tiered storage transitions в `DecayPolicy` (hot/warm/cold/erased) | 14.1, `ProductQuantizationCodec` (см. `optimization-roadmap.md`) |
+| C32 (M2) | `SummaryTreeJob` (RAPTOR-style summary tree) | 14.4, embedding capabilities, `ITextAdapter` |
+| C33 (M2) | `CommunitySummaryJob` (GraphRAG-style community summaries) | C32, graph retrieval, `ITextAdapter` |
+| C34 (M2) | Tiered storage transitions в `DecayPolicy` (hot/warm/cold/erased) | 14.1, `ProductQuantizationCodec` (см. `optimization-roadmap.md`) |
 
 См. также `knowledge-units-roadmap.md` секция 10 для синхронизации.
 
