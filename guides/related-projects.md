@@ -9,7 +9,7 @@ agent-memory-cpp — embedded C++17 memory/retrieval engine для AI agents с:
   - Typed KnowledgeUnits (Chunk / QAPair / Fact / Entity / Relation / Event / Summary / ConversationEpisode / CompiledArticle / Task / Decision).
   - Capability-aware MemoryProfileSpec (BasicRag / AgentLTM / CompiledWiki и др.) с per-stack DBIs.
   - MDBX-based revision-safe indexes (LexicalPosting.unit_revision).
-  - BM25/vector/graph/temporal retrieval с multi-mode density (Exact / BinaryCF / BinaryOnly / ApproximateVector / Hnsw).
+  - BM25/vector/graph/temporal retrieval с multi-mode dense index (Exact / BinaryCandidateFilter / BinaryOnly / ApproximateVector / Hnsw).
   - Optional encoders (RandomHyperplaneLSH / AutoencoderBinarizer).
   - CompactionWorker с 9 job types.
   - Cross-cutting runtime services.
@@ -25,6 +25,11 @@ Direct differentiators:
   - Multi-mode IDenseIndex (5 modes) с per-mode DBI mapping.
   - Per-unit revision-stale-filter (не generation-based).
   - MemoryStack открытие одной операцией (path + spec) с capability-aware DBI creation.
+
+Disclaimer:
+Документ описывает целевую архитектуру и benchmark-позиционирование. Часть capabilities
+относится к M1/M2/M2+ roadmap, не к текущей реализации. Реальное наличие и качество
+каждой capability проверяется через benchmark results (когда будет готов M1 eval pipeline).
 
 ## 2. Direct competitors / sister projects (closest in API surface)
 
@@ -66,7 +71,7 @@ Direct differentiators:
   - vs FAISS: ExactVectorIndex vs FAISS IndexFlatL2 (memory footprint, query latency, throughput).
   - vs FAISS: HnswVectorIndex vs FAISS IndexHNSWFlat (Recall@10 vs latency tradeoff, build time).
   - vs FAISS: BinaryOnlyIndex vs FAISS IndexBinaryFlat + IVF.
-  - vs hnswlib: HnswVectorIndex vs hnswlib ground-truth.
+  - vs hnswlib: HnswVectorIndex (своя impl или adapter) vs hnswlib as reference HNSW implementation. Ground truth для ANN evaluation = ExactVectorIndex или FAISS IndexFlatL2 (per dataset).
   - vs sqlite-vec: ExactVectorIndex vs sqlite-vec на SQLite (как reference embedded vector search).
   - vs USearch: HnswVectorIndex vs USearch на тех же datasets (Recall@K curves).
 
@@ -76,13 +81,17 @@ Direct differentiators:
 
 **Layer 2 integrational (не прямые benchmarks, но positioning):**
   - vs mem0 (Python): cross-language integration test (наш C++ + их Python SDK через gRPC/IPC). Демонстрирует что наш core доступен из Python как низкоуровневый backend.
-  - vs Graphiti: temporal graph benchmark на их test dataset, чтобы показать что наша embedded C++ версия не уступает их Python production.
+  - vs Graphiti: temporal graph benchmark на их test dataset. Compare by feature coverage, update latency, query latency, provenance correctness, и temporal graph semantics против Graphiti-style workloads. Цель — калибровать наш implementation, не заранее доказать превосходство.
 
-**Ожидаемые позиции в benchmarks (M1):**
-  - On Retrieval@K для семантических queries: comparable with FAISS, hnswlib (в пределах 0.95-1.0× их Recall@10 при том же latency budget).
-  - On BM25: comparable с Tantivy (corpus-dependent, ±5%).
-  - On storage: выигрываем благодаря MDBX + capability-aware DBIs (нет over-fetch для неиспользуемых типов).
-  - On latency: выигрываем благодаря zero-copy mmap + per-stack tuning.
+**Benchmark hypotheses / targets (to validate, not guaranteed):**
+  - Retrieval@K: target 0.95–1.0× Recall@10 vs reference ANN (FAISS / hnswlib) при same latency budget.
+    Реальная позиция определяется benchmark results.
+  - BM25: измерить против Tantivy / Lucene. Конкретный target установить после
+    validation tokenizer/scoring parity (например, идентичная tokenization, BM25 constants).
+  - Storage: ожидаемое преимущество ТОЛЬКО для capability-aware profiles, которые не создают
+    unused DBIs. Реальный выигрыш зависит от конкретного profile config.
+  - Latency: гипотеза для validation. Zero-copy mmap + per-stack tuning могут помочь,
+    но benchmark decides.
 
 ## 6. Architecture inspiration notes (что позаимствовать из каждого)
 
