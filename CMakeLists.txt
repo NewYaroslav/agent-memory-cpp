@@ -50,6 +50,9 @@ add_library(agent_memory STATIC
     src/agent_memory/lexical/TokenDictionary.cpp
     src/agent_memory/lexical/Tokenizer.cpp
     src/agent_memory/memory/MemoryObject.cpp
+    src/agent_memory/retrieval/BowEmbedder.cpp
+    src/agent_memory/retrieval/BowVectorRetriever.cpp
+    src/agent_memory/retrieval/BruteForceTopKIndex.cpp
     src/agent_memory/retrieval/HybridRetrievalEngine.cpp
     src/agent_memory/retrieval/IRetrievalEngine.cpp
     src/agent_memory/retrieval/IRetriever.cpp

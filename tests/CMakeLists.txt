@@ -120,6 +120,27 @@ target_link_libraries(agent_memory_retrieval_contracts_test
 
 add_test(NAME agent_memory_retrieval_contracts_test COMMAND agent_memory_retrieval_contracts_test)
 
+add_executable(agent_memory_exact_vector_retriever_test
+    retrieval/exact_vector_retriever_test.cpp
+)
+
+target_link_libraries(agent_memory_exact_vector_retriever_test
+    PRIVATE
+        agent_memory::agent_memory
+        agent_memory::json
+)
+
+target_include_directories(agent_memory_exact_vector_retriever_test
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/eval/fixtures
+)
+
+add_test(
+    NAME agent_memory_exact_vector_retriever_test
+    COMMAND agent_memory_exact_vector_retriever_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/retrieval
+)
+
 add_executable(agent_memory_resource_indexer_test
     ingestion/resource_indexer_test.cpp
 )
