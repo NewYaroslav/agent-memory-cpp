@@ -71,7 +71,7 @@ namespace agent_memory {
         [[nodiscard]] virtual std::size_t erase_resource(const ResourceId& resource_id) = 0;
 
         /// \brief Removes all indexed chunks and token statistics.
-        [[nodiscard]] virtual void clear() = 0;
+        virtual void clear() = 0;
     };
 
 } // namespace agent_memory

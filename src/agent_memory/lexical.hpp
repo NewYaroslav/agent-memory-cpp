@@ -5,8 +5,21 @@
 /// \file lexical.hpp
 /// \brief Public aggregate include for lexical search domain headers.
 
-#include <agent_memory/domain.hpp>
+#include "domain.hpp"
 
-#include <agent_memory/lexical/LexicalApi.hpp>
+#include "lexical/ExactLexicalIndex.hpp"
+#include "lexical/IChunkEnricher.hpp"
+#include "lexical/ILexicalIndex.hpp"
+#include "lexical/IQueryAnalyzer.hpp"
+#include "lexical/IReranker.hpp"
+#include "lexical/ITokenDictionary.hpp"
+#include "lexical/ITokenizer.hpp"
+#include "lexical/Lexical.hpp"
+#include "lexical/LexicalHash.hpp"
+#include "lexical/QueryAnalysis.hpp"
+#include "lexical/StandardTokenizer.hpp"
+#include "lexical/TokenDictionary.hpp"
+#include "lexical/Tokenizer.hpp"
+
 
 #endif

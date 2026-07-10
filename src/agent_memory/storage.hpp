@@ -5,8 +5,9 @@
 /// \file storage.hpp
 /// \brief Public aggregate include for storage domain headers.
 
-#include <agent_memory/domain.hpp>
+#include "domain.hpp"
 
-#include <agent_memory/storage/Storage.hpp>
+#include "storage/IDocumentStorage.hpp"
+#include "storage/IResourceManifestStorage.hpp"
 
 #endif

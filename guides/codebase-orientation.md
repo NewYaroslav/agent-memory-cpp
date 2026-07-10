@@ -11,14 +11,16 @@ examples/
 external/
     libmdbx/
     mdbx-containers/
+src/
+    agent_memory.hpp
 src/agent_memory/
-    AgentMemory.hpp
+    chat.hpp
+    core.hpp
     core/
-        Core.hpp
         LibraryInfo.hpp
         LibraryInfo.cpp
+    domain.hpp
     domain/
-        Domain.hpp
         Document.hpp
         Document.cpp
         Identifiers.hpp
@@ -29,30 +31,32 @@ src/agent_memory/
         Resource.cpp
         SourceKind.hpp
         SourceKind.cpp
+    embedding.hpp
     embedding/
-        EmbeddingApi.hpp
-        Embedding.hpp
-        Embedding.cpp
+        embedding_types.hpp
+        embedding_types.cpp
+        enums.hpp
+        enums.cpp
         IEmbedder.hpp
         IEmbedder.cpp
+    eval.hpp
     eval/
-        Eval.hpp
         Evaluation.hpp
         Evaluation.cpp
+    ingestion.hpp
     ingestion/
-        Ingestion.hpp
         ResourceIndexer.hpp
         ResourceIndexer.cpp
+    index.hpp
     index/
-        Index.hpp
         ExactVectorIndex.hpp
         ExactVectorIndex.cpp
         VectorIndex.hpp
         VectorIndex.cpp
         IVectorIndex.hpp
         IVectorIndex.cpp
+    lexical.hpp
     lexical/
-        LexicalApi.hpp
         Tokenizer.hpp
         Tokenizer.cpp
         Lexical.hpp
@@ -69,25 +73,26 @@ src/agent_memory/
         ITokenizer.cpp
         StandardTokenizer.hpp
         StandardTokenizer.cpp
+    memory.hpp
     memory/
-        Memory.hpp
         MemoryObject.hpp
         MemoryObject.cpp
+    retrieval.hpp
     retrieval/
-        RetrievalApi.hpp
         Retrieval.hpp
         Retrieval.cpp
         IRetriever.hpp
         IRetriever.cpp
+    infrastructure.hpp
     infrastructure/
+        mdbx.hpp
         mdbx/
-            Mdbx.hpp
             MdbxDocumentStorage.hpp
             MdbxDocumentStorage.cpp
             MdbxResourceManifestStorage.hpp
             MdbxResourceManifestStorage.cpp
+    storage.hpp
     storage/
-        Storage.hpp
         IDocumentStorage.hpp
         IDocumentStorage.cpp
         IResourceManifestStorage.hpp
@@ -132,7 +137,7 @@ tests/
 Consumers include project headers through the `agent_memory/` prefix:
 
 ```cpp
-#include <agent_memory/AgentMemory.hpp>
+#include <agent_memory.hpp>
 ```
 
 The build interface currently exposes `src/` as the public include root.

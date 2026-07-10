@@ -5,8 +5,8 @@
 /// \file infrastructure.hpp
 /// \brief Public aggregate include for optional infrastructure adapters.
 
-#include <agent_memory/storage.hpp>
-
-#include <agent_memory/infrastructure/mdbx/Mdbx.hpp>
+#include "storage/IDocumentStorage.hpp"
+#include "storage/IResourceManifestStorage.hpp"
+#include "infrastructure/mdbx.hpp"
 
 #endif

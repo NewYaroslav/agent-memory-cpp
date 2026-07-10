@@ -5,7 +5,7 @@
 /// \file IDocumentStorage.hpp
 /// \brief Storage contract for source documents and derived chunks.
 
-#include <agent_memory/domain/Domain.hpp>
+#include <agent_memory/domain.hpp>
 
 #include <optional>
 #include <vector>

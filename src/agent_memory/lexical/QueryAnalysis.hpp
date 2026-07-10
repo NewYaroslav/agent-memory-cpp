@@ -11,7 +11,7 @@
 /// receive passthrough values from identity defaults and may later swap in
 /// smarter implementations.
 
-#include <agent_memory/domain/Domain.hpp>
+#include <agent_memory/domain.hpp>
 
 #include <cstddef>
 #include <string>

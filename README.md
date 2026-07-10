@@ -110,64 +110,40 @@ Headers and implementation files live side by side under `src/`:
 external/
 |-- libmdbx/
 `-- mdbx-containers/
-src/agent_memory/
-|-- AgentMemory.hpp
-|-- chat/
-|   |-- Chat.hpp
-|   `-- Message.hpp
-|-- core/
-|   |-- Core.hpp
-|   |-- LibraryInfo.hpp
-|   `-- LibraryInfo.cpp
-|-- domain/
-|   |-- Domain.hpp
-|   |-- Document.hpp
-|   |-- Identifiers.hpp
-|   |-- Metadata.hpp
-|   |-- Resource.hpp
-|   `-- SourceKind.hpp
-|-- embedding/
-|   |-- EmbeddingApi.hpp
-|   |-- Embedding.hpp
-|   `-- IEmbedder.hpp
-|-- eval/
-|   |-- Eval.hpp
-|   `-- Evaluation.hpp
-|-- ingestion/
-|   |-- Ingestion.hpp
-|   `-- ResourceIndexer.hpp
-|-- index/
-|   |-- Index.hpp
-|   |-- ExactVectorIndex.hpp
-|   |-- VectorIndex.hpp
-|   `-- IVectorIndex.hpp
-|-- lexical/
-|   |-- LexicalApi.hpp
-|   |-- Lexical.hpp
-|   |-- ExactLexicalIndex.hpp
-|   `-- StandardTokenizer.hpp
-|-- memory/
-|   |-- Memory.hpp
-|   `-- MemoryObject.hpp
-|-- retrieval/
-|   |-- RetrievalApi.hpp
-|   |-- Retrieval.hpp
-|   `-- IRetriever.hpp
-|-- infrastructure/
-|   `-- mdbx/
-|       |-- Mdbx.hpp
-|       |-- MdbxDocumentStorage.hpp
-|       `-- MdbxResourceManifestStorage.hpp
-|-- storage/
-|   |-- Storage.hpp
-|   |-- IDocumentStorage.hpp
-|   `-- IResourceManifestStorage.hpp
+src/
+|-- agent_memory.hpp
+`-- agent_memory/
+    |-- chat.hpp
+    |-- core.hpp
+    |-- domain.hpp
+    |-- embedding.hpp
+    |-- eval.hpp
+    |-- facts.hpp
+    |-- index.hpp
+    |-- infrastructure.hpp
+    |-- ingestion.hpp
+    |-- lexical.hpp
+    |-- memory.hpp
+    |-- retrieval.hpp
+    |-- storage.hpp
+    |-- embedding/
+    |   |-- embedding_types.hpp
+    |   |-- enums.hpp
+    |   `-- IEmbedder.hpp
+    |-- infrastructure/
+    |   |-- mdbx.hpp
+    |   `-- mdbx/
+    |       |-- MdbxDocumentStorage.hpp
+    |       `-- MdbxResourceManifestStorage.hpp
+    `-- storage/
+        |-- IDocumentStorage.hpp
+        `-- IResourceManifestStorage.hpp
 ```
 
-Consumers include public headers through the `agent_memory` include prefix:
+Consumers can include the full public aggregate through the include root:
 
 ```cpp
-#include <agent_memory/AgentMemory.hpp>
+#include <agent_memory.hpp>
 ```
 
 ## Storage
@@ -188,7 +164,7 @@ additional backends can be added later.
 When `AGENT_MEMORY_ENABLE_MDBX=ON`, the library also builds
 `agent_memory/infrastructure/mdbx/MdbxDocumentStorage.hpp`, an MDBX-backed
 implementation of `IDocumentStorage`. Optional infrastructure headers are not
-included by the aggregate `AgentMemory.hpp`; include the adapter header
+included by the aggregate `agent_memory.hpp`; include the adapter header
 directly when MDBX support is enabled.
 
 ## Embeddings

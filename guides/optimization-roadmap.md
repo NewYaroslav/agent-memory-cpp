@@ -73,7 +73,7 @@ AGENT_MEMORY_HAS_EIGEN
 
 - Use `Eigen::Map<const Eigen::VectorXf>` over `Embedding::values` for dot,
   norm, cosine, batch scoring, centroid, averaging, and reranking experiments.
-- Keep Eigen out of `Embedding.hpp`, `IEmbedder.hpp`, `IEmbeddingStore`, and
+- Keep Eigen out of `embedding_types.hpp`, `IEmbedder.hpp`, `IEmbeddingStore`, and
   other dependency-free contracts.
 - Benchmark Eigen paths against the std-only baseline before making them the
   default for any algorithm.

@@ -26,7 +26,8 @@ add_library(agent_memory STATIC
     src/agent_memory/domain/MetadataFilter.cpp
     src/agent_memory/domain/Resource.cpp
     src/agent_memory/domain/SourceKind.cpp
-    src/agent_memory/embedding/Embedding.cpp
+    src/agent_memory/embedding/embedding_types.cpp
+    src/agent_memory/embedding/enums.cpp
     src/agent_memory/embedding/IEmbedder.cpp
     src/agent_memory/eval/Evaluation.cpp
     src/agent_memory/facts/Fact.cpp

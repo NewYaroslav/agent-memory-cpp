@@ -5,9 +5,11 @@
 /// \file index.hpp
 /// \brief Public aggregate include for vector index domain headers.
 
-#include <agent_memory/domain.hpp>
-#include <agent_memory/embedding.hpp>
+#include "domain.hpp"
+#include "embedding.hpp"
 
-#include <agent_memory/index/Index.hpp>
+#include "index/ExactVectorIndex.hpp"
+#include "index/IVectorIndex.hpp"
+#include "index/VectorIndex.hpp"
 
 #endif

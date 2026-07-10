@@ -5,7 +5,7 @@
 /// \file Evaluation.hpp
 /// \brief Dependency-free retrieval evaluation value types and metrics.
 
-#include <agent_memory/domain/Domain.hpp>
+#include <agent_memory/domain.hpp>
 
 #include <cstddef>
 #include <cstdint>

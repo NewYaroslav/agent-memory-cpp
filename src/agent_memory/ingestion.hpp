@@ -5,10 +5,10 @@
 /// \file ingestion.hpp
 /// \brief Public aggregate include for ingestion and targeted reindexing headers.
 
-#include <agent_memory/embedding.hpp>
-#include <agent_memory/index.hpp>
-#include <agent_memory/storage.hpp>
+#include "embedding.hpp"
+#include "index.hpp"
+#include "storage.hpp"
 
-#include <agent_memory/ingestion/Ingestion.hpp>
+#include "ingestion/ResourceIndexer.hpp"
 
 #endif

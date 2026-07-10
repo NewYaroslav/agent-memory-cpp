@@ -5,6 +5,6 @@
 /// \file core.hpp
 /// \brief Public aggregate include for core domain headers.
 
-#include <agent_memory/core/Core.hpp>
+#include "core/LibraryInfo.hpp"
 
 #endif

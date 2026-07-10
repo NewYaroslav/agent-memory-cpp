@@ -5,8 +5,7 @@
 /// \file eval.hpp
 /// \brief Public aggregate include for retrieval evaluation domain headers.
 
-#include <agent_memory/domain.hpp>
-
-#include <agent_memory/eval/Eval.hpp>
+#include "domain.hpp"
+#include "eval/Evaluation.hpp"
 
 #endif

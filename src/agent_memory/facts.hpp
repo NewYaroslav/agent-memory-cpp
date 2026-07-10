@@ -5,9 +5,8 @@
 /// \file facts.hpp
 /// \brief Public aggregate include for structured facts domain headers.
 
-#include <agent_memory/domain.hpp>
-#include <agent_memory/memory.hpp>
-
-#include <agent_memory/facts/Facts.hpp>
+#include "domain.hpp"
+#include "memory.hpp"
+#include "facts/Fact.hpp"
 
 #endif

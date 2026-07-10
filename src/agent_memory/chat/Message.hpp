@@ -9,7 +9,7 @@
 /// chains, author attribution). This header reserves the value types so a
 /// future `ChatThreadSearch` retrieval mode has a stable payload contract.
 
-#include <agent_memory/domain/Domain.hpp>
+#include <agent_memory/domain.hpp>
 
 #include <cstdint>
 #include <optional>

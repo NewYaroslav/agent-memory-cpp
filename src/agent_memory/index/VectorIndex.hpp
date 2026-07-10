@@ -5,8 +5,8 @@
 /// \file VectorIndex.hpp
 /// \brief Dependency-free vector index value types.
 
-#include <agent_memory/domain/Domain.hpp>
-#include <agent_memory/embedding/Embedding.hpp>
+#include <agent_memory/domain.hpp>
+#include <agent_memory/embedding/embedding_types.hpp>
 
 #include <cstddef>
 #include <string>

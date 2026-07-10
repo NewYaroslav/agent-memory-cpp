@@ -1,4 +1,4 @@
-#include <agent_memory/AgentMemory.hpp>
+#include <agent_memory.hpp>
 
 #include <iostream>
 #include <string_view>
@@ -68,35 +68,42 @@ int main() {
         return fail("embedding dimension must match value count");
     }
 
-    agent_memory::EmbeddingPurpose parsed_purpose = agent_memory::EmbeddingPurpose::Custom;
-    if(!agent_memory::parse_embedding_purpose("Document", parsed_purpose)) {
+    const auto parsed_purpose =
+        agent_memory::to_enum<agent_memory::EmbeddingPurpose>("Document");
+    if(!parsed_purpose.success) {
         return fail("embedding purpose parser must accept mixed-case input");
     }
 
-    if(parsed_purpose != agent_memory::EmbeddingPurpose::Document) {
+    if(parsed_purpose.value != agent_memory::EmbeddingPurpose::Document) {
         return fail("embedding purpose parser returned unexpected value");
     }
 
-    if(agent_memory::to_string(parsed_purpose) != "document") {
+    if(agent_memory::to_string(parsed_purpose.value) != "document") {
         return fail("embedding purpose names must be stable lowercase strings");
     }
 
-    agent_memory::SimilarityMetric parsed_metric = agent_memory::SimilarityMetric::Euclidean;
-    if(!agent_memory::parse_similarity_metric("dot_product", parsed_metric)) {
+    const auto parsed_metric =
+        agent_memory::to_enum<agent_memory::SimilarityMetric>("dot_product");
+    if(!parsed_metric.success) {
         return fail("similarity metric parser must accept stable lowercase input");
     }
 
-    if(parsed_metric != agent_memory::SimilarityMetric::DotProduct) {
+    if(parsed_metric.value != agent_memory::SimilarityMetric::DotProduct) {
         return fail("similarity metric parser returned unexpected value");
     }
 
-    agent_memory::PoolingMode parsed_pooling = agent_memory::PoolingMode::Custom;
-    if(!agent_memory::parse_pooling_mode("Last_Token", parsed_pooling)) {
+    const auto parsed_pooling =
+        agent_memory::to_enum<agent_memory::PoolingMode>("Last_Token");
+    if(!parsed_pooling.success) {
         return fail("pooling mode parser must accept mixed-case input");
     }
 
-    if(parsed_pooling != agent_memory::PoolingMode::LastToken) {
+    if(parsed_pooling.value != agent_memory::PoolingMode::LastToken) {
         return fail("pooling mode parser returned unexpected value");
+    }
+
+    if(agent_memory::to_enum<agent_memory::EmbeddingPurpose>("unknown_purpose")) {
+        return fail("unknown embedding purpose must not parse");
     }
 
     FakeEmbedder embedder;

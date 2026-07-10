@@ -5,6 +5,8 @@
 /// \file embedding.hpp
 /// \brief Public aggregate include for embedding domain headers.
 
-#include <agent_memory/embedding/EmbeddingApi.hpp>
+#include "embedding/enums.hpp"
+#include "embedding/embedding_types.hpp"
+#include "embedding/IEmbedder.hpp"
 
 #endif

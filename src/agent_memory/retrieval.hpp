@@ -5,11 +5,14 @@
 /// \file retrieval.hpp
 /// \brief Public aggregate include for retrieval domain headers.
 
-#include <agent_memory/domain.hpp>
-#include <agent_memory/embedding.hpp>
-#include <agent_memory/lexical.hpp>
-#include <agent_memory/memory.hpp>
+#include "domain.hpp"
+#include "embedding.hpp"
+#include "lexical.hpp"
+#include "memory.hpp"
 
-#include <agent_memory/retrieval/RetrievalApi.hpp>
+#include "retrieval/HybridRetrievalEngine.hpp"
+#include "retrieval/IRetrievalEngine.hpp"
+#include "retrieval/IRetriever.hpp"
+#include "retrieval/Retrieval.hpp"
 
 #endif

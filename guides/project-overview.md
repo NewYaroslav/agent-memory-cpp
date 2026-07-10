@@ -12,7 +12,7 @@ The repository is in the project-skeleton stage. The current code provides:
 
 - static library target `agent_memory`;
 - public alias `agent_memory::agent_memory`;
-- public aggregate header `agent_memory/AgentMemory.hpp`;
+- public aggregate header `agent_memory.hpp`;
 - `core::LibraryInfo` smoke API;
 - dependency-free document, chunk, metadata, and source-kind primitives;
 - dependency-free resource revision and manifest value types;

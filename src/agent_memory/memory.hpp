@@ -5,9 +5,9 @@
 /// \file memory.hpp
 /// \brief Public aggregate include for memory hierarchy domain headers.
 
-#include <agent_memory/domain.hpp>
-#include <agent_memory/lexical.hpp>
+#include "domain.hpp"
+#include "lexical.hpp"
 
-#include <agent_memory/memory/Memory.hpp>
+#include "memory/MemoryObject.hpp"
 
 #endif

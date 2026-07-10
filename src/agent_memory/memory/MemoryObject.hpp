@@ -9,7 +9,7 @@
 /// to an aggregated MemoryCard. This header reserves the value types so
 /// future retrieval stages can populate them without churn.
 
-#include <agent_memory/domain/Domain.hpp>
+#include <agent_memory/domain.hpp>
 #include <agent_memory/lexical/Lexical.hpp>
 
 #include <cstdint>

@@ -5,8 +5,7 @@
 /// \file chat.hpp
 /// \brief Public aggregate include for chat memory domain headers.
 
-#include <agent_memory/domain.hpp>
-
-#include <agent_memory/chat/Chat.hpp>
+#include "domain.hpp"
+#include "chat/Message.hpp"
 
 #endif

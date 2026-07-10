@@ -5,6 +5,11 @@
 /// \file domain.hpp
 /// \brief Public aggregate include for base domain value types.
 
-#include <agent_memory/domain/Domain.hpp>
+#include "domain/Document.hpp"
+#include "domain/Identifiers.hpp"
+#include "domain/Metadata.hpp"
+#include "domain/MetadataFilter.hpp"
+#include "domain/Resource.hpp"
+#include "domain/SourceKind.hpp"
 
 #endif
