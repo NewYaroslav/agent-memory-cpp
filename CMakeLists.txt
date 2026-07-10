@@ -16,6 +16,7 @@ endif()
 
 include(cmake/AgentMemoryOptions.cmake)
 include(cmake/AgentMemoryDependencies.cmake)
+include(cmake/AgentMemoryJson.cmake)
 
 add_library(agent_memory STATIC
     src/agent_memory/chat/Message.cpp
@@ -69,6 +70,7 @@ target_include_directories(agent_memory
 target_compile_definitions(agent_memory
     PUBLIC
         AGENT_MEMORY_HAS_MDBX=$<BOOL:${AGENT_MEMORY_ENABLE_MDBX}>
+        AGENT_MEMORY_ENABLE_JSON=$<BOOL:${AGENT_MEMORY_ENABLE_JSON}>
 )
 
 set_target_properties(agent_memory PROPERTIES
@@ -94,6 +96,18 @@ if(AGENT_MEMORY_ENABLE_MDBX)
     target_link_libraries(agent_memory
         PRIVATE
             ${AGENT_MEMORY_MDBX_CONTAINERS_TARGET}
+    )
+endif()
+
+agent_memory_provide_json(AGENT_MEMORY_JSON_TARGET)
+if(AGENT_MEMORY_ENABLE_JSON)
+    target_sources(agent_memory
+        PRIVATE
+            src/agent_memory/eval/DatasetLoader.cpp
+    )
+    target_link_libraries(agent_memory
+        PRIVATE
+            ${AGENT_MEMORY_JSON_TARGET}
     )
 endif()
 

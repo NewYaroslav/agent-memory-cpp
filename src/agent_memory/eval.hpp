@@ -7,5 +7,10 @@
 
 #include "domain.hpp"
 #include "eval/Evaluation.hpp"
+#include "eval/RetrievalEvalRunner.hpp"
+
+#if defined(AGENT_MEMORY_ENABLE_JSON) && AGENT_MEMORY_ENABLE_JSON
+#include "eval/DatasetLoader.hpp"
+#endif
 
 #endif
