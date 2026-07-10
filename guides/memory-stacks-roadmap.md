@@ -1096,6 +1096,7 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 - `compaction-roadmap.md` — CompactionWorker, job types, handoff structure.
 - `runtime-services-roadmap.md` — PromptCache, AsyncIndexer, WriteGate.
 - `cli-roadmap.md` — agent-memory-cli target.
+- `guides/related-projects.md` — ландшафтная карта (mem0 / Cognee / Zep / Graphiti для direct competitors, FAISS / hnswlib / USearch / sqlite-vec для sister libraries) и cross-project benchmark plan.
 
 ## 16. Recommended Implementation Order
 

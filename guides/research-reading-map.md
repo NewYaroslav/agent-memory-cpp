@@ -4,6 +4,11 @@ Curated bibliography с маппингом paper → roadmap decision для `ag
 
 > Не comprehensive bibliography. Только papers, которые непосредственно информировали решения в roadmap'ах проекта. Reading order — по разделам (от foundational к experimental).
 
+## Related resources
+
+Этот документ покрывает academic papers (curated bibliography с paper → roadmap decision mapping).
+Для open-source projects (FAISS, hnswlib, USearch, sqlite-vec, mem0, Graphiti, Cognee, Letta и др.) см. `guides/related-projects.md` с cross-project benchmark plan.
+
 ## 1. Lexical Retrieval
 
 ### BM25 / BM25F

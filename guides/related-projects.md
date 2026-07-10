@@ -1,0 +1,143 @@
+# related-projects.md
+
+Landscape map для agent-memory-cpp: позиционирование, sister library references, cross-project benchmark plan. Companion к `guides/research-reading-map.md` (academic papers) и `guides/memory-stacks-roadmap.md` (canonical spec).
+
+## 1. Позиционирование
+
+agent-memory-cpp — embedded C++17 memory/retrieval engine для AI agents с:
+  - MDBX storage.
+  - Typed KnowledgeUnits (Chunk / QAPair / Fact / Entity / Relation / Event / Summary / ConversationEpisode / CompiledArticle / Task / Decision).
+  - Capability-aware MemoryProfileSpec (BasicRag / AgentLTM / CompiledWiki и др.) с per-stack DBIs.
+  - MDBX-based revision-safe indexes (LexicalPosting.unit_revision).
+  - BM25/vector/graph/temporal retrieval с multi-mode density (Exact / BinaryCF / BinaryOnly / ApproximateVector / Hnsw).
+  - Optional encoders (RandomHyperplaneLSH / AutoencoderBinarizer).
+  - CompactionWorker с 9 job types.
+  - Cross-cutting runtime services.
+
+Niche:
+  - НЕ direct конкурент mem0/Cognee/Letta/Zep как end-user platform.
+  - LOW-LEVEL embeddable core, может быть storage/retrieval layer для таких систем.
+  - Bench-target для embedded/local-first сценариев, где Python-платформа не подходит.
+
+Direct differentiators:
+  - C++17 static library, zero Python deps.
+  - Capability-aware MemoryProfileSpec с 7 готовыми спецификациями.
+  - Multi-mode IDenseIndex (5 modes) с per-mode DBI mapping.
+  - Per-unit revision-stale-filter (не generation-based).
+  - MemoryStack открытие одной операцией (path + spec) с capability-aware DBI creation.
+
+## 2. Direct competitors / sister projects (closest in API surface)
+
+| Project | Layer | Primary focus | Differentiator vs agent-memory-cpp |
+|---|---|---|---|
+| mem0 | Python SDK / server | Universal memory layer для AI agents. Multi-level memory, user/session/agent state, hybrid search, BM25, entity extraction, temporal reasoning. | agent-memory-cpp НЕ SDK; C++17 core. mem0 = продукт/обёртка, мы = primitive для embedding. |
+| Letta / MemGPT | Python платформа | Stateful agents с advanced memory + runtime + self-improve. | Letta = agent runtime platform. Мы = memory/retrieval core без agent loop. Потенциальный customer: наш core как storage backend для Letta. |
+| Graphiti / Zep | Python library | Temporal context graphs для AI agents. Bi-temporal facts, provenance/source data, incremental updates, hybrid retrieval. | **Самый близкий конкурент по temporal+provenance части**. Python-only, не embedded. Наша ниша: embedded C++17 с теми же свойствами (TemporalComponent + GraphEdge). |
+| Cognee | Python platform | Self-hosted AI memory platform с persistent long-term memory, knowledge graph, vector embeddings, graph reasoning, ontology generation. | Cognee = Python платформа с UI/ingestion. Мы = storage/retrieval core для embedding в C++ apps. |
+| A-MEM / AgenticMemory | Research prototype | Zettelkasten-style agentic memory: dynamic organization, notes, structured attributes, links, memory evolution. (arXiv:2502.12110) | Research-grade, не production. Inspirational для memory evolution (CompactionWorker + SummaryTreeJob). |
+| LightRAG | Python framework | Dual-level graph + vector RAG (EMNLP 2025). | LightRAG = document RAG framework, не typed agent memory. Совпадает по hybrid retrieval pattern (graph + vector + RRF). |
+| Microsoft GraphRAG | Python pipeline | Modular graph-based RAG для corpora. Community detection, global questions. | Подобен для community detection + global questions (CommunitySummaryJob reference). Мы ближе к agent memory, GraphRAG — к document corpora. |
+| LlamaIndex | Python framework | Document agent + OCR + indices/graphs/retrievers/query engines/reranking. | LlamaIndex = огромный application framework. Совпадает по retriever interface pattern (IRetriever, HybridRetriever). Не конкуренты, разные abstraction levels. |
+
+## 3. Sister library references (C++ engineering inspiration)
+
+| Project | Что у нас похожего | Что можно позаимствовать |
+|---|---|---|
+| FAISS | IDenseIndex 5 modes. Codec registry. GPU k-selection. | Index factory pattern, codec registry, multi-threading per index. Не копировать API — брать архитектурные идеи. |
+| hnswlib | HnswVectorIndex. | Header-only C++11 HNSW с incremental insert/update/delete. Adapter оборачивает hnswlib::HierarchicalNSW за нашим IDenseIndex interface. |
+| USearch | IDenseIndex + binary signatures + SIMD HammingTopK strategy. | C++ HNSW + SIMD opt + binary Tanimoto/Sørensen similarities. Reference для Eigen/SIMD стратегии (AVX2/AVX-512 POPCNT). Disk-backed index experiments. |
+| sqlite-vec | Embedded-C++ static library + vector search. Pure C, no deps, float/int8/binary. | Reference для embedded-архитектуры: vector search без external DB server. |
+| Tantivy (Rust) | BM25 search, embedded-first. | Tokenization design, BM25 scoring. Cross-implementation reference для BM25 correctness. |
+
+## 4. C++ embeddable memory stores (architectural reference)
+
+| Project | Что у нас похожего | Что можно позаимствовать |
+|---|---|---|
+| DuckDB | Embedded analytical DB в одном файле. | "Embedded-first DB as library" deployment model. Single-file DB, no external server. Совпадает с нашим подходом. |
+| SQLite ecosystem (FTS5, RTREE) | BM25 + spatial indexes в embedded DB. | FTS5 — BM25 implementation, posting structure. RTREE — spatial index design idea. |
+| libmdbx / LMDB | MDBX под капотом нашего проекта. | Direct mdbx API. Single-process design. Уже используется через mdbx-containers обёртку. |
+| RocksDB / LevelDB | LSM-tree embedded DB. | Write-optimized storage вариант для M3+ (если MDBX B-tree становится узким местом). Сейчас НЕ в scope. |
+
+## 5. Cross-project benchmark plan (для M1+)
+
+Когда MemoryStack готов к M1 eval:
+
+**Retrieval primitives (datasets: BEIR / MS MARCO / bespoke):**
+  - vs FAISS: ExactVectorIndex vs FAISS IndexFlatL2 (memory footprint, query latency, throughput).
+  - vs FAISS: HnswVectorIndex vs FAISS IndexHNSWFlat (Recall@10 vs latency tradeoff, build time).
+  - vs FAISS: BinaryOnlyIndex vs FAISS IndexBinaryFlat + IVF.
+  - vs hnswlib: HnswVectorIndex vs hnswlib ground-truth.
+  - vs sqlite-vec: ExactVectorIndex vs sqlite-vec на SQLite (как reference embedded vector search).
+  - vs USearch: HnswVectorIndex vs USearch на тех же datasets (Recall@K curves).
+
+**BM25 search:**
+  - vs Tantivy (Rust) или Lucene (Java, JVM overhead отдельно): BM25 scoring throughput per document.
+  - Использовать BEIR datasets для retrieval benchmark.
+
+**Layer 2 integrational (не прямые benchmarks, но positioning):**
+  - vs mem0 (Python): cross-language integration test (наш C++ + их Python SDK через gRPC/IPC). Демонстрирует что наш core доступен из Python как низкоуровневый backend.
+  - vs Graphiti: temporal graph benchmark на их test dataset, чтобы показать что наша embedded C++ версия не уступает их Python production.
+
+**Ожидаемые позиции в benchmarks (M1):**
+  - On Retrieval@K для семантических queries: comparable with FAISS, hnswlib (в пределах 0.95-1.0× их Recall@10 при том же latency budget).
+  - On BM25: comparable с Tantivy (corpus-dependent, ±5%).
+  - On storage: выигрываем благодаря MDBX + capability-aware DBIs (нет over-fetch для неиспользуемых типов).
+  - On latency: выигрываем благодаря zero-copy mmap + per-stack tuning.
+
+## 6. Architecture inspiration notes (что позаимствовать из каждого)
+
+- **Graphiti / Zep**: bi-temporal context graph pattern с edge-level temporal metadata (valid_from / valid_until). Мы уже делаем через TemporalComponent + GraphEdge с weight/last_used_at/valid_until_ms.
+- **Cognee**: knowledge graph + community detection для "global questions". У нас CommunitySummaryJob (M2+, GraphRAG-style).
+- **mem0**: explicit fact extraction с slot-based QA retrieval. У нас QALookup slot в QAKB profile.
+- **Letta / MemGPT**: agent context block architecture (Persona + Memory + Recent). У нас ContextBlock / Context через ContextBuilder.
+- **LlamaIndex**: retriever interface (IUnitRetriever), query engine (= HybridRetriever orchestration), exports для observability.
+- **A-MEM**: memory evolution через compaction (Compaction + Merge + SummaryPromotion).
+- **FAISS**: index factory pattern + codec registry для разных представлений векторов (Float / Float16 / Int8 / Binary / Matryoshka / PQ).
+- **hnswlib**: header-only C++11 с incremental insert/delete (без build-then-load pattern). Adapter option для нашего HnswVectorIndex.
+- **USearch**: SIMD-first design для binary embeddings (HammingTopK kernel).
+- **DuckDB / SQLite-vec**: "single-file DB as library" deployment model — мы тоже.
+- **Tantivy**: BM25 tokenization edge-cases (Cyrillic, CJK, identifiers in code).
+
+## 7. Open questions / roadmap items (из конкурентного анализа)
+
+- M1: как наши MemoryStacks сравниваются с mem0/Cognee/Zep real-world performance на их test datasets?
+- M2: Bi-temporal knowledge graph (Graphiti-style edge-level TTL) — нужен ли отдельный edge-level TTL job? (deferred M2+)
+- M2: Community detection (Leiden/Louvain) для CommunitySummaryJob — брать готовую C++ библиотеку или своя реализация? (deferred M2+)
+- M2: SPLADE / ColBERT adapters — пробовать интегрировать готовые реализации или LLM-distilled sparse vectors?
+- M3: Distributed scope routing — у mem0 и Zep это multi-tenant. У нас пока single-process. (out of scope, research)
+- M3: Embedded LLM distillation (compact embedding-LLM без external API) — uSearch-style или MiniLLM.
+
+## 8. References (cross-link)
+
+- guides/memory-stacks-roadmap.md — canonical spec.
+- guides/research-reading-map.md — academic papers (24 curated, paper → roadmap decision).
+- guides/optimization-roadmap.md — retrieval/index engineering.
+- guides/knowledge-base-roadmap.md — retrieval + eval pipeline.
+- guides/lexical-search-roadmap.md — BM25F + projections + Cyrillic morphology.
+- ai-agent-playbook/concepts/ — общий агентский knowledge base (СВИНОПАС, Anna_AI, GraphRAG и др.).
+
+## 9. External references
+
+### Direct competitors:
+- mem0: https://github.com/mem0ai/mem0
+- Letta: https://github.com/letta-ai/letta
+- Graphiti: https://github.com/getzep/graphiti
+- Zep: https://github.com/getzep/zep
+- Cognee: https://github.com/topoteretes/cognee
+- A-MEM: https://arxiv.org/abs/2502.12110 (paper), GitHub: WujiangXu/AgenticMemory и agiresearch/A-mem
+- LightRAG: https://github.com/HKUDS/LightRAG
+- Microsoft GraphRAG: https://github.com/microsoft/graphrag
+- LlamaIndex: https://github.com/run-llama/llama_index
+
+### C++ sister libraries:
+- FAISS: https://github.com/facebookresearch/faiss
+- hnswlib: https://github.com/nmslib/hnswlib
+- USearch: https://github.com/unum-cloud/usearch
+- sqlite-vec: https://github.com/asg017/sqlite-vec
+- Tantivy: https://github.com/quickwit-oss/tantivy
+
+### Embedded storage reference:
+- DuckDB: https://duckdb.org/
+- libmdbx: https://github.com/erthink/libmdbx
+- LMDB: https://github.com/LMDB/lmdb
+- RocksDB: https://github.com/facebook/rocksdb
