@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <numeric>
 #include <set>
+#include <stdexcept>
+#include <utility>
 
 namespace agent_memory {
 
@@ -16,34 +19,59 @@ namespace agent_memory {
             std::vector<std::int32_t> positive_grades;
         };
 
-        /// \brief Returns the explicit hit rank or falls back to one-based vector position.
-        [[nodiscard]] std::size_t effective_rank(
-            const RetrievalRunHit& hit,
-            std::size_t position
-        ) noexcept {
-            if(hit.rank != 0) {
-                return hit.rank;
+        using QueryModes = std::map<std::string, EvalQueryAnswerMode>;
+
+        /// \brief Builds query-id mode map and rejects ambiguous query ids.
+        [[nodiscard]] QueryModes build_query_modes(
+            const std::vector<EvalQuery>& queries
+        ) {
+            QueryModes result;
+            for(const auto& query : queries) {
+                if(query.id.empty()) {
+                    throw std::invalid_argument("evaluation query id must not be empty");
+                }
+                const auto inserted = result.emplace(query.id, query.answer_mode);
+                if(!inserted.second) {
+                    throw std::invalid_argument("duplicate evaluation query id");
+                }
             }
-            return position + 1;
+            return result;
         }
 
         /// \brief Builds a query-id to relevance-judgment map and sorted ideal grades.
         ///
-        /// Invalid qrels with empty ids or negative grades are ignored. Positive
-        /// grades are sorted descending once so nDCG can compute IDCG cheaply.
+        /// Positive grades are sorted descending once so nDCG can compute IDCG cheaply.
         [[nodiscard]] std::map<std::string, QueryJudgments> build_judgment_map(
-            const std::vector<RelevanceJudgment>& judgments
+            const std::vector<RelevanceJudgment>& judgments,
+            const QueryModes& query_modes
         ) {
             std::map<std::string, QueryJudgments> result;
             for(const auto& judgment : judgments) {
                 if(judgment.query_id.empty() || judgment.item_id.empty()) {
-                    continue;
+                    throw std::invalid_argument(
+                        "relevance judgment query_id and item_id must not be empty"
+                    );
                 }
                 if(judgment.relevance_grade < 0) {
-                    continue;
+                    throw std::invalid_argument(
+                        "relevance judgment grade must not be negative"
+                    );
+                }
+                if(query_modes.find(judgment.query_id) == query_modes.end()) {
+                    throw std::invalid_argument(
+                        "relevance judgment references an unknown query id"
+                    );
                 }
 
                 auto& query_judgments = result[judgment.query_id];
+                if(
+                    query_judgments.grades_by_item.find(judgment.item_id) !=
+                    query_judgments.grades_by_item.end()
+                ) {
+                    throw std::invalid_argument(
+                        "duplicate relevance judgment for query/item pair"
+                    );
+                }
                 query_judgments.grades_by_item[judgment.item_id] =
                     judgment.relevance_grade;
             }
@@ -66,19 +94,94 @@ namespace agent_memory {
         }
 
         /// \brief Builds a query-id to retrieval-run map.
-        ///
-        /// Later duplicate query runs replace earlier ones, which mirrors the
-        /// "last writer wins" behavior used by benchmark result files.
         [[nodiscard]] std::map<std::string, const RetrievalQueryRun*> build_run_map(
-            const std::vector<RetrievalQueryRun>& query_runs
+            const std::vector<RetrievalQueryRun>& query_runs,
+            const QueryModes& query_modes
         ) {
             std::map<std::string, const RetrievalQueryRun*> result;
             for(const auto& query_run : query_runs) {
                 if(query_run.query_id.empty()) {
-                    continue;
+                    throw std::invalid_argument("retrieval run query_id must not be empty");
                 }
-                result[query_run.query_id] = &query_run;
+                if(query_modes.find(query_run.query_id) == query_modes.end()) {
+                    throw std::invalid_argument(
+                        "retrieval run references an unknown query id"
+                    );
+                }
+                if(query_run.latency_ms) {
+                    const auto latency = *query_run.latency_ms;
+                    if(!std::isfinite(latency) || latency < 0.0) {
+                        throw std::invalid_argument(
+                            "retrieval run latency_ms must be finite and non-negative"
+                        );
+                    }
+                }
+                const auto inserted = result.emplace(query_run.query_id, &query_run);
+                if(!inserted.second) {
+                    throw std::invalid_argument("duplicate retrieval run query id");
+                }
             }
+            return result;
+        }
+
+        /// \brief Returns hits in metric order and validates rank/score consistency.
+        [[nodiscard]] std::vector<RetrievalRunHit> normalize_hits(
+            const std::vector<RetrievalRunHit>& hits
+        ) {
+            std::vector<RetrievalRunHit> result = hits;
+            bool has_explicit_rank = false;
+            bool has_implicit_rank = false;
+            std::set<std::size_t> explicit_ranks;
+
+            for(const auto& hit : result) {
+                if(hit.item_id.empty()) {
+                    throw std::invalid_argument("retrieval hit item_id must not be empty");
+                }
+                if(!std::isfinite(static_cast<double>(hit.score))) {
+                    throw std::invalid_argument("retrieval hit score must be finite");
+                }
+                if(hit.rank == 0) {
+                    has_implicit_rank = true;
+                } else {
+                    has_explicit_rank = true;
+                    if(!explicit_ranks.insert(hit.rank).second) {
+                        throw std::invalid_argument(
+                            "duplicate explicit retrieval hit rank"
+                        );
+                    }
+                }
+            }
+
+            if(has_explicit_rank && has_implicit_rank) {
+                throw std::invalid_argument(
+                    "retrieval hits must not mix explicit and implicit ranks"
+                );
+            }
+
+            if(has_explicit_rank) {
+                std::sort(
+                    result.begin(),
+                    result.end(),
+                    [](const RetrievalRunHit& lhs, const RetrievalRunHit& rhs) {
+                        if(lhs.rank != rhs.rank) {
+                            return lhs.rank < rhs.rank;
+                        }
+                        return lhs.item_id < rhs.item_id;
+                    }
+                );
+            } else {
+                std::sort(
+                    result.begin(),
+                    result.end(),
+                    [](const RetrievalRunHit& lhs, const RetrievalRunHit& rhs) {
+                        if(lhs.score != rhs.score) {
+                            return lhs.score > rhs.score;
+                        }
+                        return lhs.item_id < rhs.item_id;
+                    }
+                );
+            }
+
             return result;
         }
 
@@ -110,7 +213,7 @@ namespace agent_memory {
             double result = 0.0;
             std::set<std::string> seen_items;
             for(std::size_t index = 0; index < hits.size(); ++index) {
-                const auto rank = effective_rank(hits[index], index);
+                const auto rank = index + 1;
                 if(rank == 0 || rank > cutoff) {
                     continue;
                 }
@@ -158,7 +261,7 @@ namespace agent_memory {
             std::size_t found = 0;
             std::set<std::string> found_items;
             for(std::size_t index = 0; index < hits.size(); ++index) {
-                const auto rank = effective_rank(hits[index], index);
+                const auto rank = index + 1;
                 if(rank == 0 || rank > cutoff) {
                     continue;
                 }
@@ -187,7 +290,7 @@ namespace agent_memory {
                     continue;
                 }
 
-                const auto rank = effective_rank(hits[index], index);
+                const auto rank = index + 1;
                 if(rank == 0) {
                     continue;
                 }
@@ -306,13 +409,22 @@ namespace agent_memory {
             metrics.ndcg_at.push_back(MetricAtK{cutoff, 0.0});
         }
 
-        const auto judgments_by_query = build_judgment_map(dataset.judgments);
-        const auto runs_by_query = build_run_map(run.queries);
+        const auto query_modes = build_query_modes(dataset.queries);
+        const auto judgments_by_query = build_judgment_map(
+            dataset.judgments,
+            query_modes
+        );
+        const auto runs_by_query = build_run_map(run.queries, query_modes);
 
         std::vector<double> latency_values;
         std::size_t no_answer_correct = 0;
 
         for(const auto& query : dataset.queries) {
+            if(query.answer_mode == EvalQueryAnswerMode::Ignore) {
+                ++metrics.ignored_query_count;
+                continue;
+            }
+
             const auto judgments_it = judgments_by_query.find(query.id);
             const QueryJudgments* query_judgments = nullptr;
             if(judgments_it != judgments_by_query.end()) {
@@ -329,14 +441,27 @@ namespace agent_memory {
             }
 
             const std::vector<RetrievalRunHit> empty_hits;
-            const auto& hits = query_run != nullptr ? query_run->hits : empty_hits;
+            const auto hits = normalize_hits(
+                query_run != nullptr ? query_run->hits : empty_hits
+            );
 
-            if(query_judgments == nullptr || query_judgments->positive_grades.empty()) {
+            if(query.answer_mode == EvalQueryAnswerMode::NoAnswer) {
+                if(query_judgments != nullptr && !query_judgments->positive_grades.empty()) {
+                    throw std::invalid_argument(
+                        "no-answer query must not have positive relevance judgments"
+                    );
+                }
                 ++metrics.no_answer_query_count;
                 if(hits.empty()) {
                     ++no_answer_correct;
                 }
                 continue;
+            }
+
+            if(query_judgments == nullptr || query_judgments->positive_grades.empty()) {
+                throw std::invalid_argument(
+                    "judged retrieval query must have positive relevance judgments"
+                );
             }
 
             ++metrics.judged_query_count;

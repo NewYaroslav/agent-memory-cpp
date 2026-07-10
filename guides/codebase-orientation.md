@@ -299,6 +299,9 @@ Retrieval evaluation value types and metric helpers live in
 - `evaluate_retrieval()` computes Recall@K, MRR, nDCG@K, no-answer accuracy,
   and latency summaries.
 
+Current MRR is intentionally unbounded. Add MRR@K in a follow-up benchmark
+runner PR once real run configuration and reporting needs are clearer.
+
 This layer intentionally does not load external datasets, invoke embedders, or
 own benchmark executables. Those belong in follow-up benchmark runner/tooling
 PRs.

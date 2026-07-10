@@ -15,6 +15,16 @@
 
 namespace agent_memory {
 
+    /// \brief Evaluation treatment for a query.
+    enum class EvalQueryAnswerMode {
+        /// \brief Query must have at least one positive relevance judgment.
+        JudgedRetrieval,
+        /// \brief Query is expected to have no answer in the corpus.
+        NoAnswer,
+        /// \brief Query is present in the dataset but excluded from metrics.
+        Ignore
+    };
+
     /// \brief Corpus item used by benchmark loaders and runners.
     struct EvalCorpusItem final {
         std::string id;
@@ -30,8 +40,12 @@ namespace agent_memory {
         std::string id;
         std::string text;
         std::string query_type;
+        /// \brief Runner hint for the requested retrieval depth.
+        /// \note evaluate_retrieval() does not clamp metrics by this value;
+        ///       metric cutoffs come from RetrievalEvaluationOptions.
         std::size_t limit = 10;
         std::vector<MetadataFilter> metadata_filters;
+        EvalQueryAnswerMode answer_mode = EvalQueryAnswerMode::JudgedRetrieval;
 
         [[nodiscard]] bool empty() const noexcept;
     };
@@ -108,9 +122,12 @@ namespace agent_memory {
         std::size_t query_count = 0;
         std::size_t judged_query_count = 0;
         std::size_t no_answer_query_count = 0;
+        std::size_t ignored_query_count = 0;
 
         std::vector<MetricAtK> recall_at;
         std::vector<MetricAtK> ndcg_at;
+        /// \brief Unbounded mean reciprocal rank over judged queries.
+        /// \note MRR@K is intentionally left for benchmark-runner follow-up PRs.
         double mrr = 0.0;
         double no_answer_accuracy = 0.0;
 
@@ -131,10 +148,13 @@ namespace agent_memory {
 
     /// \brief Computes retrieval metrics for a run against a dataset.
     ///
-    /// Queries with at least one positive relevance judgment participate in
-    /// Recall@K, MRR, and nDCG@K. Queries without positive judgments are treated
-    /// as no-answer cases and only participate in no_answer_accuracy.
-    /// Missing query runs are evaluated as empty hit lists.
+    /// JudgedRetrieval queries must have at least one positive relevance
+    /// judgment and participate in Recall@K, unbounded MRR, and nDCG@K.
+    /// NoAnswer queries participate only in no_answer_accuracy. Ignore queries
+    /// are counted and skipped. Missing query runs are evaluated as empty hit
+    /// lists.
+    /// \throws std::invalid_argument when query ids, qrels, runs, ranks,
+    ///         scores, or latency samples violate the evaluation contract.
     [[nodiscard]] RetrievalMetrics evaluate_retrieval(
         const RetrievalEvalDataset& dataset,
         const RetrievalRun& run,

@@ -229,6 +229,9 @@ and relevance judgments, then compute Recall@K, MRR, nDCG@K, no-answer accuracy,
 and latency summaries for BM25, exact vector, hybrid, and future approximate
 search runs.
 
+Current MRR is unbounded; MRR@K is reserved for follow-up benchmark runner
+work once reporting requirements are clearer.
+
 ## Ingestion
 
 Resource indexing starts with a small orchestration layer over existing

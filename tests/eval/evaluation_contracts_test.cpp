@@ -2,7 +2,9 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -23,6 +25,33 @@ namespace {
     ) {
         const auto value = agent_memory::metric_value_at(metrics, k);
         return value.value_or(-1.0);
+    }
+
+    template <typename Function>
+    bool throws_invalid_argument(Function&& function) {
+        try {
+            function();
+        } catch(const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    }
+
+    agent_memory::RetrievalEvalDataset single_judged_dataset() {
+        agent_memory::RetrievalEvalDataset dataset;
+        dataset.queries.push_back(agent_memory::EvalQuery{
+            "q",
+            "query",
+            "QALookup",
+            10,
+            {}
+        });
+        dataset.judgments.push_back(agent_memory::RelevanceJudgment{
+            "q",
+            "doc:a",
+            1
+        });
+        return dataset;
     }
 
 } // namespace
@@ -47,7 +76,7 @@ int main() {
         "q:one",
         "find alpha",
         "QALookup",
-        10,
+        1,
         {}
     });
     dataset.queries.push_back(agent_memory::EvalQuery{
@@ -62,7 +91,8 @@ int main() {
         "intentionally unanswerable",
         "NoAnswer",
         10,
-        {}
+        {},
+        agent_memory::EvalQueryAnswerMode::NoAnswer
     });
 
     dataset.judgments.push_back(agent_memory::RelevanceJudgment{
@@ -122,7 +152,7 @@ int main() {
     }
 
     if(metrics.no_answer_query_count != 1) {
-        return fail("metrics must count queries without positive relevance judgments");
+        return fail("metrics must count explicit no-answer queries");
     }
 
     if(!almost_equal(require_metric(metrics.recall_at, 1), 0.25)) {
@@ -130,7 +160,7 @@ int main() {
     }
 
     if(!almost_equal(require_metric(metrics.recall_at, 5), 1.0)) {
-        return fail("Recall@5 must include all relevant hits inside cutoff");
+        return fail("Recall@5 must use evaluation cutoffs, not EvalQuery::limit");
     }
 
     if(!almost_equal(metrics.mrr, 0.75)) {
@@ -169,6 +199,183 @@ int main() {
 
     if(!almost_equal(missing_metrics.no_answer_accuracy, 0.0)) {
         return fail("no-answer accuracy must reject non-empty no-answer results");
+    }
+
+    agent_memory::RetrievalRun score_sorted_run;
+    score_sorted_run.queries.push_back(agent_memory::RetrievalQueryRun{
+        "q",
+        {
+            agent_memory::RetrievalRunHit{"doc:x", 1.0F, 0, "bm25"},
+            agent_memory::RetrievalRunHit{"doc:a", 10.0F, 0, "dense"},
+        },
+        std::nullopt
+    });
+
+    const auto score_sorted_metrics = agent_memory::evaluate_retrieval(
+        single_judged_dataset(),
+        score_sorted_run,
+        agent_memory::RetrievalEvaluationOptions{{1}, {1}}
+    );
+    if(!almost_equal(require_metric(score_sorted_metrics.recall_at, 1), 1.0)) {
+        return fail("implicit-rank hits must be sorted by descending score");
+    }
+    if(!almost_equal(score_sorted_metrics.mrr, 1.0)) {
+        return fail("MRR must use normalized score order for implicit-rank hits");
+    }
+
+    agent_memory::RetrievalRun explicit_rank_run;
+    explicit_rank_run.queries.push_back(agent_memory::RetrievalQueryRun{
+        "q",
+        {
+            agent_memory::RetrievalRunHit{"doc:x", 10.0F, 2, "bm25"},
+            agent_memory::RetrievalRunHit{"doc:a", 1.0F, 1, "dense"},
+        },
+        std::nullopt
+    });
+
+    const auto explicit_rank_metrics = agent_memory::evaluate_retrieval(
+        single_judged_dataset(),
+        explicit_rank_run,
+        agent_memory::RetrievalEvaluationOptions{{1}, {1}}
+    );
+    if(!almost_equal(require_metric(explicit_rank_metrics.recall_at, 1), 1.0)) {
+        return fail("explicit ranks must define metric order before vector position");
+    }
+
+    agent_memory::RetrievalEvalDataset ignored_dataset = single_judged_dataset();
+    ignored_dataset.queries.push_back(agent_memory::EvalQuery{
+        "q:ignore",
+        "ignore me",
+        "Debug",
+        10,
+        {},
+        agent_memory::EvalQueryAnswerMode::Ignore
+    });
+    const auto ignored_metrics = agent_memory::evaluate_retrieval(
+        ignored_dataset,
+        score_sorted_run
+    );
+    if(ignored_metrics.ignored_query_count != 1 || ignored_metrics.judged_query_count != 1) {
+        return fail("ignored queries must be counted and skipped");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalEvalDataset invalid = single_judged_dataset();
+           invalid.queries.push_back(invalid.queries.front());
+           agent_memory::RetrievalRun empty_run;
+           (void)agent_memory::evaluate_retrieval(invalid, empty_run);
+       })) {
+        return fail("duplicate query ids must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalEvalDataset invalid = single_judged_dataset();
+           invalid.judgments.push_back(invalid.judgments.front());
+           agent_memory::RetrievalRun empty_run;
+           (void)agent_memory::evaluate_retrieval(invalid, empty_run);
+       })) {
+        return fail("duplicate qrels must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalEvalDataset invalid = single_judged_dataset();
+           invalid.judgments.push_back(agent_memory::RelevanceJudgment{
+               "q:unknown",
+               "doc:x",
+               1
+           });
+           agent_memory::RetrievalRun empty_run;
+           (void)agent_memory::evaluate_retrieval(invalid, empty_run);
+       })) {
+        return fail("qrels for unknown query ids must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalEvalDataset invalid = single_judged_dataset();
+           invalid.judgments.clear();
+           agent_memory::RetrievalRun empty_run;
+           (void)agent_memory::evaluate_retrieval(invalid, empty_run);
+       })) {
+        return fail("judged queries without positive qrels must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalRun invalid;
+           invalid.queries.push_back(agent_memory::RetrievalQueryRun{
+               "q",
+               {agent_memory::RetrievalRunHit{"doc:a", 1.0F, 0, "bm25"}},
+               std::nullopt
+           });
+           invalid.queries.push_back(invalid.queries.front());
+           (void)agent_memory::evaluate_retrieval(single_judged_dataset(), invalid);
+       })) {
+        return fail("duplicate run query ids must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalRun invalid;
+           invalid.queries.push_back(agent_memory::RetrievalQueryRun{
+               "q",
+               {
+                   agent_memory::RetrievalRunHit{"doc:a", 1.0F, 1, "bm25"},
+                   agent_memory::RetrievalRunHit{"doc:b", 2.0F, 1, "dense"},
+               },
+               std::nullopt
+           });
+           (void)agent_memory::evaluate_retrieval(single_judged_dataset(), invalid);
+       })) {
+        return fail("duplicate explicit ranks must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalRun invalid;
+           invalid.queries.push_back(agent_memory::RetrievalQueryRun{
+               "q",
+               {
+                   agent_memory::RetrievalRunHit{"doc:a", 1.0F, 1, "bm25"},
+                   agent_memory::RetrievalRunHit{"doc:b", 2.0F, 0, "dense"},
+               },
+               std::nullopt
+           });
+           (void)agent_memory::evaluate_retrieval(single_judged_dataset(), invalid);
+       })) {
+        return fail("mixed explicit and implicit ranks must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalRun invalid;
+           invalid.queries.push_back(agent_memory::RetrievalQueryRun{
+               "q",
+               {agent_memory::RetrievalRunHit{"doc:a", 1.0F, 0, "bm25"}},
+               -1.0
+           });
+           (void)agent_memory::evaluate_retrieval(single_judged_dataset(), invalid);
+       })) {
+        return fail("negative latency must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalRun invalid;
+           invalid.queries.push_back(agent_memory::RetrievalQueryRun{
+               "q",
+               {agent_memory::RetrievalRunHit{"doc:a", 1.0F, 0, "bm25"}},
+               std::numeric_limits<double>::quiet_NaN()
+           });
+           (void)agent_memory::evaluate_retrieval(single_judged_dataset(), invalid);
+       })) {
+        return fail("NaN latency must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalRun invalid;
+           invalid.queries.push_back(agent_memory::RetrievalQueryRun{
+               "q",
+               {agent_memory::RetrievalRunHit{"doc:a", 1.0F, 0, "bm25"}},
+               std::numeric_limits<double>::infinity()
+           });
+           (void)agent_memory::evaluate_retrieval(single_judged_dataset(), invalid);
+       })) {
+        return fail("infinite latency must be rejected");
     }
 
     return 0;
