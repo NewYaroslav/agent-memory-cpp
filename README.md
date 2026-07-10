@@ -232,6 +232,11 @@ search runs.
 Current MRR is unbounded; MRR@K is reserved for follow-up benchmark runner
 work once reporting requirements are clearer.
 
+The metric helper treats implicit hit order as the vector order. Unordered
+score dumps should be normalized by future importer/runner tooling before
+evaluation. Corpus/qrels integrity checks are also reserved for dataset loader
+validation rather than the metric-only helper.
+
 ## Ingestion
 
 Resource indexing starts with a small orchestration layer over existing

@@ -124,16 +124,21 @@ namespace agent_memory {
             return result;
         }
 
+        /// \brief Hit paired with the rank used by metric formulas.
+        struct RankedHit final {
+            RetrievalRunHit hit;
+            std::size_t metric_rank = 0;
+        };
+
         /// \brief Returns hits in metric order and validates rank/score consistency.
-        [[nodiscard]] std::vector<RetrievalRunHit> normalize_hits(
+        [[nodiscard]] std::vector<RankedHit> normalize_hits(
             const std::vector<RetrievalRunHit>& hits
         ) {
-            std::vector<RetrievalRunHit> result = hits;
             bool has_explicit_rank = false;
             bool has_implicit_rank = false;
             std::set<std::size_t> explicit_ranks;
 
-            for(const auto& hit : result) {
+            for(const auto& hit : hits) {
                 if(hit.item_id.empty()) {
                     throw std::invalid_argument("retrieval hit item_id must not be empty");
                 }
@@ -158,31 +163,54 @@ namespace agent_memory {
                 );
             }
 
+            std::vector<RankedHit> result;
+            result.reserve(hits.size());
             if(has_explicit_rank) {
+                for(const auto& hit : hits) {
+                    result.push_back(RankedHit{hit, hit.rank});
+                }
                 std::sort(
                     result.begin(),
                     result.end(),
-                    [](const RetrievalRunHit& lhs, const RetrievalRunHit& rhs) {
-                        if(lhs.rank != rhs.rank) {
-                            return lhs.rank < rhs.rank;
+                    [](const RankedHit& lhs, const RankedHit& rhs) {
+                        if(lhs.metric_rank != rhs.metric_rank) {
+                            return lhs.metric_rank < rhs.metric_rank;
                         }
-                        return lhs.item_id < rhs.item_id;
+                        return lhs.hit.item_id < rhs.hit.item_id;
                     }
                 );
             } else {
-                std::sort(
-                    result.begin(),
-                    result.end(),
-                    [](const RetrievalRunHit& lhs, const RetrievalRunHit& rhs) {
-                        if(lhs.score != rhs.score) {
-                            return lhs.score > rhs.score;
-                        }
-                        return lhs.item_id < rhs.item_id;
-                    }
-                );
+                for(std::size_t index = 0; index < hits.size(); ++index) {
+                    result.push_back(RankedHit{hits[index], index + 1});
+                }
             }
 
             return result;
+        }
+
+        /// \brief Validates all query runs and caches normalized hit order.
+        [[nodiscard]] std::map<std::string, std::vector<RankedHit>> build_hit_map(
+            const std::map<std::string, const RetrievalQueryRun*>& runs_by_query
+        ) {
+            std::map<std::string, std::vector<RankedHit>> result;
+            for(const auto& entry : runs_by_query) {
+                result.emplace(entry.first, normalize_hits(entry.second->hits));
+            }
+            return result;
+        }
+
+        /// \brief Rejects nonsensical metric cutoffs.
+        void validate_cutoffs(const RetrievalEvaluationOptions& options) {
+            for(const auto cutoff : options.recall_cutoffs) {
+                if(cutoff == 0) {
+                    throw std::invalid_argument("recall cutoff must be greater than zero");
+                }
+            }
+            for(const auto cutoff : options.ndcg_cutoffs) {
+                if(cutoff == 0) {
+                    throw std::invalid_argument("nDCG cutoff must be greater than zero");
+                }
+            }
         }
 
         /// \brief Converts a graded relevance label to DCG gain.
@@ -206,22 +234,22 @@ namespace agent_memory {
         /// Duplicate item ids are counted only once so fusion bugs cannot
         /// inflate graded relevance metrics.
         [[nodiscard]] double dcg_at(
-            const std::vector<RetrievalRunHit>& hits,
+            const std::vector<RankedHit>& hits,
             const QueryJudgments& judgments,
             std::size_t cutoff
         ) {
             double result = 0.0;
             std::set<std::string> seen_items;
-            for(std::size_t index = 0; index < hits.size(); ++index) {
-                const auto rank = index + 1;
+            for(const auto& hit : hits) {
+                const auto rank = hit.metric_rank;
                 if(rank == 0 || rank > cutoff) {
                     continue;
                 }
-                if(!seen_items.insert(hits[index].item_id).second) {
+                if(!seen_items.insert(hit.hit.item_id).second) {
                     continue;
                 }
 
-                const auto grade_it = judgments.grades_by_item.find(hits[index].item_id);
+                const auto grade_it = judgments.grades_by_item.find(hit.hit.item_id);
                 if(grade_it == judgments.grades_by_item.end()) {
                     continue;
                 }
@@ -250,7 +278,7 @@ namespace agent_memory {
         /// Duplicate relevant hits are counted once. This keeps Recall@K stable
         /// for hybrid/fused runs that accidentally emit the same item twice.
         [[nodiscard]] double recall_at(
-            const std::vector<RetrievalRunHit>& hits,
+            const std::vector<RankedHit>& hits,
             const QueryJudgments& judgments,
             std::size_t cutoff
         ) {
@@ -260,15 +288,15 @@ namespace agent_memory {
 
             std::size_t found = 0;
             std::set<std::string> found_items;
-            for(std::size_t index = 0; index < hits.size(); ++index) {
-                const auto rank = index + 1;
+            for(const auto& hit : hits) {
+                const auto rank = hit.metric_rank;
                 if(rank == 0 || rank > cutoff) {
                     continue;
                 }
 
-                const auto grade_it = judgments.grades_by_item.find(hits[index].item_id);
+                const auto grade_it = judgments.grades_by_item.find(hit.hit.item_id);
                 if(grade_it != judgments.grades_by_item.end() && grade_it->second > 0) {
-                    if(found_items.insert(hits[index].item_id).second) {
+                    if(found_items.insert(hit.hit.item_id).second) {
                         ++found;
                     }
                 }
@@ -280,17 +308,17 @@ namespace agent_memory {
 
         /// \brief Computes reciprocal rank of the first relevant hit.
         [[nodiscard]] double reciprocal_rank(
-            const std::vector<RetrievalRunHit>& hits,
+            const std::vector<RankedHit>& hits,
             const QueryJudgments& judgments
         ) {
             std::size_t best_rank = 0;
-            for(std::size_t index = 0; index < hits.size(); ++index) {
-                const auto grade_it = judgments.grades_by_item.find(hits[index].item_id);
+            for(const auto& hit : hits) {
+                const auto grade_it = judgments.grades_by_item.find(hit.hit.item_id);
                 if(grade_it == judgments.grades_by_item.end() || grade_it->second <= 0) {
                     continue;
                 }
 
-                const auto rank = index + 1;
+                const auto rank = hit.metric_rank;
                 if(rank == 0) {
                     continue;
                 }
@@ -399,6 +427,8 @@ namespace agent_memory {
         const RetrievalRun& run,
         const RetrievalEvaluationOptions& options
     ) {
+        validate_cutoffs(options);
+
         RetrievalMetrics metrics;
         metrics.query_count = dataset.queries.size();
 
@@ -415,6 +445,7 @@ namespace agent_memory {
             query_modes
         );
         const auto runs_by_query = build_run_map(run.queries, query_modes);
+        const auto hits_by_query = build_hit_map(runs_by_query);
 
         std::vector<double> latency_values;
         std::size_t no_answer_correct = 0;
@@ -440,10 +471,9 @@ namespace agent_memory {
                 }
             }
 
-            const std::vector<RetrievalRunHit> empty_hits;
-            const auto hits = normalize_hits(
-                query_run != nullptr ? query_run->hits : empty_hits
-            );
+            const std::vector<RankedHit> empty_hits;
+            const auto hits_it = hits_by_query.find(query.id);
+            const auto& hits = hits_it != hits_by_query.end() ? hits_it->second : empty_hits;
 
             if(query.answer_mode == EvalQueryAnswerMode::NoAnswer) {
                 if(query_judgments != nullptr && !query_judgments->positive_grades.empty()) {

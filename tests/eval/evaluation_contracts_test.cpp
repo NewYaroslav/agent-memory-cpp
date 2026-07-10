@@ -201,8 +201,8 @@ int main() {
         return fail("no-answer accuracy must reject non-empty no-answer results");
     }
 
-    agent_memory::RetrievalRun score_sorted_run;
-    score_sorted_run.queries.push_back(agent_memory::RetrievalQueryRun{
+    agent_memory::RetrievalRun implicit_position_run;
+    implicit_position_run.queries.push_back(agent_memory::RetrievalQueryRun{
         "q",
         {
             agent_memory::RetrievalRunHit{"doc:x", 1.0F, 0, "bm25"},
@@ -211,16 +211,16 @@ int main() {
         std::nullopt
     });
 
-    const auto score_sorted_metrics = agent_memory::evaluate_retrieval(
+    const auto implicit_position_metrics = agent_memory::evaluate_retrieval(
         single_judged_dataset(),
-        score_sorted_run,
+        implicit_position_run,
         agent_memory::RetrievalEvaluationOptions{{1}, {1}}
     );
-    if(!almost_equal(require_metric(score_sorted_metrics.recall_at, 1), 1.0)) {
-        return fail("implicit-rank hits must be sorted by descending score");
+    if(!almost_equal(require_metric(implicit_position_metrics.recall_at, 1), 0.0)) {
+        return fail("implicit-rank hits must use input vector position");
     }
-    if(!almost_equal(score_sorted_metrics.mrr, 1.0)) {
-        return fail("MRR must use normalized score order for implicit-rank hits");
+    if(!almost_equal(implicit_position_metrics.mrr, 0.5)) {
+        return fail("MRR must use vector position for implicit-rank hits");
     }
 
     agent_memory::RetrievalRun explicit_rank_run;
@@ -242,6 +242,27 @@ int main() {
         return fail("explicit ranks must define metric order before vector position");
     }
 
+    agent_memory::RetrievalRun explicit_gap_run;
+    explicit_gap_run.queries.push_back(agent_memory::RetrievalQueryRun{
+        "q",
+        {
+            agent_memory::RetrievalRunHit{"doc:a", 1.0F, 100, "dense"},
+        },
+        std::nullopt
+    });
+
+    const auto explicit_gap_metrics = agent_memory::evaluate_retrieval(
+        single_judged_dataset(),
+        explicit_gap_run,
+        agent_memory::RetrievalEvaluationOptions{{10}, {10}}
+    );
+    if(!almost_equal(require_metric(explicit_gap_metrics.recall_at, 10), 0.0)) {
+        return fail("explicit rank gaps must be preserved for Recall@K");
+    }
+    if(!almost_equal(explicit_gap_metrics.mrr, 0.01)) {
+        return fail("explicit rank gaps must be preserved for MRR");
+    }
+
     agent_memory::RetrievalEvalDataset ignored_dataset = single_judged_dataset();
     ignored_dataset.queries.push_back(agent_memory::EvalQuery{
         "q:ignore",
@@ -253,7 +274,7 @@ int main() {
     });
     const auto ignored_metrics = agent_memory::evaluate_retrieval(
         ignored_dataset,
-        score_sorted_run
+        implicit_position_run
     );
     if(ignored_metrics.ignored_query_count != 1 || ignored_metrics.judged_query_count != 1) {
         return fail("ignored queries must be counted and skipped");
@@ -340,6 +361,54 @@ int main() {
            (void)agent_memory::evaluate_retrieval(single_judged_dataset(), invalid);
        })) {
         return fail("mixed explicit and implicit ranks must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalEvalDataset ignored = single_judged_dataset();
+           ignored.queries.push_back(agent_memory::EvalQuery{
+               "q:ignore",
+               "ignore me",
+               "Debug",
+               10,
+               {},
+               agent_memory::EvalQueryAnswerMode::Ignore
+           });
+           agent_memory::RetrievalRun invalid;
+           invalid.queries.push_back(agent_memory::RetrievalQueryRun{
+               "q",
+               {agent_memory::RetrievalRunHit{"doc:a", 1.0F, 0, "bm25"}},
+               std::nullopt
+           });
+           invalid.queries.push_back(agent_memory::RetrievalQueryRun{
+               "q:ignore",
+               {agent_memory::RetrievalRunHit{"", 1.0F, 0, "bm25"}},
+               std::nullopt
+           });
+           (void)agent_memory::evaluate_retrieval(ignored, invalid);
+       })) {
+        return fail("ignored query runs must still validate hit payloads");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalRun run_with_zero_cutoff;
+           (void)agent_memory::evaluate_retrieval(
+               single_judged_dataset(),
+               run_with_zero_cutoff,
+               agent_memory::RetrievalEvaluationOptions{{0}, {1}}
+           );
+       })) {
+        return fail("zero Recall cutoff must be rejected");
+    }
+
+    if(!throws_invalid_argument([] {
+           agent_memory::RetrievalRun run_with_zero_cutoff;
+           (void)agent_memory::evaluate_retrieval(
+               single_judged_dataset(),
+               run_with_zero_cutoff,
+               agent_memory::RetrievalEvaluationOptions{{1}, {0}}
+           );
+       })) {
+        return fail("zero nDCG cutoff must be rejected");
     }
 
     if(!throws_invalid_argument([] {

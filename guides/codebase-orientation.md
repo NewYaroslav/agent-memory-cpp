@@ -302,6 +302,15 @@ Retrieval evaluation value types and metric helpers live in
 Current MRR is intentionally unbounded. Add MRR@K in a follow-up benchmark
 runner PR once real run configuration and reporting needs are clearer.
 
+`RetrievalRunHit::score` is diagnostic payload for metric reporting. Implicit
+rank uses the vector order. If a benchmark importer receives an unordered score
+dump, add a separate normalizer/import helper instead of changing
+evaluate_retrieval() ordering.
+
+evaluate_retrieval() is metric-only and does not validate that qrel item ids
+exist in `RetrievalEvalDataset::corpus`. Add corpus id uniqueness and qrels to
+corpus integrity checks in a follow-up dataset loader/runner validation PR.
+
 This layer intentionally does not load external datasets, invoke embedders, or
 own benchmark executables. Those belong in follow-up benchmark runner/tooling
 PRs.

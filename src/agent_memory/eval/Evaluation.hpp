@@ -77,8 +77,13 @@ namespace agent_memory {
     struct RetrievalRunHit final {
         std::string item_id;
         /// \brief Comparable retrieval score where higher is better.
+        /// \note evaluate_retrieval() treats score as diagnostic payload; the
+        ///       metric order is the hit vector order unless explicit ranks
+        ///       are provided for every hit in the query run.
         float score = 0.0F;
-        /// \brief Optional explicit rank. Zero means "use vector position".
+        /// \brief Optional explicit one-based rank. Zero means "use vector position".
+        /// \note Explicit ranks preserve gaps. A hit with rank 100 does not
+        ///       contribute to Recall@10.
         std::size_t rank = 0;
         /// \brief Retriever/channel label such as "bm25", "dense", or "hybrid".
         std::string retriever_name;
@@ -154,7 +159,8 @@ namespace agent_memory {
     /// are counted and skipped. Missing query runs are evaluated as empty hit
     /// lists.
     /// \throws std::invalid_argument when query ids, qrels, runs, ranks,
-    ///         scores, or latency samples violate the evaluation contract.
+    ///         scores, latency samples, or metric cutoffs violate the
+    ///         evaluation contract.
     [[nodiscard]] RetrievalMetrics evaluate_retrieval(
         const RetrievalEvalDataset& dataset,
         const RetrievalRun& run,
