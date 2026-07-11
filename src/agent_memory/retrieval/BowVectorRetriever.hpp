@@ -43,14 +43,11 @@ namespace agent_memory {
         /// \param seed Reserved for future embedder seeds; ignored today
         ///        because `BowEmbedder` is purely deterministic. Passing
         ///        zero is fine.
-        ///
-        /// The constructor is not transactional: if a per-corpus
-        /// `m_index.add(...)` call throws after `m_embedder.build()` (e.g.
-        /// a future stricter validator rejects a dimension), the object
-        /// is left in a partially-built state. The caller MUST discard the
-        /// object on construction failure — do not catch and retry, do
-        /// not call `retrieve(...)` on a partially-built retriever. RAII
-        /// guarantees no resource leak.
+        /// \throws std::invalid_argument if corpus inputs are inconsistent or
+        ///         any per-corpus vector cannot be indexed.
+        /// \note Standard C++ exception safety: a failed constructor leaves no
+        ///       BowVectorRetriever object behind; owned sub-objects (tokenizer,
+        ///       embedder, index) are released via their own destructors.
         BowVectorRetriever(
             std::vector<std::string> corpus_ids,
             std::vector<std::string> corpus_texts,
