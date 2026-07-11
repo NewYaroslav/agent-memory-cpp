@@ -55,15 +55,17 @@ namespace agent_memory {
     ///   1. \b Population — repeated calls to `add_corpus_text` extend the
     ///      underlying token dictionary and the embedder's internal
     ///      `TokenId -> dense index` mapping.
-    ///   2. \b Sealing — a single call to `build()` marks the dictionary
-    ///      final. Once sealed, the dictionary MUST NOT be extended; out-of-
+    ///   2. \b Sealing — a call to `build()` marks the dictionary final.
+    ///      Once sealed, the dictionary MUST NOT be extended; out-of-
     ///      vocabulary tokens encountered by `embed` are silently dropped so
     ///      the output dimension stays stable.
     ///
     /// `add_corpus_text` throws `std::logic_error` if called after `build()`.
     /// `embed` throws `std::logic_error` if called before `build()`. The
     /// pattern enforced by `BowVectorRetriever` is: add all corpus text →
-    /// `build()` → `embed()` per query.
+    /// `build()` → `embed()` per query. `build()` is idempotent — once the
+    /// dictionary is sealed it stays sealed, and repeated calls are safe
+    /// no-ops that do not change the embedder state.
     class BowEmbedder final {
     public:
         /// \brief Convenience default constructor.
@@ -90,9 +92,8 @@ namespace agent_memory {
 
         /// \brief Marks the dictionary as final. After `build`, `embed` no
         ///        longer extends the dictionary for unseen terms.
-        /// \note Must be called exactly once between the population phase
-        ///       (calls to `add_corpus_text`) and the query phase (calls to
-        ///       `embed`).
+        /// \note Must be called before `embed()`; idempotent thereafter
+        ///       (safe to call multiple times).
         void build();
 
         /// \brief Encodes `text` as a dense float vector of size
