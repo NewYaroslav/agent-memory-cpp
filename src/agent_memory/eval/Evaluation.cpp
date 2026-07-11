@@ -423,6 +423,154 @@ namespace agent_memory {
         return std::nullopt;
     }
 
+    /// \brief Performs contract validation on a retrieval evaluation dataset.
+    ///
+    /// Surfaces the first violation found as a `std::runtime_error` whose
+    /// message names the offending field. Errors are intentionally pinned to
+    /// `std::runtime_error` (not `invalid_argument`) so the same exception
+    /// type surfaces from both the JSON loader and in-memory constructors.
+    void validate_retrieval_eval_dataset(const RetrievalEvalDataset& dataset) {
+        // Corpus: non-empty ids and no duplicates within the corpus.
+        {
+            std::set<std::string> seen;
+            for(std::size_t i = 0; i < dataset.corpus.size(); ++i) {
+                if(dataset.corpus[i].id.empty()) {
+                    throw std::runtime_error(
+                        "validate_retrieval_eval_dataset: corpus[" +
+                        std::to_string(i) + "].id must not be empty"
+                    );
+                }
+                if(!seen.insert(dataset.corpus[i].id).second) {
+                    throw std::runtime_error(
+                        "validate_retrieval_eval_dataset: duplicate corpus id '"
+                        + dataset.corpus[i].id + "'"
+                    );
+                }
+            }
+        }
+
+        // Queries: non-empty ids and no duplicates. Also enforce non-empty
+        // text and a strictly positive limit, and record per-query state
+        // for the qrel/query-mode checks below.
+        std::map<std::string, const EvalQuery*> queries_by_id;
+        for(std::size_t i = 0; i < dataset.queries.size(); ++i) {
+            const auto& query = dataset.queries[i];
+            if(query.id.empty()) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: queries[" +
+                    std::to_string(i) + "].id must not be empty"
+                );
+            }
+            if(query.text.empty()) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: queries[" +
+                    std::to_string(i) + "] (id '" + query.id +
+                    "').text must not be empty"
+                );
+            }
+            if(query.limit == 0) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: queries[" +
+                    std::to_string(i) + "] (id '" + query.id +
+                    "').limit must be greater than zero"
+                );
+            }
+            if(!queries_by_id.emplace(query.id, &query).second) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: duplicate query id '"
+                    + query.id + "'"
+                );
+            }
+        }
+
+        // Judgments: non-empty ids, no duplicates, references must resolve,
+        // answer-mode consistency.
+        std::set<std::string> seen_judgments;
+        for(std::size_t i = 0; i < dataset.judgments.size(); ++i) {
+            const auto& j = dataset.judgments[i];
+            if(j.query_id.empty() || j.item_id.empty()) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: judgments[" +
+                    std::to_string(i) + "] must have non-empty query_id/item_id"
+                );
+            }
+            if(queries_by_id.find(j.query_id) == queries_by_id.end()) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: judgments[" +
+                    std::to_string(i) + "] references unknown query id '" +
+                    j.query_id + "'"
+                );
+            }
+            // Item ids must resolve to a corpus item.
+            bool item_seen = false;
+            for(const auto& item : dataset.corpus) {
+                if(item.id == j.item_id) {
+                    item_seen = true;
+                    break;
+                }
+            }
+            if(!item_seen) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: judgments[" +
+                    std::to_string(i) + "] references unknown corpus item id '"
+                    + j.item_id + "'"
+                );
+            }
+            const std::string pair_key = j.query_id + "\x1f" + j.item_id;
+            if(!seen_judgments.insert(pair_key).second) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: duplicate judgment for "
+                    "(query_id='" + j.query_id + "', item_id='" + j.item_id + "')"
+                );
+            }
+
+            // NoAnswer queries must not carry positive judgments.
+            const auto q_it = queries_by_id.find(j.query_id);
+            if(
+                j.relevance_grade > 0 &&
+                q_it != queries_by_id.end() &&
+                q_it->second->answer_mode == EvalQueryAnswerMode::NoAnswer
+            ) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: NoAnswer query '" +
+                    j.query_id + "' must not have positive relevance judgments"
+                );
+            }
+        }
+
+        // JudgedRetrieval queries must have at least one judgment entry.
+        // NoAnswer queries must have no judgments (enforced above by the
+        // positive-grade check; here we also reject non-positive grades
+        // pointing at NoAnswer queries).
+        std::map<std::string, std::size_t> judgments_per_query;
+        for(const auto& j : dataset.judgments) {
+            ++judgments_per_query[j.query_id];
+        }
+        for(const auto& query : dataset.queries) {
+            const auto count_it = judgments_per_query.find(query.id);
+            const std::size_t judgment_count =
+                count_it == judgments_per_query.end() ? 0 : count_it->second;
+            if(
+                query.answer_mode == EvalQueryAnswerMode::JudgedRetrieval &&
+                judgment_count == 0
+            ) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: JudgedRetrieval query '"
+                    + query.id + "' must have at least one relevance judgment"
+                );
+            }
+            if(
+                query.answer_mode == EvalQueryAnswerMode::NoAnswer &&
+                judgment_count != 0
+            ) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: NoAnswer query '" +
+                    query.id + "' must not have any relevance judgments"
+                );
+            }
+        }
+    }
+
     /// \brief Computes aggregate retrieval metrics for a dataset/run pair.
     RetrievalMetrics evaluate_retrieval(
         const RetrievalEvalDataset& dataset,

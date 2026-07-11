@@ -157,6 +157,30 @@ namespace agent_memory {
         std::size_t k
     ) noexcept;
 
+    /// \brief Validates the semantic contract of a retrieval evaluation
+    ///        dataset in addition to the JSON shape checks performed by
+    ///        the loader.
+    ///
+    /// The contract enforced here covers the rules that BEIR-style datasets
+    /// are expected to satisfy before the runner can produce a meaningful
+    /// report:
+    ///   - No empty `id` in corpus, queries, or judgments.
+    ///   - No duplicate `id` within each of corpus / queries / judgments.
+    ///   - Every judgment's `query_id` references an existing query.
+    ///   - Every judgment's `item_id` references an existing corpus item.
+    ///   - Every query has a strictly positive `limit`.
+    ///   - Every query has non-empty `text`.
+    ///   - NoAnswer queries have no positive relevance judgment.
+    ///   - JudgedRetrieval queries have at least one relevance judgment.
+    ///
+    /// Called automatically by `DatasetLoader::load_*` after parsing and
+    /// defensively by `run_retrieval_eval`. The function is also exposed
+    /// so callers can validate in-memory datasets they construct
+    /// programmatically before handing them to the runner.
+    /// \throws std::runtime_error with a field-specific message on the
+    ///         first violation.
+    void validate_retrieval_eval_dataset(const RetrievalEvalDataset& dataset);
+
     /// \brief Computes retrieval metrics for a run against a dataset.
     ///
     /// JudgedRetrieval queries must have at least one positive relevance

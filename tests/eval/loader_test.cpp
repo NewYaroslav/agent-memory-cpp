@@ -12,6 +12,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -23,6 +24,9 @@ namespace {
         std::cerr << "loader_test: " << message << '\n';
         return 1;
     }
+
+    // Defined below; declared here so main() can call it.
+    int main_validation_tests();
 
     std::vector<std::string> corpus_ids_from(const agent_memory::RetrievalEvalDataset& ds) {
         std::vector<std::string> ids;
@@ -292,5 +296,210 @@ int main() {
         }
     }
 
+    if(const int rc = main_validation_tests(); rc != 0) {
+        return rc;
+    }
+
     return 0;
 }
+
+namespace {
+
+// Helper for testing validate_retrieval_eval_dataset messages.
+bool throws_runtime_message(
+    std::string_view needle,
+    const std::function<void()>& fn
+) {
+    try {
+        fn();
+    } catch(const std::runtime_error& err) {
+        return std::string(err.what()).find(std::string{needle}) != std::string::npos;
+    } catch(...) {
+        return false;
+    }
+    return false;
+}
+int main_validation_tests() {
+    using agent_memory::EvalCorpusItem;
+    using agent_memory::EvalQuery;
+    using agent_memory::RelevanceJudgment;
+    using agent_memory::EvalQueryAnswerMode;
+    using agent_memory::RetrievalEvalDataset;
+    using agent_memory::validate_retrieval_eval_dataset;
+
+    // Baseline: a known-good dataset that mirrors the fixture must
+    // validate without throwing.
+    {
+        const auto good = mirrored_fixture_dataset();
+        try {
+            validate_retrieval_eval_dataset(good);
+        } catch(const std::exception& err) {
+            return fail(
+                std::string("valid fixture dataset must validate: ")
+                + err.what()
+            );
+        }
+    }
+
+    // Empty query id is rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.queries.front().id.clear();
+        if(!throws_runtime_message("id must not be empty", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail("empty query id must throw std::runtime_error");
+        }
+    }
+
+    // Empty corpus id is rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.corpus.front().id.clear();
+        if(!throws_runtime_message("id must not be empty", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail("empty corpus id must throw std::runtime_error");
+        }
+    }
+
+    // Empty judgment query_id/item_id is rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.judgments.front().query_id.clear();
+        if(!throws_runtime_message("non-empty query_id/item_id", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail("empty judgment query_id must throw std::runtime_error");
+        }
+    }
+
+    // Duplicate corpus ids are rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.corpus[1].id = bad.corpus[0].id;
+        if(!throws_runtime_message("duplicate corpus id", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail("duplicate corpus id must throw std::runtime_error");
+        }
+    }
+
+    // Duplicate query ids are rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.queries[1].id = bad.queries[0].id;
+        if(!throws_runtime_message("duplicate query id", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail("duplicate query id must throw std::runtime_error");
+        }
+    }
+
+    // Duplicate (query_id, item_id) judgment pairs are rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.judgments.push_back(bad.judgments.front());
+        if(!throws_runtime_message("duplicate judgment", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail("duplicate judgment pair must throw std::runtime_error");
+        }
+    }
+
+    // Query referencing an unknown corpus item is rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.judgments.front().item_id = "doc:does-not-exist";
+        if(!throws_runtime_message("unknown corpus item id", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail(
+                "judgment referencing unknown corpus item "
+                "must throw std::runtime_error"
+            );
+        }
+    }
+
+    // Query referencing an unknown query id is rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.judgments.front().query_id = "q:unknown";
+        if(!throws_runtime_message("unknown query id", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail(
+                "judgment referencing unknown query id "
+                "must throw std::runtime_error"
+            );
+        }
+    }
+
+    // limit == 0 is rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.queries.front().limit = 0;
+        if(!throws_runtime_message("limit must be greater than zero", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail("limit == 0 must throw std::runtime_error");
+        }
+    }
+
+    // Empty query text is rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.queries.front().text.clear();
+        if(!throws_runtime_message("text must not be empty", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail("empty query text must throw std::runtime_error");
+        }
+    }
+
+    // JudgedRetrieval query without any judgments is rejected.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.judgments.clear();
+        if(!throws_runtime_message("JudgedRetrieval", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail(
+                "JudgedRetrieval with no judgments "
+                "must throw std::runtime_error"
+            );
+        }
+    }
+
+    // NoAnswer query with a positive relevance judgment is rejected.
+    {
+        RetrievalEvalDataset bad;
+        bad.name = "no_answer_dataset";
+        EvalCorpusItem c;
+        c.id = "doc:a";
+        c.text = "alpha";
+        bad.corpus.push_back(c);
+        EvalQuery q;
+        q.id = "q:n";
+        q.text = "anything";
+        q.limit = 5;
+        q.answer_mode = EvalQueryAnswerMode::NoAnswer;
+        bad.queries.push_back(q);
+        RelevanceJudgment j;
+        j.query_id = "q:n";
+        j.item_id = "doc:a";
+        j.relevance_grade = 1;
+        bad.judgments.push_back(j);
+        if(!throws_runtime_message("NoAnswer", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail(
+                "NoAnswer with positive qrel must throw std::runtime_error"
+            );
+        }
+    }
+
+    return 0;
+}
+
+} // namespace

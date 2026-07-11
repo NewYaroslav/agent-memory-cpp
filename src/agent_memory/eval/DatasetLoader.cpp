@@ -309,7 +309,9 @@ namespace agent_memory {
                 << "): malformed JSON: " << err.what();
             throw std::runtime_error(out.str());
         }
-        return parse_dataset(root, loc);
+        auto dataset = parse_dataset(root, loc);
+        validate_retrieval_eval_dataset(dataset);
+        return dataset;
     }
 
     RetrievalEvalDataset load_dataset_from_json_string(
@@ -324,7 +326,9 @@ namespace agent_memory {
             out << "DatasetLoader(<string>): malformed JSON: " << err.what();
             throw std::runtime_error(out.str());
         }
-        return parse_dataset(root, loc);
+        auto dataset = parse_dataset(root, loc);
+        validate_retrieval_eval_dataset(dataset);
+        return dataset;
     }
 
 } // namespace agent_memory

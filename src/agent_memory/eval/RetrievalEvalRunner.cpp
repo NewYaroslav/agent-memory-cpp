@@ -26,6 +26,11 @@ namespace agent_memory {
         std::string_view baseline_name,
         const RetrievalEvaluationOptions& options
     ) {
+        // Defensive contract validation. In-memory callers can construct
+        // datasets without going through DatasetLoader; this catches them
+        // before any retrieval or metric work begins.
+        validate_retrieval_eval_dataset(dataset);
+
         RetrievalEvalReport report;
         report.baseline_name.assign(baseline_name.begin(), baseline_name.end());
         report.dataset_name = dataset.name;
