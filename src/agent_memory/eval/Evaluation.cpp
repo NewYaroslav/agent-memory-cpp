@@ -485,7 +485,7 @@ namespace agent_memory {
 
         // Judgments: non-empty ids, no duplicates, references must resolve,
         // answer-mode consistency.
-        std::set<std::string> seen_judgments;
+        std::set<std::pair<std::string, std::string>> seen_judgments;
         for(std::size_t i = 0; i < dataset.judgments.size(); ++i) {
             const auto& j = dataset.judgments[i];
             if(j.query_id.empty() || j.item_id.empty()) {
@@ -516,11 +516,20 @@ namespace agent_memory {
                     + j.item_id + "'"
                 );
             }
-            const std::string pair_key = j.query_id + "\x1f" + j.item_id;
-            if(!seen_judgments.insert(pair_key).second) {
+            // Fail-fast: surface negative relevance grades here so downstream
+            // metric helpers do not need a second defensive check.
+            if(j.relevance_grade < 0) {
                 throw std::runtime_error(
-                    "validate_retrieval_eval_dataset: duplicate judgment for "
-                    "(query_id='" + j.query_id + "', item_id='" + j.item_id + "')"
+                    "validate_retrieval_eval_dataset: judgments[" +
+                    std::to_string(i) +
+                    "].relevance_grade must not be negative"
+                );
+            }
+            if(!seen_judgments.emplace(j.query_id, j.item_id).second) {
+                throw std::runtime_error(
+                    "validate_retrieval_eval_dataset: duplicate judgment at "
+                    "index " + std::to_string(i) + " for query_id=" +
+                    j.query_id + " item_id=" + j.item_id
                 );
             }
 

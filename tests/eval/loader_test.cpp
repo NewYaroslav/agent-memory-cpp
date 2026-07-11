@@ -590,6 +590,113 @@ int main_validation_tests() {
         }
     }
 
+    // Negative relevance_grade is rejected with a fail-fast message.
+    // Previously the validator accepted these and the failure surfaced
+    // later inside evaluate_retrieval(), violating the fail-fast contract
+    // because a retrieval pass would have executed first.
+    {
+        auto bad = mirrored_fixture_dataset();
+        bad.judgments.front().relevance_grade = -1;
+        if(!throws_runtime_message("must not be negative", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail(
+                "negative relevance_grade must throw std::runtime_error"
+            );
+        }
+    }
+
+    // Fail-fast contract: when the validator rejects a dataset with a
+    // negative relevance grade, the retriever is NEVER queried. This
+    // pins the contract enforced by run_retrieval_eval(), which calls
+    // validate_retrieval_eval_dataset before iterating the dataset.
+    {
+        struct CountingRetriever final : public agent_memory::IRetriever {
+            mutable std::size_t retrieve_count = 0;
+            [[nodiscard]] agent_memory::RetrievalResult retrieve(
+                const agent_memory::RetrievalQuery&
+            ) const override {
+                ++retrieve_count;
+                return {};
+            }
+        };
+        auto bad = mirrored_fixture_dataset();
+        bad.judgments.front().relevance_grade = -1;
+        CountingRetriever counter;
+        bool threw = false;
+        try {
+            (void)agent_memory::run_retrieval_eval(
+                counter,
+                bad,
+                std::string{agent_memory::kBaselineNameStub}
+            );
+        } catch(const std::runtime_error&) {
+            threw = true;
+        } catch(...) {
+        }
+        if(!threw) {
+            return fail(
+                "run_retrieval_eval did not throw for negative relevance_grade"
+            );
+        }
+        if(counter.retrieve_count != 0) {
+            return fail(
+                "retriever was called " +
+                std::to_string(counter.retrieve_count) +
+                " time(s) despite validator rejection"
+            );
+        }
+    }
+
+    // Collision-safe dedup: IDs containing the legacy 0x1F separator
+    // byte must NOT cause false-positive duplicate detection.
+    //
+    // With the previous string-concat dedup (`q + "\x1f" + i`) the pairs
+    // (q\x1f0, doc:0) and (q, 0\x1fdoc:0) both encode to "q\x1f0\x1fdoc:0"
+    // and the second one was wrongly rejected as a duplicate.
+    {
+        RetrievalEvalDataset ds;
+        ds.name = "collision_safe_ids";
+        EvalCorpusItem c0;
+        c0.id = "doc:0";
+        c0.text = "alpha";
+        ds.corpus.push_back(c0);
+        EvalCorpusItem c1;
+        c1.id = std::string{"0"} + '\x1f' + "doc:0";
+        c1.text = "bravo";
+        ds.corpus.push_back(c1);
+        EvalQuery q0;
+        q0.id = std::string{"q"} + '\x1f' + "0";
+        q0.text = "alpha query";
+        q0.limit = 5;
+        ds.queries.push_back(q0);
+        EvalQuery q1;
+        q1.id = "q";
+        q1.text = "bravo query";
+        q1.limit = 5;
+        ds.queries.push_back(q1);
+        RelevanceJudgment j0;
+        j0.query_id = q0.id;
+        j0.item_id = "doc:0";
+        j0.relevance_grade = 1;
+        ds.judgments.push_back(j0);
+        RelevanceJudgment j1;
+        j1.query_id = q1.id;
+        j1.item_id = c1.id;
+        j1.relevance_grade = 1;
+        ds.judgments.push_back(j1);
+        try {
+            validate_retrieval_eval_dataset(ds);
+        } catch(const std::exception& err) {
+            return fail(
+                std::string(
+                    "collision-safe ids must not be flagged as duplicates; got: "
+                )
+                + err.what()
+            );
+        }
+    }
+
     return 0;
 }
 
