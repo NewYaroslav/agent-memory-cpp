@@ -499,6 +499,78 @@ int main_validation_tests() {
         }
     }
 
+    // NoAnswer query with only zero-grade judgments is allowed (the
+    // explicit zero-grade marks the items as non-relevant, which is
+    // consistent with the no-answer intent).
+    {
+        RetrievalEvalDataset ds;
+        ds.name = "no_answer_zero_grade_allowed";
+        EvalCorpusItem c;
+        c.id = "doc:a";
+        c.text = "alpha";
+        ds.corpus.push_back(c);
+        EvalQuery q;
+        q.id = "q:n";
+        q.text = "anything";
+        q.limit = 5;
+        q.answer_mode = EvalQueryAnswerMode::NoAnswer;
+        ds.queries.push_back(q);
+        RelevanceJudgment j;
+        j.query_id = "q:n";
+        j.item_id = "doc:a";
+        j.relevance_grade = 0;
+        ds.judgments.push_back(j);
+        try {
+            validate_retrieval_eval_dataset(ds);
+        } catch(const std::exception& err) {
+            return fail(
+                std::string(
+                    "NoAnswer with only zero-grade qrels must validate; got: "
+                )
+                + err.what()
+            );
+        }
+    }
+
+    // NoAnswer query with a mix of zero-grade and positive judgments is
+    // rejected because the positive grade contradicts the no-answer intent.
+    {
+        RetrievalEvalDataset ds;
+        ds.name = "no_answer_mixed_grades_rejected";
+        EvalCorpusItem c0;
+        c0.id = "doc:a";
+        c0.text = "alpha";
+        ds.corpus.push_back(c0);
+        EvalCorpusItem c1;
+        c1.id = "doc:b";
+        c1.text = "bravo";
+        ds.corpus.push_back(c1);
+        EvalQuery q;
+        q.id = "q:n";
+        q.text = "anything";
+        q.limit = 5;
+        q.answer_mode = EvalQueryAnswerMode::NoAnswer;
+        ds.queries.push_back(q);
+        RelevanceJudgment j0;
+        j0.query_id = "q:n";
+        j0.item_id = "doc:a";
+        j0.relevance_grade = 0;
+        ds.judgments.push_back(j0);
+        RelevanceJudgment j1;
+        j1.query_id = "q:n";
+        j1.item_id = "doc:b";
+        j1.relevance_grade = 2;
+        ds.judgments.push_back(j1);
+        if(!throws_runtime_message("NoAnswer", [&] {
+            validate_retrieval_eval_dataset(ds);
+        })) {
+            return fail(
+                "NoAnswer with mixed zero/positive qrels "
+                "must throw std::runtime_error"
+            );
+        }
+    }
+
     return 0;
 }
 

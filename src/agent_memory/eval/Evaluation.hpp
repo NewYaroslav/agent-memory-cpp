@@ -170,7 +170,10 @@ namespace agent_memory {
     ///   - Every judgment's `item_id` references an existing corpus item.
     ///   - Every query has a strictly positive `limit`.
     ///   - Every query has non-empty `text`.
-    ///   - NoAnswer queries have no positive relevance judgment.
+    ///   - NoAnswer queries may carry zero-grade relevance judgments
+    ///     (explicitly checked as non-relevant); any positive relevance
+    ///     judgment (grade > 0) attached to a NoAnswer query is rejected,
+    ///     because a relevant item contradicts the no-answer intent.
     ///   - JudgedRetrieval queries have at least one relevance judgment.
     ///
     /// Called automatically by `DatasetLoader::load_*` after parsing and

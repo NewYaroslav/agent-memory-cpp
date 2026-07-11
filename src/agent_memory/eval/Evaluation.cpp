@@ -533,15 +533,19 @@ namespace agent_memory {
             ) {
                 throw std::runtime_error(
                     "validate_retrieval_eval_dataset: NoAnswer query '" +
-                    j.query_id + "' must not have positive relevance judgments"
+                    j.query_id + "' has positive relevance judgment for "
+                    "item_id '" + j.item_id + "'"
                 );
             }
         }
 
         // JudgedRetrieval queries must have at least one judgment entry.
-        // NoAnswer queries must have no judgments (enforced above by the
-        // positive-grade check; here we also reject non-positive grades
-        // pointing at NoAnswer queries).
+        // NoAnswer queries may carry zero-grade relevance judgments
+        // (explicit non-relevant markings) but must not carry any positive
+        // judgments; the per-judgment loop above rejects positive grades
+        // against NoAnswer queries as soon as they are seen, so by this
+        // point a remaining judgment count for a NoAnswer query is
+        // exclusively zero-grade entries and is allowed.
         std::map<std::string, std::size_t> judgments_per_query;
         for(const auto& j : dataset.judgments) {
             ++judgments_per_query[j.query_id];
@@ -557,15 +561,6 @@ namespace agent_memory {
                 throw std::runtime_error(
                     "validate_retrieval_eval_dataset: JudgedRetrieval query '"
                     + query.id + "' must have at least one relevance judgment"
-                );
-            }
-            if(
-                query.answer_mode == EvalQueryAnswerMode::NoAnswer &&
-                judgment_count != 0
-            ) {
-                throw std::runtime_error(
-                    "validate_retrieval_eval_dataset: NoAnswer query '" +
-                    query.id + "' must not have any relevance judgments"
                 );
             }
         }
