@@ -16,6 +16,7 @@ endif()
 
 include(cmake/AgentMemoryOptions.cmake)
 include(cmake/AgentMemoryDependencies.cmake)
+include(cmake/AgentMemoryJson.cmake)
 
 add_library(agent_memory STATIC
     src/agent_memory/chat/Message.cpp
@@ -30,6 +31,8 @@ add_library(agent_memory STATIC
     src/agent_memory/embedding/enums.cpp
     src/agent_memory/embedding/IEmbedder.cpp
     src/agent_memory/eval/Evaluation.cpp
+    src/agent_memory/eval/RetrievalEvalRunner.cpp
+    src/agent_memory/eval/StubRetriever.cpp
     src/agent_memory/facts/Fact.cpp
     src/agent_memory/ingestion/ResourceIndexer.cpp
     src/agent_memory/index/ExactVectorIndex.cpp
@@ -47,6 +50,9 @@ add_library(agent_memory STATIC
     src/agent_memory/lexical/TokenDictionary.cpp
     src/agent_memory/lexical/Tokenizer.cpp
     src/agent_memory/memory/MemoryObject.cpp
+    src/agent_memory/retrieval/BowEmbedder.cpp
+    src/agent_memory/retrieval/BowVectorRetriever.cpp
+    src/agent_memory/retrieval/BruteForceTopKIndex.cpp
     src/agent_memory/retrieval/HybridRetrievalEngine.cpp
     src/agent_memory/retrieval/IRetrievalEngine.cpp
     src/agent_memory/retrieval/IRetriever.cpp
@@ -67,6 +73,7 @@ target_include_directories(agent_memory
 target_compile_definitions(agent_memory
     PUBLIC
         AGENT_MEMORY_HAS_MDBX=$<BOOL:${AGENT_MEMORY_ENABLE_MDBX}>
+        AGENT_MEMORY_ENABLE_JSON=$<BOOL:${AGENT_MEMORY_ENABLE_JSON}>
 )
 
 set_target_properties(agent_memory PROPERTIES
@@ -92,6 +99,18 @@ if(AGENT_MEMORY_ENABLE_MDBX)
     target_link_libraries(agent_memory
         PRIVATE
             ${AGENT_MEMORY_MDBX_CONTAINERS_TARGET}
+    )
+endif()
+
+agent_memory_provide_json(AGENT_MEMORY_JSON_TARGET)
+if(AGENT_MEMORY_ENABLE_JSON)
+    target_sources(agent_memory
+        PRIVATE
+            src/agent_memory/eval/DatasetLoader.cpp
+    )
+    target_link_libraries(agent_memory
+        PRIVATE
+            ${AGENT_MEMORY_JSON_TARGET}
     )
 endif()
 

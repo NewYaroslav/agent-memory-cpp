@@ -10,6 +10,7 @@
 #include "lexical.hpp"
 #include "memory.hpp"
 
+#include "retrieval/BoWTokenizer.hpp"
 #include "retrieval/HybridRetrievalEngine.hpp"
 #include "retrieval/IRetrievalEngine.hpp"
 #include "retrieval/IRetriever.hpp"

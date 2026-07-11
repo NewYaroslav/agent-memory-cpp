@@ -2,6 +2,7 @@ option(AGENT_MEMORY_BUILD_TESTS "Build agent-memory-cpp tests" ${AGENT_MEMORY_TO
 option(AGENT_MEMORY_BUILD_EXAMPLES "Build agent-memory-cpp examples" OFF)
 option(AGENT_MEMORY_ENABLE_WARNINGS "Enable compiler warnings for agent-memory-cpp" ON)
 option(AGENT_MEMORY_ENABLE_MDBX "Enable MDBX-backed storage dependencies" OFF)
+option(AGENT_MEMORY_ENABLE_JSON "Enable JSON dataset loader for retrieval eval (PR #27). Requires nlohmann_json." ON)
 
 set(AGENT_MEMORY_MDBX_CONTAINERS_SOURCE_DIR "" CACHE PATH
     "Optional mdbx-containers source override; defaults to external/mdbx-containers when present")

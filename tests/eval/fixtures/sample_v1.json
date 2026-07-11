@@ -1,0 +1,22 @@
+{
+    "name": "sample_v1",
+    "corpus": [
+        {"id": "doc:0", "title": "title-0", "text": "text payload #0", "metadata": {}},
+        {"id": "doc:1", "title": "title-1", "text": "text payload #1", "metadata": {"lang": "en"}},
+        {"id": "doc:2", "title": "title-2", "text": "text payload #2", "metadata": {}},
+        {"id": "doc:3", "title": "title-3", "text": "text payload #3", "metadata": {"lang": "en"}},
+        {"id": "doc:4", "title": "title-4", "text": "text payload #4", "metadata": {}}
+    ],
+    "queries": [
+        {"id": "q:0", "text": "id:doc:1", "query_type": "StubLookup", "limit": 10},
+        {"id": "q:1", "text": "id:doc:3", "query_type": "StubLookup", "limit": 10},
+        {"id": "q:2", "text": "noise:2", "query_type": "StubLookup", "limit": 10},
+        {"id": "q:3", "text": "id:doc:0", "query_type": "StubLookup", "limit": 10}
+    ],
+    "judgments": [
+        {"query_id": "q:0", "item_id": "doc:1", "relevance_grade": 3},
+        {"query_id": "q:1", "item_id": "doc:3", "relevance_grade": 2},
+        {"query_id": "q:2", "item_id": "doc:2", "relevance_grade": 1},
+        {"query_id": "q:3", "item_id": "doc:0", "relevance_grade": 2}
+    ]
+}
