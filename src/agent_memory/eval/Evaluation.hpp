@@ -114,9 +114,15 @@ namespace agent_memory {
     };
 
     /// \brief Latency summary in milliseconds.
+    ///
+    /// `min`/`max` are populated alongside the nearest-rank percentiles so
+    /// downstream reports can render the full latency envelope from a single
+    /// computation path.
     struct LatencyStats final {
         std::size_t sample_count = 0;
         double mean = 0.0;
+        double min = 0.0;
+        double max = 0.0;
         double p50 = 0.0;
         double p95 = 0.0;
         double p99 = 0.0;

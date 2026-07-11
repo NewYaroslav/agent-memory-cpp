@@ -20,6 +20,9 @@ namespace agent_memory {
     ///
     /// Latency is measured strictly around each `retrieve()` call. Chunk order
     /// in the retriever result becomes the implicit rank in the run hit.
+    /// Queries whose `answer_mode` is `EvalQueryAnswerMode::Ignore` are
+    /// skipped before any retrieval call so they contribute neither hits nor
+    /// latency samples to the run.
     inline RetrievalRun run_retriever(
         const IRetriever& retriever,
         const RetrievalEvalDataset& dataset,
@@ -32,6 +35,10 @@ namespace agent_memory {
         run.queries.reserve(dataset.queries.size());
 
         for(const auto& query : dataset.queries) {
+            if(query.answer_mode == EvalQueryAnswerMode::Ignore) {
+                continue;
+            }
+
             RetrievalQueryRun query_run;
             query_run.query_id = query.id;
 

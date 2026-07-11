@@ -14,19 +14,10 @@
 
 namespace agent_memory {
 
-    /// \brief Latency summary in milliseconds with min/max on top of the
-    ///        mean/p50/p95/p99 sample stored on `RetrievalMetrics::latency_ms`.
-    struct RetrievalLatencyStats final {
-        std::size_t sample_count = 0;
-        double mean = 0.0;
-        double min = 0.0;
-        double max = 0.0;
-        double p50 = 0.0;
-        double p95 = 0.0;
-        double p99 = 0.0;
-    };
-
     /// \brief End-to-end evaluation report for one retriever over one dataset.
+    ///
+    /// `latency` mirrors `metrics.latency_ms` so callers always see the same
+    /// numbers regardless of which entry point they consult.
     struct RetrievalEvalReport final {
         std::string baseline_name;
         std::string dataset_name;
@@ -34,7 +25,7 @@ namespace agent_memory {
         std::size_t query_count = 0;
         RetrievalRun run;
         RetrievalMetrics metrics;
-        RetrievalLatencyStats latency;
+        LatencyStats latency;
     };
 
     /// \brief Runs the eval pipeline for the supplied retriever and dataset.

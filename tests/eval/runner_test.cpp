@@ -45,54 +45,85 @@ namespace {
         }
     }
 
-    agent_memory::RetrievalEvalDataset exact_id_dataset(std::size_t corpus_size) {
-        agent_memory::RetrievalEvalDataset dataset;
-        dataset.name = "exact_id_dataset";
-        seed_corpus(dataset, corpus_size);
-        for(std::size_t i = 0; i < corpus_size; ++i) {
-            const std::string qid = "q:" + std::to_string(i);
-            const std::string target = "doc:" + std::to_string(i);
-            agent_memory::EvalQuery query;
-            query.id = qid;
-            query.text = "id:" + target;
-            query.query_type = "StubLookup";
-            query.limit = 10;
-            dataset.queries.push_back(std::move(query));
-            agent_memory::RelevanceJudgment j;
-            j.query_id = qid;
-            j.item_id = target;
-            j.relevance_grade = 1;
-            dataset.judgments.push_back(std::move(j));
-        }
-        return dataset;
-    }
-
-    agent_memory::RetrievalEvalDataset noise_dataset(
-        std::size_t corpus_size,
-        std::size_t query_count
+    bool latency_stats_equal(
+        const agent_memory::LatencyStats& a,
+        const agent_memory::LatencyStats& b
     ) {
-        agent_memory::RetrievalEvalDataset dataset;
-        dataset.name = "noise_dataset";
-        seed_corpus(dataset, corpus_size);
-        for(std::size_t q = 0; q < query_count; ++q) {
-            const std::string qid = "q:" + std::to_string(q);
-            const std::string target = "doc:" + std::to_string(q % corpus_size);
-            agent_memory::EvalQuery query;
-            query.id = qid;
-            query.text = "noise:" + std::to_string(q);
-            query.query_type = "StubLookup";
-            query.limit = 10;
-            dataset.queries.push_back(std::move(query));
-            agent_memory::RelevanceJudgment j;
-            j.query_id = qid;
-            j.item_id = target;
-            j.relevance_grade = 1;
-            dataset.judgments.push_back(std::move(j));
-        }
-        return dataset;
+        if(a.sample_count != b.sample_count) return false;
+        if(!almost_equal(a.mean, b.mean)) return false;
+        if(!almost_equal(a.min, b.min)) return false;
+        if(!almost_equal(a.max, b.max)) return false;
+        if(!almost_equal(a.p50, b.p50)) return false;
+        if(!almost_equal(a.p95, b.p95)) return false;
+        if(!almost_equal(a.p99, b.p99)) return false;
+        return true;
     }
 
 } // namespace
+agent_memory::RetrievalEvalDataset exact_id_dataset(std::size_t corpus_size) {
+    agent_memory::RetrievalEvalDataset dataset;
+    dataset.name = "exact_id_dataset";
+    seed_corpus(dataset, corpus_size);
+    for(std::size_t i = 0; i < corpus_size; ++i) {
+        const std::string qid = "q:" + std::to_string(i);
+        const std::string target = "doc:" + std::to_string(i);
+        agent_memory::EvalQuery query;
+        query.id = qid;
+        query.text = "id:" + target;
+        query.query_type = "StubLookup";
+        query.limit = 10;
+        dataset.queries.push_back(std::move(query));
+        agent_memory::RelevanceJudgment j;
+        j.query_id = qid;
+        j.item_id = target;
+        j.relevance_grade = 1;
+        dataset.judgments.push_back(std::move(j));
+    }
+    return dataset;
+}
+
+agent_memory::RetrievalEvalDataset noise_dataset(
+    std::size_t corpus_size,
+    std::size_t query_count
+) {
+    agent_memory::RetrievalEvalDataset dataset;
+    dataset.name = "noise_dataset";
+    seed_corpus(dataset, corpus_size);
+    for(std::size_t q = 0; q < query_count; ++q) {
+        const std::string qid = "q:" + std::to_string(q);
+        const std::string target = "doc:" + std::to_string(q % corpus_size);
+        agent_memory::EvalQuery query;
+        query.id = qid;
+        query.text = "noise:" + std::to_string(q);
+        query.query_type = "StubLookup";
+        query.limit = 10;
+        dataset.queries.push_back(std::move(query));
+        agent_memory::RelevanceJudgment j;
+        j.query_id = qid;
+        j.item_id = target;
+        j.relevance_grade = 1;
+        dataset.judgments.push_back(std::move(j));
+    }
+    return dataset;
+}
+
+// Mixed dataset: judged queries interleaved with Ignore-mode queries so we
+// can prove the runner skips Ignore queries entirely (no retrieve() call, no
+// latency sample, no hit entry).
+agent_memory::RetrievalEvalDataset mixed_ignore_dataset(std::size_t corpus_size) {
+    auto dataset = exact_id_dataset(corpus_size);
+    for(std::size_t i = 0; i < 3; ++i) {
+        agent_memory::EvalQuery q;
+        q.id = "q:ignore:" + std::to_string(i);
+        q.text = "noise-ignore:" + std::to_string(i);
+        q.query_type = "StubLookup";
+        q.limit = 10;
+        q.answer_mode = agent_memory::EvalQueryAnswerMode::Ignore;
+        dataset.queries.push_back(std::move(q));
+    }
+    dataset.name = "mixed_ignore_dataset";
+    return dataset;
+}
 
 int main() {
     const std::string baseline{agent_memory::kBaselineNameStub};
@@ -169,6 +200,69 @@ int main() {
         }
         if(recall_at_k(report.metrics, 10) < 0.5) {
             return fail("StubDataset must yield a high Recall@10 baseline");
+        }
+    }
+
+    // Single-source-of-truth latency: report.latency must mirror
+    // report.metrics.latency_ms field-by-field for non-Ignore datasets.
+    {
+        const auto dataset = noise_dataset(20, 20);
+        agent_memory::StubRetriever retriever(corpus_ids(20), 11);
+        const auto report = agent_memory::run_retrieval_eval(
+            retriever,
+            dataset,
+            baseline
+        );
+        if(!latency_stats_equal(report.latency, report.metrics.latency_ms)) {
+            return fail(
+                "report.latency must mirror report.metrics.latency_ms "
+                "(single source of truth for latency)"
+            );
+        }
+    }
+
+    // Ignore-mode queries must be skipped entirely: no retrieve() call,
+    // no latency sample, no run entry. The latency sample count must
+    // equal the number of non-Ignore queries.
+    {
+        const auto dataset = mixed_ignore_dataset(8);
+        const std::size_t non_ignore_queries =
+            dataset.queries.size() - 3; // three Ignore queries appended
+        agent_memory::StubRetriever retriever(corpus_ids(8), 13);
+        const auto report = agent_memory::run_retrieval_eval(
+            retriever,
+            dataset,
+            baseline
+        );
+        if(report.metrics.ignored_query_count != 3) {
+            return fail("metrics must count 3 ignored queries");
+        }
+        if(report.metrics.judged_query_count != non_ignore_queries) {
+            return fail("metrics must count non-ignore queries as judged");
+        }
+        if(report.latency.sample_count != non_ignore_queries) {
+            return fail(
+                "runner must not measure latency for Ignore queries; "
+                "expected samples == non-ignore queries"
+            );
+        }
+        if(report.metrics.latency_ms.sample_count != non_ignore_queries) {
+            return fail(
+                "metrics.latency_ms must skip Ignore queries too"
+            );
+        }
+        for(const auto& query_run : report.run.queries) {
+            if(query_run.query_id.rfind("q:ignore:", 0) == 0) {
+                return fail(
+                    "run must not include Ignore-mode query entries"
+                );
+            }
+        }
+        if(!latency_stats_equal(report.latency, report.metrics.latency_ms)) {
+            return fail(
+                "report.latency and report.metrics.latency_ms must agree "
+                "even when Ignore queries are present"
+            );
         }
     }
 

@@ -2,61 +2,15 @@
 
 #include "IRetrieverAdapter.hpp"
 
-#include <algorithm>
-#include <cmath>
-#include <cstddef>
 #include <iomanip>
 #include <ostream>
 #include <sstream>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace agent_memory {
 
     namespace {
-
-        // Linear-interpolation percentile over a sorted vector.
-        double percentile(std::vector<double> sorted, double quantile) {
-            if(sorted.empty()) {
-                return 0.0;
-            }
-            if(sorted.size() == 1) {
-                return sorted.front();
-            }
-            const double position = quantile * (sorted.size() - 1);
-            const auto lower = static_cast<std::size_t>(std::floor(position));
-            const auto upper = static_cast<std::size_t>(std::ceil(position));
-            const double weight = position - static_cast<double>(lower);
-            return sorted[lower] * (1.0 - weight) + sorted[upper] * weight;
-        }
-
-        RetrievalLatencyStats compute_latency_summary(const RetrievalRun& run) {
-            std::vector<double> samples;
-            samples.reserve(run.queries.size());
-            for(const auto& query_run : run.queries) {
-                if(query_run.latency_ms) {
-                    samples.push_back(*query_run.latency_ms);
-                }
-            }
-            RetrievalLatencyStats stats;
-            stats.sample_count = samples.size();
-            if(samples.empty()) {
-                return stats;
-            }
-            std::sort(samples.begin(), samples.end());
-            stats.min = samples.front();
-            stats.max = samples.back();
-            double total = 0.0;
-            for(const auto value : samples) {
-                total += value;
-            }
-            stats.mean = total / static_cast<double>(samples.size());
-            stats.p50 = percentile(samples, 0.50);
-            stats.p95 = percentile(samples, 0.95);
-            stats.p99 = percentile(samples, 0.99);
-            return stats;
-        }
 
         std::string format_double(double value) {
             std::ostringstream stream;
@@ -79,7 +33,8 @@ namespace agent_memory {
         report.query_count = dataset.queries.size();
         report.run = run_retriever(retriever, dataset, baseline_name);
         report.metrics = evaluate_retrieval(dataset, report.run, options);
-        report.latency = compute_latency_summary(report.run);
+        // Single source of truth for latency: delegate to the eval layer.
+        report.latency = report.metrics.latency_ms;
         return report;
     }
 

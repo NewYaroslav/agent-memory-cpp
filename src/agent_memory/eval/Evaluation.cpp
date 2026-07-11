@@ -365,6 +365,8 @@ namespace agent_memory {
             std::sort(values.begin(), values.end());
             stats.mean = std::accumulate(values.begin(), values.end(), 0.0) /
                 static_cast<double>(values.size());
+            stats.min = values.front();
+            stats.max = values.back();
             stats.p50 = percentile_nearest_rank(values, 0.50);
             stats.p95 = percentile_nearest_rank(values, 0.95);
             stats.p99 = percentile_nearest_rank(values, 0.99);
