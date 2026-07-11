@@ -521,8 +521,9 @@ namespace agent_memory {
             if(j.relevance_grade < 0) {
                 throw std::runtime_error(
                     "validate_retrieval_eval_dataset: judgments[" +
-                    std::to_string(i) +
-                    "].relevance_grade must not be negative"
+                    std::to_string(i) + "] (query_id='" + j.query_id +
+                    "', item_id='" + j.item_id +
+                    "').relevance_grade must not be negative"
                 );
             }
             if(!seen_judgments.emplace(j.query_id, j.item_id).second) {

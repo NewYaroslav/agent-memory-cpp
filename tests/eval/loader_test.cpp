@@ -590,18 +590,47 @@ int main_validation_tests() {
         }
     }
 
-    // Negative relevance_grade is rejected with a fail-fast message.
-    // Previously the validator accepted these and the failure surfaced
-    // later inside evaluate_retrieval(), violating the fail-fast contract
-    // because a retrieval pass would have executed first.
+    // Negative relevance_grade is rejected with a fail-fast message that
+    // names the offending query_id and item_id so users with large
+    // datasets can locate the row without iterating the validator
+    // manually. Previously the validator accepted these and the failure
+    // surfaced later inside evaluate_retrieval(), violating the
+    // fail-fast contract because a retrieval pass would have executed
+    // first.
     {
         auto bad = mirrored_fixture_dataset();
-        bad.judgments.front().relevance_grade = -1;
-        if(!throws_runtime_message("must not be negative", [&] {
+        auto& offending = bad.judgments.front();
+        offending.relevance_grade = -1;
+        std::string message;
+        bool threw = false;
+        try {
             validate_retrieval_eval_dataset(bad);
-        })) {
+        } catch(const std::runtime_error& err) {
+            threw = true;
+            message = err.what();
+        } catch(...) {
+        }
+        if(!threw) {
             return fail(
                 "negative relevance_grade must throw std::runtime_error"
+            );
+        }
+        if(message.find("must not be negative") == std::string::npos) {
+            return fail(
+                "negative relevance_grade message must contain "
+                "'must not be negative'; got: " + message
+            );
+        }
+        if(message.find(offending.query_id) == std::string::npos) {
+            return fail(
+                "negative relevance_grade message must contain query_id '"
+                + offending.query_id + "'; got: " + message
+            );
+        }
+        if(message.find(offending.item_id) == std::string::npos) {
+            return fail(
+                "negative relevance_grade message must contain item_id '"
+                + offending.item_id + "'; got: " + message
             );
         }
     }
