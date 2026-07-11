@@ -317,6 +317,66 @@ int main() {
         }
     }
 
+    // Strict lifecycle: embed() before build() must throw std::logic_error.
+    {
+        agent_memory::BowEmbedder embedder;
+        bool threw = false;
+        try {
+            (void)embedder.embed("anything");
+        } catch(const std::logic_error&) {
+            threw = true;
+        } catch(...) {
+            return fail("embed-before-build must throw std::logic_error, not other type");
+        }
+        if(!threw) {
+            return fail("embed-before-build must throw std::logic_error");
+        }
+    }
+
+    // Strict lifecycle: add_corpus_text() after build() must throw
+    // std::logic_error so the dictionary can never be extended post-seal.
+    {
+        agent_memory::BowEmbedder embedder;
+        embedder.add_corpus_text("alpha");
+        embedder.build();
+        bool threw = false;
+        try {
+            embedder.add_corpus_text("beta");
+        } catch(const std::logic_error&) {
+            threw = true;
+        } catch(...) {
+            return fail("add_corpus_text after build must throw std::logic_error, not other type");
+        }
+        if(!threw) {
+            return fail("add_corpus_text after build must throw std::logic_error");
+        }
+        // Dictionary must remain sealed: a second post-build call still throws.
+        try {
+            embedder.add_corpus_text("gamma");
+        } catch(const std::logic_error&) {
+            // expected
+        } catch(...) {
+            return fail("second add_corpus_text after build must also throw std::logic_error");
+        }
+    }
+
+    // Strict lifecycle: embed() works correctly after build() and silently
+    // drops out-of-vocabulary tokens (does not grow the dictionary).
+    {
+        agent_memory::BowEmbedder embedder;
+        embedder.add_corpus_text("alpha beta");
+        embedder.build();
+        const std::size_t dict_size = embedder.dictionary_size();
+        const auto seen = embedder.embed("alpha beta");
+        const auto unseen = embedder.embed("alpha gamma never-seen");
+        if(seen.size() != dict_size) {
+            return fail("embed-after-build: vector size must match dictionary size");
+        }
+        if(unseen.size() != dict_size) {
+            return fail("embed-after-build: OOV tokens must not grow dictionary");
+        }
+    }
+
     // 3) End-to-end eval with PR #26 runner over PR #27 JSON fixture. The
     //    retriever must produce a run with positive Recall@10 because the
     //    queries with id-prefix text still tokenize and match by virtue of

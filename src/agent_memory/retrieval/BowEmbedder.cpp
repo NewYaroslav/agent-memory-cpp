@@ -163,6 +163,9 @@ namespace agent_memory {
     BowEmbedder::~BowEmbedder() = default;
 
     void BowEmbedder::add_corpus_text(std::string_view text) {
+        if(m_built) {
+            throw std::logic_error("BowEmbedder: add_corpus_text after build()");
+        }
         const auto tokens = extract_bow_tokens(*m_tokenizer, text);
         for(const auto& token : tokens) {
             const auto id = m_dictionary->get_or_create(token);
@@ -179,6 +182,9 @@ namespace agent_memory {
     }
 
     std::vector<float> BowEmbedder::embed(std::string_view text) const {
+        if(!m_built) {
+            throw std::logic_error("BowEmbedder: embed before build()");
+        }
         const auto tokens = extract_bow_tokens(*m_tokenizer, text);
         std::vector<float> values(m_id_to_index.size(), 0.0F);
         for(const auto& token : tokens) {

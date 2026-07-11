@@ -48,10 +48,22 @@ namespace agent_memory {
     /// term-id assignment to an injected `ITokenDictionary&`. The embedder
     /// owns its own `TokenId -> dense index` mapping because the dictionary's
     /// ids are opaque and not required to be contiguous (see the
-    /// `ITokenDictionary` contract). The dictionary is built incrementally by
-    /// `add_corpus_text` and `embed`. The dictionary is stable once `build`
-    /// has been called: subsequent `embed` calls only add terms already
-    /// present in the dictionary.
+    /// `ITokenDictionary` contract).
+    ///
+    /// \par Strict lifecycle
+    /// The embedder has a strict two-phase lifecycle:
+    ///   1. \b Population — repeated calls to `add_corpus_text` extend the
+    ///      underlying token dictionary and the embedder's internal
+    ///      `TokenId -> dense index` mapping.
+    ///   2. \b Sealing — a single call to `build()` marks the dictionary
+    ///      final. Once sealed, the dictionary MUST NOT be extended; out-of-
+    ///      vocabulary tokens encountered by `embed` are silently dropped so
+    ///      the output dimension stays stable.
+    ///
+    /// `add_corpus_text` throws `std::logic_error` if called after `build()`.
+    /// `embed` throws `std::logic_error` if called before `build()`. The
+    /// pattern enforced by `BowVectorRetriever` is: add all corpus text →
+    /// `build()` → `embed()` per query.
     class BowEmbedder final {
     public:
         /// \brief Convenience default constructor.
@@ -73,17 +85,22 @@ namespace agent_memory {
         /// \brief Tokenizes `text` and adds every observed term to the dictionary.
         /// \note This does NOT compute an embedding; it only mutates the
         ///       dictionary. Use `embed` to obtain a dense vector.
+        /// \throws std::logic_error if called after `build()`.
         void add_corpus_text(std::string_view text);
 
         /// \brief Marks the dictionary as final. After `build`, `embed` no
         ///        longer extends the dictionary for unseen terms.
+        /// \note Must be called exactly once between the population phase
+        ///       (calls to `add_corpus_text`) and the query phase (calls to
+        ///       `embed`).
         void build();
 
         /// \brief Encodes `text` as a dense float vector of size
         ///        `dictionary_size()`. Each component is the raw term count,
         ///        then L2-normalized so cosine similarity equals dot product.
-        /// \note If the embedder has not been `build`-ed yet, the dictionary
-        ///       is grown for unseen terms to keep `embed` valid standalone.
+        /// \note Out-of-vocabulary tokens (i.e. terms that were not seen
+        ///       during the population phase) are silently dropped.
+        /// \throws std::logic_error if called before `build()`.
         [[nodiscard]] std::vector<float> embed(std::string_view text) const;
 
         /// \brief Returns the number of distinct terms in the dictionary.
