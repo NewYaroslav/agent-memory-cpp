@@ -8,7 +8,7 @@
 /// Composition:
 ///   - `BowEmbedder` fitted on the corpus (so the dictionary is closed
 ///     before queries are encoded).
-///   - `ExactVectorIndex` holding one L2-normalized dense vector per
+///   - `BruteForceTopKIndex` holding one L2-normalized dense vector per
 ///     corpus item.
 ///
 /// The retriever plugs into `IRetriever` so PR #26's
@@ -43,6 +43,14 @@ namespace agent_memory {
         /// \param seed Reserved for future embedder seeds; ignored today
         ///        because `BowEmbedder` is purely deterministic. Passing
         ///        zero is fine.
+        ///
+        /// The constructor is not transactional: if a per-corpus
+        /// `m_index.add(...)` call throws after `m_embedder.build()` (e.g.
+        /// a future stricter validator rejects a dimension), the object
+        /// is left in a partially-built state. The caller MUST discard the
+        /// object on construction failure — do not catch and retry, do
+        /// not call `retrieve(...)` on a partially-built retriever. RAII
+        /// guarantees no resource leak.
         BowVectorRetriever(
             std::vector<std::string> corpus_ids,
             std::vector<std::string> corpus_texts,
