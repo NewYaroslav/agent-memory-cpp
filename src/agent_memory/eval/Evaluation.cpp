@@ -539,28 +539,35 @@ namespace agent_memory {
             }
         }
 
-        // JudgedRetrieval queries must have at least one judgment entry.
-        // NoAnswer queries may carry zero-grade relevance judgments
-        // (explicit non-relevant markings) but must not carry any positive
-        // judgments; the per-judgment loop above rejects positive grades
-        // against NoAnswer queries as soon as they are seen, so by this
-        // point a remaining judgment count for a NoAnswer query is
-        // exclusively zero-grade entries and is allowed.
-        std::map<std::string, std::size_t> judgments_per_query;
+        // JudgedRetrieval queries must have at least one positive relevance
+        // judgment; zero-grade-only entries do not satisfy the metric
+        // contract because Recall@K, nDCG@K, and MRR require positive
+        // grades to compute. NoAnswer queries may carry zero-grade
+        // relevance judgments (explicit non-relevant markings) but must
+        // not carry any positive judgments; the per-judgment loop above
+        // rejects positive grades against NoAnswer queries as soon as
+        // they are seen, so by this point a remaining judgment count for
+        // a NoAnswer query is exclusively zero-grade entries and is
+        // allowed.
+        std::map<std::string, std::size_t> positive_grades_per_query;
         for(const auto& j : dataset.judgments) {
-            ++judgments_per_query[j.query_id];
+            if(j.relevance_grade > 0) {
+                ++positive_grades_per_query[j.query_id];
+            }
         }
         for(const auto& query : dataset.queries) {
-            const auto count_it = judgments_per_query.find(query.id);
-            const std::size_t judgment_count =
-                count_it == judgments_per_query.end() ? 0 : count_it->second;
+            const auto count_it = positive_grades_per_query.find(query.id);
+            const std::size_t positive_count =
+                count_it == positive_grades_per_query.end() ? 0
+                                                            : count_it->second;
             if(
                 query.answer_mode == EvalQueryAnswerMode::JudgedRetrieval &&
-                judgment_count == 0
+                positive_count == 0
             ) {
                 throw std::runtime_error(
                     "validate_retrieval_eval_dataset: JudgedRetrieval query '"
-                    + query.id + "' must have at least one relevance judgment"
+                    + query.id + "' must have at least one positive "
+                    "relevance judgment"
                 );
             }
         }

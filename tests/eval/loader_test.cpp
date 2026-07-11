@@ -471,6 +471,25 @@ int main_validation_tests() {
         }
     }
 
+    // JudgedRetrieval query with only zero-grade judgments is rejected:
+    // metric helpers (Recall@K, nDCG@K, MRR) all require positive grades
+    // to compute. The validator previously passed this dataset and the
+    // failure surfaced later inside evaluate_retrieval.
+    {
+        auto bad = mirrored_fixture_dataset();
+        for(auto& j : bad.judgments) {
+            j.relevance_grade = 0;
+        }
+        if(!throws_runtime_message("JudgedRetrieval", [&] {
+            validate_retrieval_eval_dataset(bad);
+        })) {
+            return fail(
+                "JudgedRetrieval with only zero-grade qrels "
+                "must throw std::runtime_error"
+            );
+        }
+    }
+
     // NoAnswer query with a positive relevance judgment is rejected.
     {
         RetrievalEvalDataset bad;

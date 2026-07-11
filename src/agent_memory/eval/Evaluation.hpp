@@ -174,7 +174,10 @@ namespace agent_memory {
     ///     (explicitly checked as non-relevant); any positive relevance
     ///     judgment (grade > 0) attached to a NoAnswer query is rejected,
     ///     because a relevant item contradicts the no-answer intent.
-    ///   - JudgedRetrieval queries have at least one relevance judgment.
+    ///   - JudgedRetrieval queries have at least one positive relevance
+    ///     judgment. Zero-grade-only qrel sets are rejected because
+    ///     Recall@K, nDCG@K, and MRR all require positive grades to
+    ///     compute a meaningful score.
     ///
     /// Called automatically by `DatasetLoader::load_*` after parsing and
     /// defensively by `run_retrieval_eval`. The function is also exposed

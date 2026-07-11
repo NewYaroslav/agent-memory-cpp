@@ -48,8 +48,8 @@ EvalQuery {
 enum class EvalQueryAnswerMode { JudgedRetrieval, NoAnswer, Ignore };
 ```
 
-- `JudgedRetrieval` — must have at least one positive qrel; participates in
-  Recall@K, nDCG@K, MRR.
+- `JudgedRetrieval` — must have at least one positive qrel; zero-grade-only
+  qrels are rejected. Participates in Recall@K, nDCG@K, MRR.
 - `NoAnswer` — must carry zero positive qrels, but zero-grade qrels
   (explicit non-relevant markings) are allowed; participates only in
   `no_answer_accuracy`.
