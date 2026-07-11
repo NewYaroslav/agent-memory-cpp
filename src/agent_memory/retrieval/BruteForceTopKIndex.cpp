@@ -10,6 +10,19 @@
 
 namespace agent_memory {
 
+    namespace {
+
+        bool all_finite(const std::vector<float>& values) {
+            for(const float v : values) {
+                if(!std::isfinite(v)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+    } // namespace
+
     BruteForceTopKIndex::BruteForceTopKIndex() = default;
 
     std::size_t BruteForceTopKIndex::size() const noexcept {
@@ -21,12 +34,38 @@ namespace agent_memory {
     }
 
     void BruteForceTopKIndex::add(std::string doc_id, std::vector<float> vector) {
+        if(doc_id.empty()) {
+            throw std::invalid_argument(
+                "BruteForceTopKIndex::add: doc_id must not be empty"
+            );
+        }
+        if(vector.empty()) {
+            throw std::invalid_argument(
+                "BruteForceTopKIndex::add: vector must not be empty"
+            );
+        }
+        if(!all_finite(vector)) {
+            throw std::invalid_argument(
+                "BruteForceTopKIndex::add: vector contains NaN or Inf"
+            );
+        }
         if(m_dimension == 0) {
             m_dimension = vector.size();
         } else if(vector.size() != m_dimension) {
             throw std::invalid_argument(
-                "BruteForceTopKIndex: vector dimension mismatch"
+                "BruteForceTopKIndex::add: vector dimension mismatch "
+                "(expected " + std::to_string(m_dimension) +
+                ", got " + std::to_string(vector.size()) + ")"
             );
+        }
+
+        // Replace-on-update by doc_id so callers can re-ingest a document
+        // without first erasing it (matches most embedding-index backends).
+        for(auto& record : m_records) {
+            if(record.first == doc_id) {
+                record.second = std::move(vector);
+                return;
+            }
         }
         m_records.emplace_back(std::move(doc_id), std::move(vector));
     }
@@ -49,15 +88,16 @@ namespace agent_memory {
             );
         }
 
-        // Pre-compute the query norm once; the index assumes callers pass
-        // L2-normalized vectors from BowEmbedder, but we compute the true
-        // cosine ratio defensively for non-normalized callers. A zero-norm
-        // query is allowed to fall through so that purely out-of-vocabulary
-        // queries still receive a deterministic tie-broken ranking; the
-        // per-document scoring branch produces cosine == 0 in that case.
+        // Compute the query L2 norm once. A zero-norm query (e.g. a fully
+        // out-of-vocabulary BoW vector) cannot meaningfully match any
+        // document, so we return an empty result rather than emitting a
+        // deterministic-but-spurious tie-broken ranking.
         double q_norm_sq = 0.0;
         for(const float v : query) {
             q_norm_sq += static_cast<double>(v) * static_cast<double>(v);
+        }
+        if(q_norm_sq == 0.0) {
+            return result;
         }
 
         // partial_sort over an index array: zero copies of the full matrix.
@@ -86,13 +126,13 @@ namespace agent_memory {
                     b_norm_sq += static_cast<double>(b[i]) * static_cast<double>(b[i]);
                 }
                 // Higher cosine first; ties broken by doc_id ascending so
-                // the result is byte-deterministic across runs. A zero-norm
-                // query or zero-norm document yields score 0, so the tie
-                // break resolves to the ascending doc_id ordering.
-                const double a_score = (a_norm_sq > 0.0 && q_norm_sq > 0.0)
+                // the result is byte-deterministic across runs. Zero-norm
+                // documents produce cosine == 0 and fall through to the
+                // tie-break.
+                const double a_score = a_norm_sq > 0.0
                     ? (a_dot / std::sqrt(a_norm_sq * q_norm_sq))
                     : 0.0;
-                const double b_score = (b_norm_sq > 0.0 && q_norm_sq > 0.0)
+                const double b_score = b_norm_sq > 0.0
                     ? (b_dot / std::sqrt(b_norm_sq * q_norm_sq))
                     : 0.0;
                 if(a_score == b_score) {
@@ -112,7 +152,7 @@ namespace agent_memory {
                 dot += static_cast<double>(query[j]) * static_cast<double>(vec[j]);
                 v_norm_sq += static_cast<double>(vec[j]) * static_cast<double>(vec[j]);
             }
-            const double score = (v_norm_sq > 0.0 && q_norm_sq > 0.0)
+            const double score = v_norm_sq > 0.0
                 ? (dot / std::sqrt(v_norm_sq * q_norm_sq))
                 : 0.0;
             result.emplace_back(record.first, score);

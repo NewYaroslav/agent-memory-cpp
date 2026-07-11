@@ -41,8 +41,16 @@ namespace agent_memory {
         /// \brief Returns the configured vector dimensionality (0 until add()).
         [[nodiscard]] std::size_t dimension() const noexcept;
 
-        /// \brief Inserts a record. Throws if `vector.size()` does not match
-        ///        the configured dimension once one has been adopted.
+        /// \brief Inserts a record.
+        ///
+        /// On the first successful `add()` call the index adopts the supplied
+        /// vector's dimension. Subsequent records must match the adopted
+        /// dimension. Calling `add()` with the same `doc_id` REPLACES the
+        /// prior record (replace-on-update, matching most embedding indexes).
+        ///
+        /// \throws std::invalid_argument when `doc_id` is empty, `vector` is
+        ///         empty, any component is non-finite, or `vector.size()`
+        ///         differs from the adopted dimension.
         void add(std::string doc_id, std::vector<float> vector);
 
         /// \brief Finalizes the index. No-op for brute force; reserved so
@@ -50,9 +58,16 @@ namespace agent_memory {
         void build();
 
         /// \brief Returns the top-`k` records ranked by cosine similarity
-        ///        against `query`. Empty vectors, zero-length queries, or
-        ///        `k == 0` produce an empty result. Zero-norm documents are
-        ///        skipped (no match).
+        ///        against `query`.
+        ///
+        /// \note The following inputs all yield an empty result (no UB, no
+        ///       throw, no random fallback hits):
+        ///         - empty query vector;
+        ///         - zero-norm query vector;
+        ///         - `k == 0`;
+        ///         - empty index (no records yet).
+        /// \throws std::invalid_argument when `query.size()` differs from
+        ///         the adopted dimension.
         [[nodiscard]] std::vector<std::pair<std::string, double>> top_k(
             const std::vector<float>& query,
             std::size_t k

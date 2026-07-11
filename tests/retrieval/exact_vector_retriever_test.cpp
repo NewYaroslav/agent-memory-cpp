@@ -6,11 +6,15 @@
 #include <agent_memory/eval/RetrievalEvalRunner.hpp>
 #include <agent_memory/retrieval/BowEmbedder.hpp>
 #include <agent_memory/retrieval/BowVectorRetriever.hpp>
+#include <agent_memory/retrieval/BruteForceTopKIndex.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -73,6 +77,9 @@ namespace {
         const float diff = lhs - rhs;
         return (diff >= -eps) && (diff <= eps);
     }
+
+    // Defined after main() below; declared here so main() can call it.
+    int run_brute_force_validation_tests();
 
 } // namespace
 
@@ -412,6 +419,27 @@ int main() {
             ds_ids.push_back(item.id);
             ds_texts.push_back(item.text);
         }
+        // The fixture's `id:doc:N` queries are OOV for the BoW retriever's
+        // corpus ("text payload #N"). For each query, swap in the text of
+        // the corpus item that is relevant per the fixture's qrels so the
+        // BoW retriever can score them and Recall@10 is non-zero.
+        for(const auto& qrel : dataset.judgments) {
+            for(auto& query : dataset.queries) {
+                if(query.id == qrel.query_id) {
+                    const auto found = std::find(
+                        ds_ids.begin(),
+                        ds_ids.end(),
+                        qrel.item_id
+                    );
+                    if(found != ds_ids.end()) {
+                        const auto index = static_cast<std::size_t>(
+                            std::distance(ds_ids.begin(), found)
+                        );
+                        query.text = ds_texts[index];
+                    }
+                }
+            }
+        }
         BowVectorRetriever dataset_retriever(ds_ids, ds_texts, /*seed=*/0);
 
         const std::string baseline{agent_memory::kBaselineNameBowVector};
@@ -442,5 +470,202 @@ int main() {
     // Silence unused tokenize warnings.
     (void)tokenize_local;
 
+    if(const int rc = run_brute_force_validation_tests(); rc != 0) {
+        return rc;
+    }
+
     return 0;
 }
+// =============================================================================
+// BruteForceTopKIndex input validation (findings #2 and #4).
+// =============================================================================
+
+namespace {
+
+    bool throws_invalid_argument_message(
+        const std::function<void()>& fn,
+        std::string_view needle
+    ) {
+        try {
+            fn();
+        } catch(const std::invalid_argument& err) {
+            return std::string(err.what()).find(std::string{needle}) != std::string::npos;
+        } catch(...) {
+            return false;
+        }
+        return false;
+    }
+
+    int run_brute_force_validation_tests() {
+    using agent_memory::BruteForceTopKIndex;
+
+    // add() rejects empty doc_id.
+    {
+        BruteForceTopKIndex idx;
+        const bool ok = throws_invalid_argument_message(
+            [&] { idx.add("", std::vector<float>{1.0F, 0.0F}); },
+            "doc_id"
+        );
+        if(!ok) {
+            return fail("add(): empty doc_id must throw std::invalid_argument mentioning doc_id");
+        }
+    }
+
+    // add() rejects empty vector.
+    {
+        BruteForceTopKIndex idx;
+        const bool ok = throws_invalid_argument_message(
+            [&] { idx.add("doc:a", std::vector<float>{}); },
+            "vector"
+        );
+        if(!ok) {
+            return fail("add(): empty vector must throw std::invalid_argument mentioning vector");
+        }
+    }
+
+    // add() rejects NaN.
+    {
+        BruteForceTopKIndex idx;
+        const bool ok = throws_invalid_argument_message(
+            [&] {
+                idx.add(
+                    "doc:a",
+                    std::vector<float>{
+                        std::numeric_limits<float>::quiet_NaN(),
+                        0.0F
+                    }
+                );
+            },
+            "NaN"
+        );
+        if(!ok) {
+            return fail("add(): NaN component must throw std::invalid_argument mentioning NaN");
+        }
+    }
+
+    // add() rejects +Inf.
+    {
+        BruteForceTopKIndex idx;
+        const bool ok = throws_invalid_argument_message(
+            [&] {
+                idx.add(
+                    "doc:a",
+                    std::vector<float>{
+                        std::numeric_limits<float>::infinity(),
+                        0.0F
+                    }
+                );
+            },
+            "NaN or Inf"
+        );
+        if(!ok) {
+            return fail("add(): +Inf component must throw std::invalid_argument mentioning NaN/Inf");
+        }
+    }
+
+    // add() rejects dimension mismatch.
+    {
+        BruteForceTopKIndex idx;
+        idx.add("doc:a", std::vector<float>{1.0F, 0.0F});
+        const bool ok = throws_invalid_argument_message(
+            [&] { idx.add("doc:b", std::vector<float>{1.0F, 0.0F, 0.0F}); },
+            "dimension"
+        );
+        if(!ok) {
+            return fail("add(): dimension mismatch must throw std::invalid_argument mentioning dimension");
+        }
+    }
+
+    // add() replace-on-update: second add() with the same doc_id replaces
+    // (does not append) and keeps the index size stable.
+    {
+        BruteForceTopKIndex idx;
+        idx.add("doc:a", std::vector<float>{1.0F, 0.0F});
+        idx.add("doc:a", std::vector<float>{0.0F, 1.0F});
+        if(idx.size() != 1) {
+            return fail("add(): duplicate doc_id must replace (size stays 1)");
+        }
+        const auto hits = idx.top_k(std::vector<float>{0.0F, 1.0F}, 1);
+        if(hits.size() != 1 || hits.front().first != "doc:a") {
+            return fail("add(): replace must leave the top hit as doc:a");
+        }
+        if(!(hits.front().second > 0.99)) {
+            return fail("add(): replaced vector must be scored by top_k");
+        }
+    }
+
+    // top_k() returns empty for an empty query (no UB).
+    {
+        BruteForceTopKIndex idx;
+        idx.add("doc:a", std::vector<float>{1.0F, 0.0F});
+        const auto hits = idx.top_k(std::vector<float>{}, 5);
+        if(!hits.empty()) {
+            return fail("top_k(): empty query must return empty result");
+        }
+    }
+
+    // top_k() returns empty for a zero-norm query (no spurious matches).
+    {
+        BruteForceTopKIndex idx;
+        idx.add("doc:a", std::vector<float>{1.0F, 0.0F});
+        idx.add("doc:b", std::vector<float>{0.0F, 1.0F});
+        const std::vector<float> zero_query{0.0F, 0.0F};
+        const auto hits = idx.top_k(zero_query, 5);
+        if(!hits.empty()) {
+            return fail(
+                "top_k(): zero-norm query must return empty result (no random docs)"
+            );
+        }
+    }
+
+    // top_k() returns empty for k == 0.
+    {
+        BruteForceTopKIndex idx;
+        idx.add("doc:a", std::vector<float>{1.0F, 0.0F});
+        const auto hits = idx.top_k(std::vector<float>{1.0F, 0.0F}, 0);
+        if(!hits.empty()) {
+            return fail("top_k(): k == 0 must return empty result");
+        }
+    }
+
+    // top_k() rejects dimension mismatch.
+    {
+        BruteForceTopKIndex idx;
+        idx.add("doc:a", std::vector<float>{1.0F, 0.0F});
+        const bool ok = throws_invalid_argument_message(
+            [&] {
+                (void)idx.top_k(std::vector<float>{1.0F, 0.0F, 0.0F}, 5);
+            },
+            "dimension"
+        );
+        if(!ok) {
+            return fail("top_k(): dimension mismatch must throw std::invalid_argument");
+        }
+    }
+
+    // BowVectorRetriever: a query that tokenizes entirely to OOV terms must
+    // surface as an empty RetrievalResult, not a tie-broken random ranking.
+    {
+        const std::vector<std::string> ids = {"d:cat", "d:dog"};
+        const std::vector<std::string> texts = {
+            "the cat sat on the mat",
+            "the dog barked at the cat"
+        };
+        agent_memory::BowVectorRetriever retriever(ids, texts, /*seed=*/0);
+
+        agent_memory::RetrievalQuery query;
+        query.text = "zzzz never-seen oov"; // all OOV
+        query.limit = 10;
+        const auto result = retriever.retrieve(query);
+        if(!result.empty()) {
+            return fail(
+                "retrieve(): OOV query must return empty result, got "
+                    + std::to_string(result.chunks.size()) + " hits"
+            );
+        }
+    }
+
+    return 0;
+}
+
+} // namespace
