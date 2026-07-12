@@ -236,37 +236,50 @@ Two related but distinct ideas:
 - **CAG (Cache-Augmented Generation):** pre-load the entire relevant corpus into the model's context cache (KV-cache or extended context window). At query time skip retrieval and answer from cached knowledge.
 - **RAGCache:** cache intermediate states of an existing RAG pipeline (retrieved chunks, plans, KV-states) to accelerate RAG inference without changing the retrieval contract.
 
-### Where in architecture
+The two paths differ in whether retrieval is bypassed (CAG) or retained and accelerated (RAGCache). They are not the same architecture and must not be conflated.
 
-M2 runtime optimization layer ABOVE retrieval, not a replacement. Diagram:
+### 3.9.1 CAG path (bypasses retrieval)
 
 ```text
-MemoryStack / Retrieval
-  -> ContextBuilder assembles stable context pack
-  -> PromptPrefixCache / ContextCache caches prefix / KV-state
-  -> LLM receives query + pre-prepared cached context
+Compiled knowledge pack (e.g. CompiledContextPack derived from CompiledWikiProfile)
+  -> pre-loaded into model context (KV-cache or extended context window)
+  -> query
+  -> generation
 ```
 
-### Integration candidates
+Suitable when corpus is small/stable enough to fit in context.
 
-- `CompiledWikiProfile` — prime CAG candidate (stable, compact, project-scoped).
-- `SummaryTreeJob` — generated summaries cached and re-used across queries.
-- `ResponseCache` (§3.3, opt-in) — repeated identical queries hit cache.
-- `PromptPrefixCache` (§3.2, always on for hybrid profiles) — agent-level prompt caching already exists; CAG extends its scope.
+### 3.9.2 RAGCache path (caches retrieval intermediates)
 
-### CAG vs RAG decision matrix
+```text
+query
+  -> retrieval
+  -> retrieved knowledge
+  -> cached inference states
+  -> generation
+```
 
-Use CAG when:
+Suitable when corpus is too large for context or updates frequently.
 
-- corpus is small / medium and infrequent updates, context fits in window;
-- many queries hit the same knowledge set;
-- retrieval latency or selection bugs cost more than the larger prompt.
+### Integration candidates (tagged per path)
 
-Use RAG when:
+CAG-side (CompiledContextPack layer):
 
-- corpus is large and updates frequently, context overflows the window;
-- citations / provenance are required;
-- retrieval must scale beyond what fits in a context pack.
+- `CompiledWikiProfile` → derived `CompiledContextPack` — prime CAG candidate (stable, compact, project-scoped). Pre-loaded into model context.
+
+RAGCache-side (intermediate result cache):
+
+- `SummaryTreeJob` — generated summaries cached and re-used across queries as retrieval-state intermediates.
+- `ResponseCache` (§3.3, opt-in) — repeated identical queries hit cache as a post-generation intermediate.
+
+Both paths:
+
+- `PromptPrefixCache` (§3.2, always on for hybrid profiles) — agent-level prompt caching; both paths reuse the provider-side prefix mechanism.
+
+### 3.9.3 Decision rule
+
+Use CAG path when corpus fits in context, updates infrequently, query volume justifies pre-loading cost.
+Use RAGCache path when corpus overflows context or retrieval latency dominates.
 
 ### Relationship to existing PromptCache
 
@@ -276,9 +289,15 @@ Use RAG when:
 
 Conceptual design for the M2 layer. No PR planned yet. Depends on stable `ContextBuilder` output (Layer 3 per `memory-stacks-roadmap.md`).
 
+### 3.9.4 Storage tiers
+
+- `CompiledContextPack` (text/structured knowledge, stable across model versions): stored in MDBX as part of the profile / compiled pack.
+- `ProviderKVHandle` (runtime model KV-cache, model-specific and dtype-specific): NOT stored in MDBX; lives in GPU/host inference memory only.
+- `SerializedKVCache` (optional, backend-specific): some inference backends permit serialisation to disk; compatibility is conditional on model version, layer count, and dtype. Not a default capability; document per-backend.
+
 ### Cross-reference
 
-`ContextCache` likely stores cached context packs in MDBX. See [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5 for the candidate DBI shape (likely a new `context_cache_*` DBI, capability-gated).
+See [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5 for the candidate DBI shape (compiled-context-pack storage, capability-gated).
 
 ## 4. AsyncIndexer
 
