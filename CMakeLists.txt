@@ -53,6 +53,7 @@ add_library(agent_memory STATIC
     src/agent_memory/retrieval/BowEmbedder.cpp
     src/agent_memory/retrieval/BowVectorRetriever.cpp
     src/agent_memory/retrieval/BruteForceTopKIndex.cpp
+    src/agent_memory/retrieval/ExactLexicalRetriever.cpp
     src/agent_memory/retrieval/HybridRetrievalEngine.cpp
     src/agent_memory/retrieval/IRetrievalEngine.cpp
     src/agent_memory/retrieval/IRetriever.cpp
