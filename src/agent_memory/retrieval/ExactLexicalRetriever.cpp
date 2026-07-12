@@ -33,11 +33,14 @@ namespace agent_memory {
         /// \brief Builds a `RetrievedChunk` from a scored lexical hit. The
         ///        `chunk.id` and `chunk.document_id` both reuse the corpus
         ///        item id so downstream eval layers can map hits to qrels
-        ///        without an extra lookup step.
+        ///        without an extra lookup step. The retrieved metadata is
+        ///        propagated from the lexical hit so eval layers can join
+        ///        against qrel-side metadata without re-indexing.
         RetrievedChunk make_chunk(
             const std::string& item_id,
             const std::string& text,
-            float score
+            float score,
+            Metadata metadata
         ) {
             DocumentChunk chunk;
             chunk.id = ChunkId{item_id};
@@ -47,6 +50,7 @@ namespace agent_memory {
             RetrievedChunk retrieved;
             retrieved.chunk = std::move(chunk);
             retrieved.score = score;
+            retrieved.metadata = std::move(metadata);
             return retrieved;
         }
 
@@ -166,7 +170,12 @@ namespace agent_memory {
             const auto& item_id = hit.chunk_id.value();
             const auto index = m_id_to_index.at(item_id);
             result.chunks.push_back(
-                make_chunk(item_id, m_corpus_texts[index], hit.score)
+                make_chunk(
+                    item_id,
+                    m_corpus_texts[index],
+                    hit.score,
+                    hit.metadata
+                )
             );
         }
         return result;
