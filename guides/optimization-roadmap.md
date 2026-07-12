@@ -1191,13 +1191,13 @@ m_c = (1/N_c) * Σ z(x_i)   over class-c examples
 f_c(x) ≈ z(x)^T · m_c
 ```
 
-- Label-based weighting: optional Laplacian variant weights rarer classes higher.
+- Label-informed weighting: modifies random-feature contributions using class labels (e.g. class-frequency reweighting, weighting by classification difficulty, or weighting by user-prior class importance). Exact weighting semantics should follow the reference paper; treat as configurable until experimentally validated.
 - Feature pruning: drop weak RFF components whose absolute mean falls below a noise floor.
 - Online update: per-class accumulator (`m_c`, `n_c`) updated incrementally when new labeled examples arrive.
 
 ### Where in architecture
 
-Pre-retrieval semantic router. NOT a replacement for BM25, dense ANN, graph, or hybrid fusion. Routes a query to its top-2 candidate partitions (not top-1; routing error would hide the correct memory). Acts before `HybridRetrievalEngine.fuse(...)`.
+Pre-retrieval semantic router. NOT a replacement for BM25, dense ANN, graph, or hybrid fusion. Routes a query to top-K candidate partitions, where K (or a score threshold, or adaptive K via confidence margin) is itself a hyperparameter selected to optimise downstream recall vs false-positive cost. Top-1, top-2, top-3, and adaptive-K configurations must all be evaluated. Acts before the hybrid candidate retrieval/fusion stage (today, before `IRetriever` fusion in `HybridRetrievalEngine`; future versions may wrap a dedicated `HybridRetriever`).
 
 ### Use cases
 
