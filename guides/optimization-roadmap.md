@@ -1175,6 +1175,62 @@ Tradeoff vs BinaryCandidateFilter:
   - HNSW: лучше quality для high-recall (>0.97), random access slow.
   - BinaryCF: лучше для batch rerank + structured filtering.
 
+## RFF KDE Semantic Router (experimental, pre-retrieval)
+
+### Source
+
+- Zenodo preprint: <https://zenodo.org/records/20737147> (2026-06-17, CC BY 4.0).
+- Reference implementation: <https://gitlab.com/eidheim/kde-rf-classification> (MIT).
+
+### What
+
+Approximation of Kernel Density Estimation via Random Fourier Features. For each class, store only the mean of transformed embeddings (`z(x)`); per-class density is a single inner product at query time.
+
+```text
+m_c = (1/N_c) * Σ z(x_i)   over class-c examples
+f_c(x) ≈ z(x)^T · m_c
+```
+
+- Label-based weighting: optional Laplacian variant weights rarer classes higher.
+- Feature pruning: drop weak RFF components whose absolute mean falls below a noise floor.
+- Online update: per-class accumulator (`m_c`, `n_c`) updated incrementally when new labeled examples arrive.
+
+### Where in architecture
+
+Pre-retrieval semantic router. NOT a replacement for BM25, dense ANN, graph, or hybrid fusion. Routes a query to its top-2 candidate partitions (not top-1; routing error would hide the correct memory). Acts before `HybridRetrievalEngine.fuse(...)`.
+
+### Use cases
+
+- Semantic routing of memory partitions (project vs project, episodic vs fact).
+- Streaming / incremental learning via per-class accumulator updates.
+- Persona modeling: classify across axes like `technical_interest`, `current_project`.
+- Out-of-distribution detector: low top-2 scores signal a novel memory type that should fall back to broad retrieval.
+
+### Priority
+
+AFTER the core retrieval pipeline: BM25 → dense ANN → hybrid fusion → reranker → metadata filters → graph / entity retrieval. Router is M2+ experimental and only adds value once the core pipeline is stable.
+
+### Evaluation plan (when implemented)
+
+- **Baselines:** cosine nearest centroid, logistic regression, linear SVM, kNN on raw embeddings, small MLP.
+- **Hyperparameter sweep:** RFF count ∈ {256, 512, 1024, 4096}; kernels ∈ {Gaussian, Laplacian}.
+- **Metrics:** macro-F1, top-2 routing recall, **downstream** Recall@k / nDCG (headline: does routing improve retrieval?), latency per route, model size, incremental update cost.
+- **Embeddings:** E5 / BGE, L2-normalized. Compare with and without normalization to disentangle kernel compatibility with cosine-trained embeddings.
+
+### Open questions
+
+- Whether RFF with 768-dim embeddings stays compact while preserving linear-classifier quality.
+- Whether semantic embeddings (cosine-optimized) play well with Euclidean RBF / Laplacian kernels.
+- Label acquisition: the method needs labels; current repo has none. Possible routes: manual seeding, weak supervision from `WritePolicy` decisions, or skip until labels exist.
+
+### Status
+
+Experimental, no PR planned yet. MIT-licensed reference code, so re-implementation in C++ is unconstrained.
+
+### Cross-reference
+
+Persistent class-mean storage (`m_c`, `n_c` per class) requires MDBX-backed state. See [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5 (memory-stack layer) for the candidate DBI shape.
+
 ## Secondary & Reverse Indexes
 
 The knowledge base layers (lexical, graph, temporal, QA, metadata filters)
