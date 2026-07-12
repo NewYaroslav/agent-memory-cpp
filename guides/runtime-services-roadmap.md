@@ -261,7 +261,18 @@ query
 
 Suitable when corpus is too large for context or updates frequently.
 
-### Integration candidates (tagged per path)
+### 3.9.3 Decision rule
+
+Use CAG path when corpus fits in context, updates infrequently, query volume justifies pre-loading cost.
+Use RAGCache path when corpus overflows context or retrieval latency dominates.
+
+### 3.9.4 Storage tiers
+
+- `CompiledContextPack` (text/structured knowledge, stable across model versions): stored in MDBX as part of the profile / compiled pack.
+- `ProviderKVHandle` (runtime model KV-cache, model-specific and dtype-specific): NOT stored in MDBX; lives in GPU/host inference memory only.
+- `SerializedKVCache` (optional, backend-specific): some inference backends permit serialisation to disk; compatibility is conditional on model version, layer count, and dtype. Not a default capability; document per-backend.
+
+### 3.9.5 Integration candidates (tagged per path)
 
 CAG-side (CompiledContextPack layer):
 
@@ -276,26 +287,15 @@ Both paths:
 
 - `PromptPrefixCache` (§3.2, always on for hybrid profiles) — agent-level prompt caching; both paths reuse the provider-side prefix mechanism.
 
-### 3.9.3 Decision rule
-
-Use CAG path when corpus fits in context, updates infrequently, query volume justifies pre-loading cost.
-Use RAGCache path when corpus overflows context or retrieval latency dominates.
-
-### Relationship to existing PromptCache
+### 3.9.6 Relationship to existing PromptCache
 
 `IPromptPrefixCache` (§3.2) provides provider-side prefix caching. CAG extends it from "prompt prefix caching" to "context caching of compiled knowledge". The same provider-side prefix mechanism is reused; CAG adds agent-side context assembly and a `ContextCache` layer over compiled knowledge packs.
 
-### Status
+### 3.9.7 Status
 
 Conceptual design for the M2 layer. No PR planned yet. Depends on stable `ContextBuilder` output (Layer 3 per `memory-stacks-roadmap.md`).
 
-### 3.9.4 Storage tiers
-
-- `CompiledContextPack` (text/structured knowledge, stable across model versions): stored in MDBX as part of the profile / compiled pack.
-- `ProviderKVHandle` (runtime model KV-cache, model-specific and dtype-specific): NOT stored in MDBX; lives in GPU/host inference memory only.
-- `SerializedKVCache` (optional, backend-specific): some inference backends permit serialisation to disk; compatibility is conditional on model version, layer count, and dtype. Not a default capability; document per-backend.
-
-### Cross-reference
+### 3.9.8 Cross-reference
 
 See [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5 for the candidate DBI shape (compiled-context-pack storage, capability-gated).
 
