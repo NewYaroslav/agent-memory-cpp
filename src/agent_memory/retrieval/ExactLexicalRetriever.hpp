@@ -26,6 +26,7 @@
 
 #include <cstddef>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace agent_memory {
@@ -73,7 +74,9 @@ namespace agent_memory {
 
         ExactLexicalIndex m_index;
         std::vector<std::string> m_corpus_ids;
+        std::vector<std::string> m_corpus_texts;
         std::vector<Metadata> m_corpus_metadata;
+        std::unordered_map<std::string, std::size_t> m_id_to_index;
         ITokenizer* m_tokenizer;
         /// \brief Upper safety cap on per-query result size. Must be > 0.
         /// \note Use `std::numeric_limits<std::size_t>::max()` to disable

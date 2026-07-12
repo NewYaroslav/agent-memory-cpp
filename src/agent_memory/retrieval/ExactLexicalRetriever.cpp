@@ -34,12 +34,16 @@ namespace agent_memory {
         ///        `chunk.id` and `chunk.document_id` both reuse the corpus
         ///        item id so downstream eval layers can map hits to qrels
         ///        without an extra lookup step.
-        RetrievedChunk make_chunk(const std::string& item_id, float score) {
+        RetrievedChunk make_chunk(
+            const std::string& item_id,
+            const std::string& text,
+            float score
+        ) {
             DocumentChunk chunk;
             chunk.id = ChunkId{item_id};
             chunk.document_id = DocumentId{item_id};
-            chunk.source_range = TextRange{0, item_id.size()};
-            chunk.text = item_id;
+            chunk.source_range = TextRange{0, text.size()};
+            chunk.text = text;
             RetrievedChunk retrieved;
             retrieved.chunk = std::move(chunk);
             retrieved.score = score;
@@ -60,6 +64,7 @@ namespace agent_memory {
         ITokenizer& tokenizer,
         std::size_t k_neighbours_max
     ) : m_corpus_ids(std::move(corpus_ids)),
+        m_corpus_texts(std::move(corpus_texts)),
         m_corpus_metadata(std::move(corpus_metadata)),
         m_tokenizer(&tokenizer),
         m_k_neighbours_max(k_neighbours_max) {
@@ -89,7 +94,7 @@ namespace agent_memory {
                 );
             }
         }
-        if(m_corpus_ids.size() != corpus_texts.size()) {
+        if(m_corpus_ids.size() != m_corpus_texts.size()) {
             throw std::invalid_argument(
                 "ExactLexicalRetriever: corpus_ids and corpus_texts must be parallel"
             );
@@ -103,10 +108,15 @@ namespace agent_memory {
             );
         }
 
+        m_id_to_index.reserve(m_corpus_ids.size() * 2);
+        for(std::size_t index = 0; index < m_corpus_ids.size(); ++index) {
+            m_id_to_index.emplace(m_corpus_ids[index], index);
+        }
+
         const ResourceRevision revision = make_revision();
 
-        for(std::size_t index = 0; index < corpus_texts.size(); ++index) {
-            auto tokens_result = m_tokenizer->tokenize(corpus_texts[index]);
+        for(std::size_t index = 0; index < m_corpus_texts.size(); ++index) {
+            auto tokens_result = m_tokenizer->tokenize(m_corpus_texts[index]);
             if(tokens_result.empty()) {
                 throw std::invalid_argument(
                     "ExactLexicalRetriever: corpus_texts["
@@ -153,8 +163,10 @@ namespace agent_memory {
         const auto hits = m_index.search(lexical_query);
         result.chunks.reserve(hits.size());
         for(const auto& hit : hits) {
+            const auto& item_id = hit.chunk_id.value();
+            const auto index = m_id_to_index.at(item_id);
             result.chunks.push_back(
-                make_chunk(hit.chunk_id.value(), hit.score)
+                make_chunk(item_id, m_corpus_texts[index], hit.score)
             );
         }
         return result;
