@@ -56,9 +56,11 @@ namespace agent_memory {
     ExactLexicalRetriever::ExactLexicalRetriever(
         std::vector<std::string> corpus_ids,
         std::vector<std::string> corpus_texts,
+        std::vector<Metadata> corpus_metadata,
         ITokenizer& tokenizer,
         std::size_t k_neighbours_max
     ) : m_corpus_ids(std::move(corpus_ids)),
+        m_corpus_metadata(std::move(corpus_metadata)),
         m_tokenizer(&tokenizer),
         m_k_neighbours_max(k_neighbours_max) {
         if(k_neighbours_max == 0) {
@@ -92,6 +94,14 @@ namespace agent_memory {
                 "ExactLexicalRetriever: corpus_ids and corpus_texts must be parallel"
             );
         }
+        if(m_corpus_metadata.size() != m_corpus_ids.size()) {
+            throw std::invalid_argument(
+                "ExactLexicalRetriever: corpus_metadata size "
+                + std::to_string(m_corpus_metadata.size())
+                + " != ids size "
+                + std::to_string(m_corpus_ids.size())
+            );
+        }
 
         const ResourceRevision revision = make_revision();
 
@@ -109,8 +119,7 @@ namespace agent_memory {
             record.chunk_id = ChunkId{m_corpus_ids[index]};
             record.revision = revision;
             record.tokens = std::move(tokens_result.tokens);
-            // Metadata is left default-empty; the lexical index applies
-            // query-level filters, not corpus-level annotations.
+            record.metadata = m_corpus_metadata[index];
             m_index.upsert(std::move(record));
         }
     }

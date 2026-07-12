@@ -19,6 +19,7 @@
 /// ties are broken deterministically by chunk id ascending (delegated to
 /// `ExactLexicalIndex`).
 
+#include <agent_memory/domain/Metadata.hpp>
 #include <agent_memory/lexical/ExactLexicalIndex.hpp>
 #include <agent_memory/lexical/ITokenizer.hpp>
 #include <agent_memory/retrieval/IRetriever.hpp>
@@ -41,6 +42,9 @@ namespace agent_memory {
         ///
         /// \param corpus_ids Document ids, parallel to `corpus_texts`.
         /// \param corpus_texts Source text per corpus item.
+        /// \param corpus_metadata Per-record metadata, parallel to
+        ///        `corpus_ids`. Empty-allowed individual records pass
+        ///        through unchanged.
         /// \param tokenizer Tokenizer used for both corpus ingestion and
         ///        query normalization. Defaults to a process-wide
         ///        `StandardTokenizer` instance. Must outlive the retriever.
@@ -55,6 +59,7 @@ namespace agent_memory {
         ExactLexicalRetriever(
             std::vector<std::string> corpus_ids,
             std::vector<std::string> corpus_texts,
+            std::vector<Metadata> corpus_metadata,
             ITokenizer& tokenizer = default_tokenizer(),
             std::size_t k_neighbours_max = 1024
         );
@@ -68,6 +73,7 @@ namespace agent_memory {
 
         ExactLexicalIndex m_index;
         std::vector<std::string> m_corpus_ids;
+        std::vector<Metadata> m_corpus_metadata;
         ITokenizer* m_tokenizer;
         /// \brief Upper safety cap on per-query result size. Must be > 0.
         /// \note Use `std::numeric_limits<std::size_t>::max()` to disable

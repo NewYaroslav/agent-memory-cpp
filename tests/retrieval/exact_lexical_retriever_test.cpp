@@ -58,7 +58,8 @@ int main() {
             "the cat sat on the mat",
             "the dog barked at the cat"
         };
-        ExactLexicalRetriever retriever(ids, texts);
+        const std::vector<agent_memory::Metadata> metadata(ids.size());
+        ExactLexicalRetriever retriever(ids, texts, metadata);
 
         agent_memory::RetrievalQuery query;
         query.text = "cat sat mat";
@@ -79,8 +80,9 @@ int main() {
     {
         const auto ids = corpus_ids();
         const auto texts = corpus_texts();
-        ExactLexicalRetriever retriever_a(ids, texts);
-        ExactLexicalRetriever retriever_b(ids, texts);
+        const std::vector<agent_memory::Metadata> metadata(ids.size());
+        ExactLexicalRetriever retriever_a(ids, texts, metadata);
+        ExactLexicalRetriever retriever_b(ids, texts, metadata);
 
         agent_memory::RetrievalQuery query;
         query.text = "the cat sat on the mat";
@@ -105,7 +107,8 @@ int main() {
     {
         const auto ids = corpus_ids();
         const auto texts = corpus_texts();
-        ExactLexicalRetriever retriever(ids, texts);
+        const std::vector<agent_memory::Metadata> metadata(ids.size());
+        ExactLexicalRetriever retriever(ids, texts, metadata);
 
         agent_memory::RetrievalQuery query;
         query.text = "the cat sat on the mat";
@@ -127,7 +130,8 @@ int main() {
     {
         const auto ids = corpus_ids();
         const auto texts = corpus_texts();
-        ExactLexicalRetriever retriever(ids, texts);
+        const std::vector<agent_memory::Metadata> metadata(ids.size());
+        ExactLexicalRetriever retriever(ids, texts, metadata);
 
         agent_memory::RetrievalQuery query;
         query.text = "the cat sat on the mat";
@@ -145,7 +149,8 @@ int main() {
     {
         const auto ids = corpus_ids();
         const auto texts = corpus_texts();
-        ExactLexicalRetriever retriever(ids, texts);
+        const std::vector<agent_memory::Metadata> metadata(ids.size());
+        ExactLexicalRetriever retriever(ids, texts, metadata);
 
         agent_memory::RetrievalQuery query;
         query.text = "";
@@ -161,10 +166,10 @@ int main() {
     {
         bool threw_invalid_argument = false;
         try {
-            ExactLexicalRetriever bad(
-                std::vector<std::string>{"d:a", "d:b"},
-                std::vector<std::string>{"only one"}
-            );
+            const std::vector<std::string> bad_ids{"d:a", "d:b"};
+            const std::vector<std::string> bad_texts{"only one"};
+            const std::vector<agent_memory::Metadata> bad_metadata(bad_ids.size());
+            ExactLexicalRetriever bad(bad_ids, bad_texts, bad_metadata);
         } catch(const std::invalid_argument&) {
             threw_invalid_argument = true;
         } catch(...) {
@@ -179,10 +184,10 @@ int main() {
 
     // 6) Empty corpus: constructor succeeds and `retrieve` returns empty.
     {
-        ExactLexicalRetriever retriever(
-            std::vector<std::string>{},
-            std::vector<std::string>{}
-        );
+        const std::vector<std::string> ids;
+        const std::vector<std::string> texts;
+        const std::vector<agent_memory::Metadata> metadata(ids.size());
+        ExactLexicalRetriever retriever(ids, texts, metadata);
         agent_memory::RetrievalQuery query;
         query.text = "anything";
         query.limit = 10;
@@ -196,7 +201,8 @@ int main() {
     {
         const auto ids = corpus_ids();
         const auto texts = corpus_texts();
-        ExactLexicalRetriever retriever(ids, texts);
+        const std::vector<agent_memory::Metadata> metadata(ids.size());
+        ExactLexicalRetriever retriever(ids, texts, metadata);
 
         agent_memory::RetrievalQuery query;
         query.text = "the";
@@ -214,7 +220,8 @@ int main() {
     {
         const auto ids = corpus_ids();
         const auto texts = corpus_texts();
-        ExactLexicalRetriever retriever(ids, texts);
+        const std::vector<agent_memory::Metadata> metadata(ids.size());
+        ExactLexicalRetriever retriever(ids, texts, metadata);
 
         agent_memory::RetrievalQuery query;
         query.text = "the";
@@ -236,8 +243,9 @@ int main() {
             "the dog barked at the cat",
             "the bird flew over the house"
         };
+        const std::vector<agent_memory::Metadata> metadata(ids.size());
 
-        ExactLexicalRetriever lexical(ids, texts);
+        ExactLexicalRetriever lexical(ids, texts, metadata);
         BowVectorRetriever bow(ids, texts, /*seed=*/0);
 
         agent_memory::RetrievalQuery query;
