@@ -543,7 +543,7 @@ int main() {
 
     // 17a) metadata_survives_to_retrieval_result: non-empty per-document
     //      metadata must round-trip from the corpus_metadata passed at
-    //      construction through to RetrievedChunk.metadata on hits.
+    //      construction through to RetrievedChunk.metadata on every hit.
     {
         std::vector<agent_memory::Metadata> metadata(2);
         metadata[0].set("lang", "en");
@@ -553,7 +553,7 @@ int main() {
         const std::vector<std::string> ids = {"doc:1", "doc:2"};
         const std::vector<std::string> texts = {
             "alpha bravo",
-            "charlie delta"
+            "alpha charlie"
         };
         ExactLexicalRetriever retriever(ids, texts, metadata);
 
@@ -561,28 +561,40 @@ int main() {
         query.text = "alpha";
         query.limit = 10;
         const auto result = retriever.retrieve(query);
-        if(result.empty()) {
+        if(result.size() != 2) {
             return fail(
-                "metadata_round_trip: alpha query must return at least one hit"
+                "metadata_round_trip: alpha query must return both docs; got: "
+                    + std::to_string(result.size())
             );
         }
-        if(result.chunks.front().chunk.id.value() != "doc:1") {
-            return fail(
-                "metadata_round_trip: alpha query must rank doc:1 first; got: "
-                    + result.chunks.front().chunk.id.value()
-            );
-        }
-        const auto lang = result.chunks.front().metadata.get("lang");
-        if(!lang || *lang != "en") {
-            return fail(
-                "metadata_round_trip: metadata.lang must survive to retrieval result"
-            );
-        }
-        const auto topic = result.chunks.front().metadata.get("topic");
-        if(!topic || *topic != "a") {
-            return fail(
-                "metadata_round_trip: metadata.topic must survive to retrieval result"
-            );
+        // Loop over all hits to guard against copy-paste regressions where
+        // the front() check passes but later hits have wrong/missing metadata.
+        for(const auto& hit : result.chunks) {
+            const auto& id = hit.chunk.id.value();
+            const auto lang = hit.metadata.get("lang");
+            if(id == "doc:1") {
+                if(!lang || *lang != "en") {
+                    return fail(
+                        "metadata_round_trip: doc:1 hit must carry lang=en"
+                    );
+                }
+                const auto topic = hit.metadata.get("topic");
+                if(!topic || *topic != "a") {
+                    return fail(
+                        "metadata_round_trip: doc:1 hit must carry topic=a"
+                    );
+                }
+            } else if(id == "doc:2") {
+                if(!lang || *lang != "de") {
+                    return fail(
+                        "metadata_round_trip: doc:2 hit must carry lang=de"
+                    );
+                }
+            } else {
+                return fail(
+                    "metadata_round_trip: unexpected hit id: " + id
+                );
+            }
         }
     }
 
