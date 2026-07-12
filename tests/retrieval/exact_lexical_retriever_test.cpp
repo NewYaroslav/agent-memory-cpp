@@ -622,6 +622,39 @@ int main() {
         }
     }
 
+    // 17c) metadata_explicit_empty_vector: passing std::vector<Metadata>{}
+    //      explicitly must also produce a retriever whose every hit
+    //      carries an empty `Metadata` record. Lock in that explicit-empty
+    //      and omitted-argument paths both produce empty per-doc metadata
+    //      via the normalization branch (m_corpus_metadata.assign(...)).
+    {
+        const std::vector<std::string> ids = {"doc:1", "doc:2"};
+        const std::vector<std::string> texts = {
+            "alpha bravo",
+            "charlie delta"
+        };
+        const std::vector<agent_memory::Metadata> metadata{}; // explicit empty
+        ExactLexicalRetriever retriever(ids, texts, metadata);
+
+        agent_memory::RetrievalQuery query;
+        query.text = "bravo";
+        query.limit = 10;
+        const auto result = retriever.retrieve(query);
+        if(result.chunks.empty()) {
+            return fail(
+                "metadata_explicit_empty: bravo query must return at least one hit"
+            );
+        }
+        for(const auto& hit : result.chunks) {
+            if(!hit.metadata.empty()) {
+                return fail(
+                    "metadata_explicit_empty: every hit must carry empty metadata; "
+                    "leaked entries on id=" + hit.chunk.id.value()
+                );
+            }
+        }
+    }
+
     // 18) oov_query_returns_empty: every term absent from corpus → empty.
     {
         const auto ids = corpus_ids();
