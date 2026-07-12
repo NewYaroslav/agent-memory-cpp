@@ -138,6 +138,19 @@ namespace agent_memory {
         }
     }
 
+    ExactLexicalRetriever::ExactLexicalRetriever(
+        std::vector<std::string> corpus_ids,
+        std::vector<std::string> corpus_texts,
+        ITokenizer& tokenizer,
+        std::size_t k_neighbours_max
+    ) : ExactLexicalRetriever(
+        std::move(corpus_ids),
+        std::move(corpus_texts),
+        std::vector<Metadata>(corpus_ids.size()),
+        tokenizer,
+        k_neighbours_max
+    ) {}
+
     RetrievalResult ExactLexicalRetriever::retrieve(
         const RetrievalQuery& query
     ) const {

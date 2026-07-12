@@ -65,6 +65,17 @@ namespace agent_memory {
             std::size_t k_neighbours_max = 1024
         );
 
+        /// \brief Convenience overload that builds an empty `Metadata`
+        ///        record for each document. Use the explicit
+        ///        `corpus_metadata` overload when you need filtered
+        ///        queries. Validation lives in the 5-argument constructor.
+        ExactLexicalRetriever(
+            std::vector<std::string> corpus_ids,
+            std::vector<std::string> corpus_texts,
+            ITokenizer& tokenizer,
+            std::size_t k_neighbours_max
+        );
+
         [[nodiscard]] RetrievalResult retrieve(const RetrievalQuery& query)
             const override;
 
