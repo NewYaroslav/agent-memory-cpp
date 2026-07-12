@@ -596,17 +596,19 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 | Приоритет | Deliverable | Метрика успеха | Целевое значение |
 |---|---|---|---|
 | P0 | `ReverseIndexTable::find()` (DUPSORT lookup) | p99 latency на 100K keys | `< 5 µs` |
-| P0 | `KeyValueTable::commit()` одиночной write | throughput на NVMe, fsync=on | `> 100K ops/sec` |
+| P0 | `Single KeyValueTable::put()` (no-sync, in-memory durability) | throughput на NVMe | `> 500K ops/sec` |
+| P0 | `Single KeyValueTable::put() + Transaction::commit()` (fsync=on) | throughput на NVMe | bottlenecked by fsync latency (сотни µs на SSD, единицы ms на HDD/remote storage); не primary optimization target |
+| P0 | `Batched transaction: 1000 records per txn` (fsync=on) | throughput и p99 commit latency | `> 100K records/sec` AND `< 10ms` p99 commit latency |
 | P0 | `TypeDiscriminatedTable::find(tag, key, txn)` | p99 latency на 100K keys × 9 type tags | `< 8 µs` |
-| P0 | `MultiTableWriter` (atomic 6-table write) | round-trip при success | `< 2×` стоимости одной `KeyValueTable::commit` |
-| P1 | `MultiTableWriter` (batch, N=1000) | fsync cost vs одиночная write | `< 1×` per-op стоимости |
+| P0 | `MultiTableWriter` (atomic 6-table write) | round-trip при success | `< 2×` стоимости одной `Transaction::commit` |
+| P1 | `MultiTableWriter` (batch, N=1000) | amortized fsync cost vs одиночная write | amortized latency per record ≤ 0.1 × single-record durable `Transaction::commit()` latency (~10× batching gain) |
 | P1 | `RangeIndexTable::range()` inclusive/exclusive | correctness на synthetic keys | `100%` ordered match vs `KeyMultiValueTable` baseline |
 | P1 | `paginated_range` over `CompositeKey` | ordering identical к sequential scan | `100%` |
-| P1 | `CompositeKey` round-trip | byte layout identity across compilers | compile success (C++11 + C++17) без warnings |
+| P1 | `CompositeKey` round-trip | byte layout identity across compilers | golden-byte test: `to_bytes(key)` сравнивается с versioned expected blob; cross-compile-and-run на GCC, Clang, MSVC в C++11 и C++17 режимах; endian и padding policy документированы (рекомендация: little-endian, packed, no padding для стабильного layout) |
 | P2 | `KeyValueTable::paginated_range_forward()` | latency vs `range_reverse` | `< 1.5×` на 100K pages |
 | P2 | `KeyValueTable::diagnostics()` | reporting точность | reported `avg`/`p95` совпадают с external sampler ±5% |
 | P2 | `Config::enable_metrics` / `table_creation_callback` | integration overhead | `< 2%` per-writer overhead |
-| P2 | `hamming_neighbors_uint64` (radius 1-3, 24-28 bits) | lookup count, latency | соответствие ожидаемым таблицам `1/25/301` и `1/29/407` (см. `guides/optimization-roadmap.md` §"Neighbor Bucket Masks") |
+| P2 | `hamming_neighbors_uint64` (radius 0-3, 24-28 bits) | lookup count, latency | соответствие ожидаемым таблицам cumulative: 24 bits → `1/25/301/2325` (radius 0/≤1/≤2/≤3); 28 bits → `1/29/407/3683` (radius 0/≤1/≤2/≤3) (см. `guides/optimization-roadmap.md` §"Neighbor Bucket Masks") |
 | P2 | `to_hex_string` / `from_hex_string` | round-trip identity | `100%` |
 | P3 | `KeyValueTable::merge` (same K, V types) | throughput vs полного reindex | `> 2×` speedup на 100K entries |
 | P3 | `KeyValueTable::snapshot` | memory overhead | `< 2×` raw storage size |
@@ -615,7 +617,9 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 | P3 | `GraphStore::purge_expired` (TZ §12.2) | correctness (eviction policy) | `0` orphaned edges после purge на synthetic workload |
 | P3 | `EventStore::recent` (TZ §12.3) | ordering by `observed_at_ms` vs `occurred_at_ms` | `100%` correct order на shuffled fixture |
 
-Измерительный протокол: замер на выборке не менее `30` запусков после `warmup=3`, p99 через `std::nth_element`, hardware doc фиксируется в `external/mdbx-containers/bench/results/<YYYY-MM>/`.
+Измерительный протокол: не менее `30` независимых benchmark rounds, каждый round — `10000` операций на freshly-constructed state; p50/p95/p99 вычисляются по всем `30` round-ам (median across rounds), дополнительно per-round p50/p95/p99 фиксируются; warm-up period документируется (минимум `3` предварительных round-а отбрасываются); эффекты GC/памяти измеряются и комментируются; hardware doc фиксируется в `external/mdbx-containers/bench/results/<YYYY-MM>/`. Альтернативный упрощённый вариант: не менее `1 000 000` operation-level samples; p50/p95/p99 по полной выборке; median ± stddev между независимыми rounds.
+
+Замечание о метриках: throughput в строках выше — три отдельные метрики, не одна. Async (no-sync) метрики ограничены RAM и CPU bandwidth, не storage latency. Batched (один `Transaction::commit()` на N записей) метрики отражают amortized fsync стоимость и дают качественно иные числа, чем одиночные durable записи. Durable single-write метрики ограничены fsync latency и в общем случае не являются primary optimization target для write-heavy сценариев — для них предпочтительны batched протоколы с явным amortization target.
 
 ## 11. Открытые вопросы и риски
 
