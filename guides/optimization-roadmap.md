@@ -1197,14 +1197,14 @@ f_c(x) ≈ z(x)^T · m_c
 
 ### Where in architecture
 
-Pre-retrieval semantic router. NOT a replacement for BM25, dense ANN, graph, or hybrid fusion. Routes a query to top-K candidate partitions, where K (or a score threshold, or adaptive K via confidence margin) is itself a hyperparameter selected to optimise downstream recall vs false-positive cost. Top-1, top-2, top-3, and adaptive-K configurations must all be evaluated. Acts before the hybrid candidate retrieval/fusion stage (today, before `IRetriever` fusion in `HybridRetrievalEngine`; future versions may wrap a dedicated `HybridRetriever`).
+Pre-retrieval semantic router. NOT a replacement for BM25, dense ANN, graph, or hybrid fusion. Routes a query to top-K candidate partitions, where K (or a score threshold, or adaptive K via confidence margin) is itself a hyperparameter selected to optimise downstream recall vs false-positive cost. Top-1, top-2, top-3, and adaptive-K configurations must all be evaluated. Acts before the hybrid candidate retrieval/fusion stage (today: before `IRetrievalEngine::retrieve()` in `HybridRetrievalEngine`; future versions may use a dedicated hybrid class).
 
 ### Use cases
 
 - Semantic routing of memory partitions (project vs project, episodic vs fact).
 - Streaming / incremental learning via per-class accumulator updates.
 - Persona modeling: classify across axes like `technical_interest`, `current_project`.
-- Out-of-distribution detector: low top-2 scores signal a novel memory type that should fall back to broad retrieval.
+- Out-of-distribution detector: low top-K margin (or low top-1 confidence when K=1) signals a novel memory type that should fall back to broad retrieval.
 
 ### Priority
 
@@ -1214,7 +1214,7 @@ AFTER the core retrieval pipeline: BM25 → dense ANN → hybrid fusion → rera
 
 - **Baselines:** cosine nearest centroid, logistic regression, linear SVM, kNN on raw embeddings, small MLP.
 - **Hyperparameter sweep:** RFF count ∈ {256, 512, 1024, 4096}; kernels ∈ {Gaussian, Laplacian}.
-- **Metrics:** macro-F1, top-2 routing recall, **downstream** Recall@k / nDCG (headline: does routing improve retrieval?), latency per route, model size, incremental update cost.
+- **Metrics:** macro-F1, top-K routing recall (sweep over K), **downstream** Recall@k / nDCG (headline: does routing improve retrieval?), latency per route, model size, incremental update cost.
 - **Embeddings:** E5 / BGE, L2-normalized. Compare with and without normalization to disentangle kernel compatibility with cosine-trained embeddings.
 
 ### Open questions
