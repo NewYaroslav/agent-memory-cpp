@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -59,6 +60,26 @@ namespace agent_memory {
     ) : m_corpus_ids(std::move(corpus_ids)),
         m_tokenizer(&tokenizer),
         m_k_neighbours_max(k_neighbours_max) {
+        for(std::size_t index = 0; index < m_corpus_ids.size(); ++index) {
+            if(m_corpus_ids[index].empty()) {
+                throw std::invalid_argument(
+                    "ExactLexicalRetriever: corpus_id must not be empty at index "
+                    + std::to_string(index)
+                );
+            }
+        }
+        std::unordered_set<std::string> seen;
+        seen.reserve(m_corpus_ids.size() * 2);
+        for(std::size_t index = 0; index < m_corpus_ids.size(); ++index) {
+            if(!seen.insert(m_corpus_ids[index]).second) {
+                throw std::invalid_argument(
+                    "ExactLexicalRetriever: duplicate corpus_id "
+                    + m_corpus_ids[index]
+                    + " at index "
+                    + std::to_string(index)
+                );
+            }
+        }
         if(m_corpus_ids.size() != corpus_texts.size()) {
             throw std::invalid_argument(
                 "ExactLexicalRetriever: corpus_ids and corpus_texts must be parallel"
