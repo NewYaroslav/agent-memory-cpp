@@ -222,6 +222,64 @@ response_cache
 - scope-aware keys: разные `scope_id` имеют разные cache entries.
 - TTL для `IResponseCache`: default 1 час, configurable per provider.
 
+## 3.9. CAG (Cache-Augmented Generation) and ContextCache Layer
+
+### Sources
+
+- arXiv:2412.15605 — "Don't Do RAG: When Cache-Augmented Generation is All You Need for Knowledge Tasks".
+- arXiv:2404.12457 — "RAGCache: Efficient Knowledge Caching for Retrieval-Augmented Generation".
+
+### What
+
+Two related but distinct ideas:
+
+- **CAG (Cache-Augmented Generation):** pre-load the entire relevant corpus into the model's context cache (KV-cache or extended context window). At query time skip retrieval and answer from cached knowledge.
+- **RAGCache:** cache intermediate states of an existing RAG pipeline (retrieved chunks, plans, KV-states) to accelerate RAG inference without changing the retrieval contract.
+
+### Where in architecture
+
+M2 runtime optimization layer ABOVE retrieval, not a replacement. Diagram:
+
+```text
+MemoryStack / Retrieval
+  -> ContextBuilder assembles stable context pack
+  -> PromptPrefixCache / ContextCache caches prefix / KV-state
+  -> LLM receives query + pre-prepared cached context
+```
+
+### Integration candidates
+
+- `CompiledWikiProfile` — prime CAG candidate (stable, compact, project-scoped).
+- `SummaryTreeJob` — generated summaries cached and re-used across queries.
+- `ResponseCache` (§3.3, opt-in) — repeated identical queries hit cache.
+- `PromptPrefixCache` (§3.2, always on for hybrid profiles) — agent-level prompt caching already exists; CAG extends its scope.
+
+### CAG vs RAG decision matrix
+
+Use CAG when:
+
+- corpus is small / medium and infrequent updates, context fits in window;
+- many queries hit the same knowledge set;
+- retrieval latency or selection bugs cost more than the larger prompt.
+
+Use RAG when:
+
+- corpus is large and updates frequently, context overflows the window;
+- citations / provenance are required;
+- retrieval must scale beyond what fits in a context pack.
+
+### Relationship to existing PromptCache
+
+`IPromptPrefixCache` (§3.2) provides provider-side prefix caching. CAG extends it from "prompt prefix caching" to "context caching of compiled knowledge". The same provider-side prefix mechanism is reused; CAG adds agent-side context assembly and a `ContextCache` layer over compiled knowledge packs.
+
+### Status
+
+Conceptual design for the M2 layer. No PR planned yet. Depends on stable `ContextBuilder` output (Layer 3 per `memory-stacks-roadmap.md`).
+
+### Cross-reference
+
+`ContextCache` likely stores cached context packs in MDBX. See [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5 for the candidate DBI shape (likely a new `context_cache_*` DBI, capability-gated).
+
 ## 4. AsyncIndexer
 
 ### 4.1. Purpose
