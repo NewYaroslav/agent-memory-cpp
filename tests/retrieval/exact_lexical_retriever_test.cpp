@@ -586,14 +586,13 @@ int main() {
         }
     }
 
-    // 17b) metadata_default_overload_uses_empty_metadata: the 4-arg
-    //      constructor (no corpus_metadata param) must produce hits
-    //      whose RetrievedChunk.metadata is empty.
+    // 17b) metadata_default_uses_empty_metadata: omitting corpus_metadata
+    //      via the default argument produces a retriever whose every hit
+    //      carries an empty `Metadata` record.
     {
         const std::vector<std::string> ids = {"doc:1"};
         const std::vector<std::string> texts = {"alpha bravo"};
-        agent_memory::StandardTokenizer tok;
-        ExactLexicalRetriever retriever(ids, texts, tok, /*k_neighbours_max=*/1024);
+        ExactLexicalRetriever retriever(ids, texts);
 
         agent_memory::RetrievalQuery query;
         query.text = "alpha";

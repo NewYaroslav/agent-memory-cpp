@@ -44,14 +44,18 @@ namespace agent_memory {
         /// \param corpus_ids Document ids, parallel to `corpus_texts`.
         /// \param corpus_texts Source text per corpus item.
         /// \param corpus_metadata Per-record metadata, parallel to
-        ///        `corpus_ids`. Empty-allowed individual records pass
-        ///        through unchanged.
+        ///        `corpus_ids`. Defaults to an empty vector (one empty
+        ///        `Metadata` per document). Empty-allowed individual
+        ///        records pass through unchanged.
         /// \param tokenizer Tokenizer used for both corpus ingestion and
         ///        query normalization. Defaults to a process-wide
         ///        `StandardTokenizer` instance. Must outlive the retriever.
         /// \param k_neighbours_max Upper cap applied to `query.limit` per
         ///        call. Defaults to 1024. Must be greater than zero; pass
         ///        `std::numeric_limits<std::size_t>::max()` to disable.
+        /// \note Omitting `corpus_metadata` yields a retriever whose
+        ///       every hit carries an empty `Metadata` record, so
+        ///       filtered queries will return no hits.
         /// \throws std::invalid_argument if corpus inputs are inconsistent,
         ///         any text tokenizes to empty, or `k_neighbours_max == 0`.
         /// \throws std::runtime_error if the lexical index rejects a record.
@@ -60,20 +64,9 @@ namespace agent_memory {
         ExactLexicalRetriever(
             std::vector<std::string> corpus_ids,
             std::vector<std::string> corpus_texts,
-            std::vector<Metadata> corpus_metadata,
+            std::vector<Metadata> corpus_metadata = {},
             ITokenizer& tokenizer = default_tokenizer(),
             std::size_t k_neighbours_max = 1024
-        );
-
-        /// \brief Convenience overload that builds an empty `Metadata`
-        ///        record for each document. Use the explicit
-        ///        `corpus_metadata` overload when you need filtered
-        ///        queries. Validation lives in the 5-argument constructor.
-        ExactLexicalRetriever(
-            std::vector<std::string> corpus_ids,
-            std::vector<std::string> corpus_texts,
-            ITokenizer& tokenizer,
-            std::size_t k_neighbours_max
         );
 
         [[nodiscard]] RetrievalResult retrieve(const RetrievalQuery& query)

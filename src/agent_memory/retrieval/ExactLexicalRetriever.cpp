@@ -103,7 +103,9 @@ namespace agent_memory {
                 "ExactLexicalRetriever: corpus_ids and corpus_texts must be parallel"
             );
         }
-        if(m_corpus_metadata.size() != m_corpus_ids.size()) {
+        if(m_corpus_metadata.empty() && !m_corpus_ids.empty()) {
+            m_corpus_metadata.assign(m_corpus_ids.size(), Metadata{});
+        } else if(m_corpus_metadata.size() != m_corpus_ids.size()) {
             throw std::invalid_argument(
                 "ExactLexicalRetriever: corpus_metadata size "
                 + std::to_string(m_corpus_metadata.size())
@@ -137,19 +139,6 @@ namespace agent_memory {
             m_index.upsert(std::move(record));
         }
     }
-
-    ExactLexicalRetriever::ExactLexicalRetriever(
-        std::vector<std::string> corpus_ids,
-        std::vector<std::string> corpus_texts,
-        ITokenizer& tokenizer,
-        std::size_t k_neighbours_max
-    ) : ExactLexicalRetriever(
-        std::move(corpus_ids),
-        std::move(corpus_texts),
-        std::vector<Metadata>(corpus_ids.size()),
-        tokenizer,
-        k_neighbours_max
-    ) {}
 
     RetrievalResult ExactLexicalRetriever::retrieve(
         const RetrievalQuery& query
