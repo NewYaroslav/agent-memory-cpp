@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -60,6 +61,12 @@ namespace agent_memory {
     ) : m_corpus_ids(std::move(corpus_ids)),
         m_tokenizer(&tokenizer),
         m_k_neighbours_max(k_neighbours_max) {
+        if(k_neighbours_max == 0) {
+            throw std::invalid_argument(
+                "ExactLexicalRetriever: k_neighbours_max must be > 0; "
+                "use std::numeric_limits<size_t>::max() to effectively disable the cap"
+            );
+        }
         for(std::size_t index = 0; index < m_corpus_ids.size(); ++index) {
             if(m_corpus_ids[index].empty()) {
                 throw std::invalid_argument(

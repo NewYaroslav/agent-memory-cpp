@@ -45,9 +45,10 @@ namespace agent_memory {
         ///        query normalization. Defaults to a process-wide
         ///        `StandardTokenizer` instance. Must outlive the retriever.
         /// \param k_neighbours_max Upper cap applied to `query.limit` per
-        ///        call. Defaults to 1024.
-        /// \throws std::invalid_argument if corpus inputs are inconsistent
-        ///         or any text tokenizes to empty.
+        ///        call. Defaults to 1024. Must be greater than zero; pass
+        ///        `std::numeric_limits<std::size_t>::max()` to disable.
+        /// \throws std::invalid_argument if corpus inputs are inconsistent,
+        ///         any text tokenizes to empty, or `k_neighbours_max == 0`.
         /// \throws std::runtime_error if the lexical index rejects a record.
         /// \note Standard C++ exception safety: a failed constructor leaves
         ///       no ExactLexicalRetriever object behind.
@@ -68,6 +69,9 @@ namespace agent_memory {
         ExactLexicalIndex m_index;
         std::vector<std::string> m_corpus_ids;
         ITokenizer* m_tokenizer;
+        /// \brief Upper safety cap on per-query result size. Must be > 0.
+        /// \note Use `std::numeric_limits<std::size_t>::max()` to disable
+        ///       the cap entirely.
         std::size_t m_k_neighbours_max;
     };
 
