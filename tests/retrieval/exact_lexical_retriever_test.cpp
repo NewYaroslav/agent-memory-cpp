@@ -541,6 +541,76 @@ int main() {
         }
     }
 
+    // 17a) metadata_survives_to_retrieval_result: non-empty per-document
+    //      metadata must round-trip from the corpus_metadata passed at
+    //      construction through to RetrievedChunk.metadata on hits.
+    {
+        std::vector<agent_memory::Metadata> metadata(2);
+        metadata[0].set("lang", "en");
+        metadata[0].set("topic", "a");
+        metadata[1].set("lang", "de");
+
+        const std::vector<std::string> ids = {"doc:1", "doc:2"};
+        const std::vector<std::string> texts = {
+            "alpha bravo",
+            "charlie delta"
+        };
+        ExactLexicalRetriever retriever(ids, texts, metadata);
+
+        agent_memory::RetrievalQuery query;
+        query.text = "alpha";
+        query.limit = 10;
+        const auto result = retriever.retrieve(query);
+        if(result.empty()) {
+            return fail(
+                "metadata_round_trip: alpha query must return at least one hit"
+            );
+        }
+        if(result.chunks.front().chunk.id.value() != "doc:1") {
+            return fail(
+                "metadata_round_trip: alpha query must rank doc:1 first; got: "
+                    + result.chunks.front().chunk.id.value()
+            );
+        }
+        const auto lang = result.chunks.front().metadata.get("lang");
+        if(!lang || *lang != "en") {
+            return fail(
+                "metadata_round_trip: metadata.lang must survive to retrieval result"
+            );
+        }
+        const auto topic = result.chunks.front().metadata.get("topic");
+        if(!topic || *topic != "a") {
+            return fail(
+                "metadata_round_trip: metadata.topic must survive to retrieval result"
+            );
+        }
+    }
+
+    // 17b) metadata_default_overload_uses_empty_metadata: the 4-arg
+    //      constructor (no corpus_metadata param) must produce hits
+    //      whose RetrievedChunk.metadata is empty.
+    {
+        const std::vector<std::string> ids = {"doc:1"};
+        const std::vector<std::string> texts = {"alpha bravo"};
+        agent_memory::StandardTokenizer tok;
+        ExactLexicalRetriever retriever(ids, texts, tok, /*k_neighbours_max=*/1024);
+
+        agent_memory::RetrievalQuery query;
+        query.text = "alpha";
+        query.limit = 10;
+        const auto result = retriever.retrieve(query);
+        if(result.empty()) {
+            return fail(
+                "metadata_default_overload: alpha query must return at least one hit"
+            );
+        }
+        if(!result.chunks.front().metadata.empty()) {
+            return fail(
+                "metadata_default_overload: default overload must produce empty metadata"
+            );
+        }
+    }
+
     // 18) oov_query_returns_empty: every term absent from corpus → empty.
     {
         const auto ids = corpus_ids();
