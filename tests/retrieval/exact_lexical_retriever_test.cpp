@@ -732,5 +732,63 @@ int main() {
         }
     }
 
+    // 21) id_prefix_distinct_hits: a corpus containing "doc:1" and
+    //     "doc:10" must resolve each single-term query to exactly its
+    //     owning record, with no prefix/substring cross-contamination.
+    //     Regression test for m_id_to_index.at() exact-match lookup;
+    //     protects against accidental swap to prefix/substring match.
+    {
+        const std::vector<std::string> ids = {"doc:1", "doc:10"};
+        const std::vector<std::string> texts = {
+            "alpha bravo charlie",
+            "delta echo foxtrot"
+        };
+        ExactLexicalRetriever retriever(ids, texts);
+
+        // Query 1: "bravo" lives only in doc:1's text.
+        {
+            agent_memory::RetrievalQuery query;
+            query.text = "bravo";
+            query.limit = 10;
+            const auto result = retriever.retrieve(query);
+            if(result.empty()) {
+                return fail(
+                    "id_prefix_distinct: bravo query must return at least one hit"
+                );
+            }
+            for(const auto& hit : result.chunks) {
+                const auto& got = hit.chunk.id.value();
+                if(got != "doc:1") {
+                    return fail(
+                        "id_prefix_distinct: bravo query must return only doc:1; "
+                        "leaked id=" + got
+                    );
+                }
+            }
+        }
+
+        // Query 2: "foxtrot" lives only in doc:10's text.
+        {
+            agent_memory::RetrievalQuery query;
+            query.text = "foxtrot";
+            query.limit = 10;
+            const auto result = retriever.retrieve(query);
+            if(result.empty()) {
+                return fail(
+                    "id_prefix_distinct: foxtrot query must return at least one hit"
+                );
+            }
+            for(const auto& hit : result.chunks) {
+                const auto& got = hit.chunk.id.value();
+                if(got != "doc:10") {
+                    return fail(
+                        "id_prefix_distinct: foxtrot query must return only doc:10; "
+                        "leaked id=" + got
+                    );
+                }
+            }
+        }
+    }
+
     return 0;
 }
