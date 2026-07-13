@@ -6,7 +6,7 @@
 
 `agent-memory-cpp` and `codebase-memory-mcp` solve different problems: the former is an embedded C++17 memory/retrieval engine for AI agents, the latter is a static-binary MCP server for indexing source code and answering structural queries against it. We are not adopting either its scope or its stack. We studied the source of `codebase-memory-mcp` because it ships, in ~162 KB of pure C, a tight set of engineering patterns that are directly applicable to our roadmap: near-clone detection, scalar-vector quantization, coverage shadowing of indexed regions, atomic shared ID generation, bounded graph traversal, schema introspection, a portable graph-artifact format, a small read-only query language, multi-pattern matching over compressed text, and an adaptive-poll background watcher.
 
-License: MIT. Borrowing of constants, header excerpts, and high-level architectural ideas is fine. We MUST NOT copy-paste source code from `codebase-memory-mcp` into our repository; algorithms and code are copyrightable, numerical constants and standard algorithmic descriptions are not. Section 3 spells out the license-compliance rule and how constant provenance is tracked.
+License: MIT. MIT permits copying, modification, and redistribution provided the required copyright and license notice is preserved. Project policy: prefer clean-room reimplementation; copy upstream source only when explicitly approved with license attribution. Section 3 spells out the license-compliance rule and how constant provenance is tracked.
 
 Cross-reference: the project-level entry for this analysis lives in
 [`related-projects.md`](related-projects.md) §6 (added in 2026-07 with this
@@ -45,9 +45,13 @@ they are candidates for an M2/M3 planning wave.
 
   Candidate threshold for `b = 32` bands and `r = 2` rows is approximately
   `(1/32)^(1/2) ≈ 0.177` Jaccard similarity. The pipeline: shingles a
-  document into k-grams, hashes each shingle into `K = 64` MinHash
-  buckets, then LSH bands of `(b = 32, r = 2)` are emitted so that pairs
-  with Jaccard ≥ 0.177 collide in at least one band.
+  document into k-grams, computes MinHash signatures via K = 64
+  independent permuted hash functions, then LSH bands of `(b = 32, r = 2)`
+  are emitted. The approximate S-curve transition point is
+  `(1/b)^(1/r) ≈ 0.177`. At that similarity, candidate probability is
+  about 63% (P = 1 - (1 - s^r)^b for s = 0.177, b = 32, r = 2). It is not
+  a hard threshold — pairs above 0.177 are MORE likely to be candidates,
+  pairs below are LESS likely.
 - **Our applicability:** augments — does NOT replace — the
   `binary_bucket_index` and `BinarySignatureEncoderRegistry` from
   [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Bucket
@@ -71,10 +75,12 @@ they are candidates for an M2/M3 planning wave.
     threshold (fewer collisions, larger posting lists per band) or a
     looser one (more candidates, larger fan-out)?
   - The `JACCARD_THRESHOLD = 0.95` constant is post-filter (after band
-    collision). With the `(b = 32, r = 2)` bands that threshold is
-    impossibly tight — most collisions will have Jaccard < 0.95. The
-    design must reconcile "band threshold" (0.177) with "post-filter
-    threshold" (0.95).
+    collision). 0.95 is a deliberately high post-filter threshold for
+    near-identical clones. The two-stage scheme works as: (1) LSH
+    candidate generation (low transition point = high recall, but many
+    false positives); (2) exact Jaccard post-filter (≥ 0.95 = high
+    precision). At true Jaccard 0.95 the LSH collision probability is
+    ~1, so most true positives are still found.
 
 #### Pattern 2 — RaBitQ-style Rotated Scalar Quantization (RotSQ)
 
@@ -248,8 +254,11 @@ ship-it criteria.
   Both are read-only and stable enough to ship as part of the public
   graph store contract.
 - **Their implementation:** `src/store/store.h`. Both APIs are
-  read-only and operate on a returned `cbm_traverse_result_t` /
-  `cbm_schema_info_t` rather than a callback:
+  read-only. Upstream returns a bulk result object
+  (`cbm_traverse_result_t`) via out-parameter, NOT a callback. For our
+  `IGraphIndex` API, evaluate whether to preserve the bulk-result shape
+  or expose an additional visitor/early-stop interface for streaming BFS
+  over large subgraphs:
 
 ```c
 int cbm_store_bfs(cbm_store_t *s, int64_t start_id, const char *direction,
@@ -282,9 +291,6 @@ int cbm_store_get_schema(cbm_store_t *s, const char *project, cbm_schema_info_t 
   [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §"M2+
   Retrieval Hooks").
 - **Open questions:**
-  - Should BFS enumerate nodes or only edges? `codebase-memory-mcp`
-    exposes a callback API — for our purposes a visitor pattern with
-    early-stop is more useful than a bulk collection.
   - Schema introspection is operational metadata; do we gate it behind
     a "diagnostic mode" build flag (matching
     [`critical-defaults.md`](critical-defaults.md)) or expose it
@@ -356,14 +362,20 @@ cycle.
 - **Their implementation:** `src/cypher/cypher.h` with the full grammar
   + parser + evaluator in pure C. The "unsupported …" error catalogue is
   documented in the per-construct header.
-- **Our applicability:** optional, M2+ thinking. Our
-  `HybridRetrievalEngine` already composes retrievers via RRF (see
+- **Our applicability:** optional, M2+ thinking. The planned hybrid
+  retrieval layer may compose lexical, vector, and graph candidates via
+  RRF or another fusion strategy. The current `HybridRetrievalEngine`
+  is lexical passthrough (mandatory lexical index + query analyzer +
+  reranker); RRF/hybrid fusion is future architecture, not yet
+  implemented. Verify by reading
+  `src/agent_memory/retrieval/HybridRetrievalEngine.hpp` before
+  assuming RRF is in place. A graph-traversal query language on top
+  would be powerful for knowledge-base-heavy profiles (see
   [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §"M2+
-  Retrieval Hooks"); a graph-traversal query language on top would be
-  powerful for knowledge-base-heavy profiles. Mark as an
-  optional second-stage retrieval layer; the implementing language
-  does NOT need to be Cypher (a custom declarative IR would do), but
-  the explicit error-message contract is worth borrowing verbatim.
+  Retrieval Hooks"). Mark as an optional second-stage retrieval layer;
+  the implementing language does NOT need to be Cypher (a custom
+  declarative IR would do), but the explicit error-message contract is
+  worth borrowing verbatim.
 - **Priority:** P2 — optional.
 - **Open questions:**
   - Do we adopt the Cypher dialect verbatim or design our own IR
@@ -475,13 +487,10 @@ bool cbm_watcher_root_missing_errno(int err);
 ### 3.1. License compliance
 
 `codebase-memory-mcp` is MIT-licensed (Copyright (c) Deus Data contributors).
-Borrowing constants (e.g. `K = 64`, `b = 32 / r = 2`), algorithm
-descriptions (Jaccard LSH banding, RotSQ inner-product estimator
-form), and high-level architectural ideas (coverage shadow graph, shared
-atomic ID generator) is allowed and does not require attribution per
-se. Borrowing source code — verbatim or with light renaming — is not:
-source code is copyrightable regardless of license permissiveness, and
-copying it makes our project carry upstream maintainer decisions.
+MIT permits copying, modification, and redistribution provided the
+required copyright and license notice is preserved. Project policy:
+prefer clean-room reimplementation; copy upstream source only when
+explicitly approved with license attribution.
 
 The implementation rule is therefore:
 
@@ -536,10 +545,18 @@ The patterns above interact with existing PR-track work in
 
 Each pattern introduces (or assumes) a small set of build dependencies:
 
-- **Pattern 1 (MinHash + LSH):** a per-shingle hash such as SHA-1 (no
-  external dep beyond a stdlib implementation); 64-bit hashes like
-  xxHash would require adding `xxhash` to `dependencies.md` first and
-  are NOT inherited from current deps.
+- **Pattern 1 (MinHash + LSH):** per-shingle hash must be deterministic
+  across platforms, implementations, and runs. C++17 stdlib provides
+  NO SHA-1 implementation. Do NOT use `std::hash<std::string>` for
+  persisted MinHash/LSH signatures — the standard does not guarantee
+  cross-implementation stability, and persisted signatures would
+  become non-portable across compilers and stdlib versions. Options:
+  a small hand-written SHA-1 implementation with RFC 3174 test vectors
+  (acceptable for MinHash since not used for security); an existing
+  crypto dependency already in the project (e.g., OpenSSL if present);
+  xxHash, wyhash, or another stable non-cryptographic hash; a
+  dedicated deterministic hash implementation. Pick one, document the
+  choice, and add it to `dependencies.md` before implementation.
 - **Pattern 2 (RotSQ):** deterministic code expansion needs a fixed
   rotation matrix (encoder-side constant) and a small SIMD-friendly
   inner-product routine; the latter overlaps with
