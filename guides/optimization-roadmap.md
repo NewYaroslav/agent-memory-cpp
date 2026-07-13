@@ -741,6 +741,8 @@ mixed bits
 
 ## Binary Bucket Index Tasks
 
+See [`code-intelligence-roadmap.md`](code-intelligence-roadmap.md) for MinHash near-clone detection (Pattern 1) and RaBitQ-style RotSQ (Pattern 2) borrowed from codebase-memory-mcp — these augment, not replace, the Hamming-based binary bucket index defined below.
+
 ### In-Memory Prototype
 
 - Build the first binary bucket index in memory, without MDBX and without Zstd.

@@ -50,6 +50,8 @@ Non-goals документа:
 | ADR-014 | CLI | Отдельный target `agent-memory-cli`, не core library |
 | ADR-015 | Maturity Levels | M0 (MVP) / M1 (Production) / M2 (Advanced) с ship-it критериями |
 
+См. также [`code-intelligence-roadmap.md`](code-intelligence-roadmap.md) для Bounded BFS + schema introspection (Pattern 5) borrowed from `codebase-memory-mcp` — это ADR-006 extension candidate для `GraphStore`.
+
 ## 3. ADR-001: Memory Data Model
 
 ### 3.1. Решение
