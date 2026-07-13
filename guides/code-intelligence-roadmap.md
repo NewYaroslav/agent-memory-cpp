@@ -21,7 +21,7 @@ description, the originating file and constants in `codebase-memory-mcp`,
 the destination inside our repository, a priority tag, and any open
 questions to settle before implementing.
 
-### Priority 1 — directly applicable, PR-track candidates
+### Value priority 1 — directly applicable, PR-track candidates
 
 These four patterns map onto our existing roadmap sections and can be
 considered in the next planning cycle. They are not "block the next PR";
@@ -62,7 +62,7 @@ they are candidates for an M2/M3 planning wave.
   paragraph). PR #29 (binary signatures) ships the baseline encoder;
   Pattern 1 is a parallel pre-filter for a different metric (Jaccard over
   shingles vs. Hamming over embedding-derived bits).
-- **Priority:** P1 — researched and ready for design. Mirrors PR #29 in
+- **Value priority:** V2 — researched and ready for design. Mirrors PR #29 in
   shape but measures a different similarity and therefore does not
   conflict.
 - **Open questions:**
@@ -120,7 +120,7 @@ enum {
   [`optimization-roadmap.md`](optimization-roadmap.md) §"Dense Index
   Modes (Backend Selection)" as an additional codec backend, behind the
   `DenseIndexMode` interface.
-- **Priority:** P1 — research direction only. Implementation not
+- **Value priority:** V3 — research direction only. Implementation not
   planned until benchmarks validate the workload match; PQ and Matryoshka
   codecs are M2+ candidates already, RotSQ would enter alongside them.
 - **Open questions:**
@@ -187,7 +187,7 @@ void cbm_store_coverage_shadow_project(char *dst, size_t dstsz,
   for `ResourceIndexer` (see
   [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §"Stage B:
   Indexing").
-- **Priority:** P0 — small implementation surface, big operational
+- **Value priority:** V1 — small implementation surface, big operational
   payoff (visibility into indexer). Single-week PR candidate.
 - **Open questions:**
   - Do we replicate the `Project/Folder/File` triple exactly, or do we
@@ -227,7 +227,7 @@ cbm_gbuf_t *cbm_gbuf_new_shared_ids(const char *project, const char *root_path,
   same allocator contract: it drops the per-thread transaction cost for
   ID minting and lets `ResourceIndexer` workers run free of the MDBX
   write lock during the ID allocation phase.
-- **Priority:** P1 — wait until the MDBX TZ §4 P3 SequenceTable
+- **Value priority:** V2 — wait until the MDBX TZ §4 P3 SequenceTable
   extension is actually scheduled; do not pre-empt.
 - **Open questions:**
   - Atomic backend persistence: a process-local atomic survives only
@@ -250,7 +250,7 @@ cbm_gbuf_t *cbm_gbuf_new_shared_ids(const char *project, const char *root_path,
     atomic, no cross-process claim). M3+ multi-process would require
     shared-memory IPC + a separate atomic allocator; out of scope here.
 
-### Priority 2 — graph introspection and artifact portability
+### Value priority 2 — graph introspection and artifact portability
 
 These two patterns address operational concerns (debugging, team-shared
 databases). They are useful but not on the critical path for M1/M2
@@ -296,7 +296,7 @@ int cbm_store_get_schema(cbm_store_t *s, const char *project, cbm_schema_info_t 
   introspection; both are likely P1 additions to support retrieval-flow
   debugging and context-block assembly (a common ask: "give me everything
   connected to this entity within 2 hops, weighted by relevance").
-- **Priority:** P1 — useful for retrieval-flow debugging and for the
+- **Value priority:** V2 — useful for retrieval-flow debugging and for the
   M2+ `IQueryTransformer`/`IRetrievalEvaluator` hooks (see
   [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §"M2+
   Retrieval Hooks").
@@ -356,7 +356,7 @@ typedef enum cbm_artifact_quality_e {
   `.gitattributes merge=ours` rule is novel and worth documenting
   alongside the job so teams can adopt it without re-discovering the
   pattern.
-- **Priority:** P2 — wait for the proposed offline-snapshot job TZ to
+- **Value priority:** V2 — wait for the proposed offline-snapshot job TZ to
   land first; this pattern is a "value-add" rather than a foundational
   capability.
 - **Open questions:**
@@ -369,7 +369,7 @@ typedef enum cbm_artifact_quality_e {
     same `zstd` codec and document explicitly that the bundle is
     read-only at the team-shared layer.
 
-### Priority 3 — exploration-stage, watch-list
+### Value priority 3 — exploration-stage, watch-list
 
 These patterns are interesting but have low expected leverage for our
 M1/M2 roadmap. Watching them is enough; we will not plan work in this
@@ -401,7 +401,7 @@ cycle.
   the implementing language does NOT need to be Cypher (a custom
   declarative IR would do), but the explicit error-message contract is
   worth borrowing verbatim.
-- **Priority:** P2 — optional.
+- **Value priority:** V3 — optional.
 - **Open questions:**
   - Do we adopt the Cypher dialect verbatim or design our own IR
     designed for our Envelope + Components shape? The latter is
@@ -458,7 +458,7 @@ int cbm_ac_scan_lz4_batch(const CBMAutomaton *ac, const CBMLz4Entry *entries,
   [`optimization-roadmap.md`](optimization-roadmap.md) §"Compressed Text
   Storage"), and we never scan the compressed blob at query time.
   Watch only.
-- **Priority:** P3 — research only.
+- **Value priority:** V3 — research only.
 
 #### Pattern 9 — Adaptive-poll background watcher
 
@@ -496,7 +496,7 @@ bool cbm_watcher_root_missing_errno(int err);
   for direct unit testing with injected `errno` values) — adopt
   without ceremony. The rest of the watcher (file-system
   notifications, debouncing) is more project-specific.
-- **Priority:** P2 — straightforward import.
+- **Value priority:** V2 — straightforward import.
 - **Open questions:**
   - The classifier is platform-specific (POSIX `errno` values);
     Windows equivalents (`ERROR_FILE_NOT_FOUND`,
@@ -633,15 +633,15 @@ another track that has not started.
 
 | # | Pattern | Target file / section | Complexity | Depends on | Value priority | Status (readiness) |
 |---|---|---|---|---|---|---|
-| 1 | Pattern 3 — Coverage shadow | new `src/agent_memory/infrastructure/mdbx/CoverageStore.{hpp,cpp}`, [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.7 | small (1 PR) | MDBX TZ §3 P0 deliverable landed | planned |
-| 2 | Pattern 5 — Bounded BFS + schema introspection | extension to `src/agent_memory/knowledge_base/GraphStore.{hpp,cpp}`, [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) ADR-006 | small (1 PR) | MDBX TZ §5.5 GraphStore shim landed | planned |
-| 3 | Pattern 9 — Adaptive-poll watcher (errno classifier only) | extension to `src/agent_memory/runtime/AsyncIndexer.{hpp,cpp}`, new `src/agent_memory/runtime/RootStatusClassifier.{hpp,cpp}`, [`runtime-services-roadmap.md`](runtime-services-roadmap.md) §4 | small (1 PR) | none | planned |
-| 4 | Pattern 6 — Team-shared artifact | post-offline-snapshot-job addition; bundle reader in `src/agent_memory/infrastructure/artifacts/`, [`compaction-roadmap.md`](compaction-roadmap.md) (job to be added — proposed) | medium (1-2 PRs) | Proposed offline-snapshot job TZ landed, zstd adapter landed | blocked |
-| 5 | Pattern 1 — MinHash + LSH | `src/agent_memory/lexical/MinhashLshIndex.{hpp,cpp}`, secondary stage after Hamming bucket lookup, [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Bucket Index Tasks" | medium (1-2 PRs) | PR #29 binary signatures shipped | proposed |
-| 6 | Pattern 4 — Atomic shared ID | extension to `external/mdbx-containers/include/mdbx_containers/SequenceTable.hpp`, [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §4 (P3 → P1) | small (1 PR) | MDBX TZ §4 P3 scheduled | blocked |
-| 7 | Pattern 2 — RotSQ codec | `src/agent_memory/embedding/RotsqCodec.{hpp,cpp}`, [`optimization-roadmap.md`](optimization-roadmap.md) §"Future Encodings" | medium (1-2 PRs) | `IEmbeddingCodec` interface + per-bit Recall@10 baseline landed | proposed |
-| 8 | Pattern 7 — Cypher read subset | `src/agent_memory/cypher/{parser,evaluator}.{hpp,cpp}`, [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §"Retrieval Composition" | large (≥2 PRs) | `GraphStore` introspection (Pattern 5) | blocked |
-| 9 | Pattern 8 — AC over LZ4 | speculative; no concrete target | large | lz4 dependency added + use case validated | blocked |
+| 1 | Pattern 3 — Coverage shadow | new `src/agent_memory/infrastructure/mdbx/CoverageStore.{hpp,cpp}`, [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.7 | small (1 PR) | MDBX TZ §3 P0 deliverable landed | V1 | planned |
+| 2 | Pattern 5 — Bounded BFS + schema introspection | extension to `src/agent_memory/knowledge_base/GraphStore.{hpp,cpp}`, [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) ADR-006 | small (1 PR) | MDBX TZ §5.5 GraphStore shim landed | V2 | planned |
+| 3 | Pattern 9 — Adaptive-poll watcher (errno classifier only) | extension to `src/agent_memory/runtime/AsyncIndexer.{hpp,cpp}`, new `src/agent_memory/runtime/RootStatusClassifier.{hpp,cpp}`, [`runtime-services-roadmap.md`](runtime-services-roadmap.md) §4 | small (1 PR) | none | V2 | planned |
+| 4 | Pattern 6 — Team-shared artifact | post-offline-snapshot-job addition; bundle reader in `src/agent_memory/infrastructure/artifacts/`, [`compaction-roadmap.md`](compaction-roadmap.md) (job to be added — proposed) | medium (1-2 PRs) | Proposed offline-snapshot job TZ landed, zstd adapter landed | V2 | blocked |
+| 5 | Pattern 1 — MinHash + LSH | `src/agent_memory/lexical/MinhashLshIndex.{hpp,cpp}`, secondary stage after Hamming bucket lookup, [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Bucket Index Tasks" | medium (1-2 PRs) | PR #29 binary signatures shipped | V2 | proposed |
+| 6 | Pattern 4 — Atomic shared ID | extension to `external/mdbx-containers/include/mdbx_containers/SequenceTable.hpp`, [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §4 (P3 → P1) | small (1 PR) | MDBX TZ §4 P3 scheduled | V2 | blocked |
+| 7 | Pattern 2 — RotSQ codec | `src/agent_memory/embedding/RotsqCodec.{hpp,cpp}`, [`optimization-roadmap.md`](optimization-roadmap.md) §"Future Encodings" | medium (1-2 PRs) | `IEmbeddingCodec` interface + per-bit Recall@10 baseline landed | V3 | proposed |
+| 8 | Pattern 7 — Cypher read subset | `src/agent_memory/cypher/{parser,evaluator}.{hpp,cpp}`, [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §"Retrieval Composition" | large (≥2 PRs) | `GraphStore` introspection (Pattern 5) | V3 | blocked |
+| 9 | Pattern 8 — AC over LZ4 | speculative; no concrete target | large | lz4 dependency added + use case validated | V3 | blocked |
 
 Small = 1 PR, ≤300 LOC, ≤2 files. Medium = 1-2 PRs, ≤1 500 LOC, ≤5
 files. Large = ≥2 PRs, multiple subsystems.
