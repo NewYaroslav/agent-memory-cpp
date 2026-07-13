@@ -232,10 +232,20 @@ cbm_gbuf_t *cbm_gbuf_new_shared_ids(const char *project, const char *root_path,
 - **Open questions:**
   - Atomic backend persistence: a process-local atomic survives only
     across calls within a single process; across crash the ID source
-    must be rehydrated from disk. The current `SequenceTable` already
-    handles persistence via MDBX; the atomic backend must do an
-    "atomic-fill + MDBX-sync-when-crossing-threshold" dance to stay
-    crash-safe.
+    must be rehydrated from disk. The correct crash-safe pattern is
+    durable block reservation, NOT sync-after-issue:
+
+    1. Open MDBX transaction.
+    2. Reserve a contiguous ID block, e.g. [10000, 10999] (size N = 1000).
+    3. Commit transaction; durable high-watermark becomes 11000.
+    4. Process issues IDs from within the block via `atomic_fetch_add`
+       on the shared counter.
+    5. On crash, unused IDs are lost (gaps are tolerated); duplicates
+       are NOT possible because the high-watermark is durable.
+
+    This trades occasional ID gaps (cheap) for crash-safe ID uniqueness
+    (essential). Do NOT implement sync-after-issue: it allows duplicate
+    IDs after crash if the sync write is lost.
   - Multi-process concern: single-process only in M0/M1 (per-process
     atomic, no cross-process claim). M3+ multi-process would require
     shared-memory IPC + a separate atomic allocator; out of scope here.
@@ -316,9 +326,24 @@ typedef enum cbm_artifact_quality_e {
 } cbm_artifact_quality_t;
 ```
 
-  Output path: `.codebase-memory/graph.db.zst`. Auto-created
-  `.gitattributes` with `*.zst merge=ours` for branches that have not
-  synced on the same artifact.
+  Output path: `.codebase-memory/graph.db.zst`. Binary-artifact merge
+  resolution requires explicit setup:
+
+  1. Register the merge driver in Git config (per-user or per-repo):
+     `git config merge.ours.driver true`
+  2. Apply per file in `.gitattributes`: `*.zst merge=ours`
+
+  Caveat: `ours` for generated artifacts may leave stale snapshots after
+  merge — the local copy wins even if the remote regenerated it.
+  Preferred policy for generated artifacts:
+
+  - Artifact is generated and reproducible from source state.
+  - On merge conflict, the post-merge step regenerates the artifact.
+  - For non-reproducible artifacts (e.g., per-developer caches), Git LFS
+    or release-artifact storage is preferable to git history.
+
+  Document the chosen policy per artifact type; do not rely on
+  `.gitattributes` alone.
 - **Our applicability:** aligns with a *proposed* offline-snapshot job
   to be added to [`compaction-roadmap.md`](compaction-roadmap.md)
   (currently no such job exists there — `compaction-roadmap.md` covers
@@ -390,10 +415,13 @@ cycle.
 #### Pattern 8 — Aho-Corasick over LZ4
 
 - **What:** Multi-pattern matching (Aho-Corasick automaton) that
-  scans LZ4-compressed text directly, emitting bitmask hits into
-  the original uncompressed offsets. Lets
-  `codebase-memory-mcp` do token-level forbidden-pattern detection
-  without ever decompressing the corpus.
+  scans through an LZ4 decoding stream without materializing the full
+  uncompressed text buffer, emitting bitmask hits into the original
+  uncompressed offsets. The function does decompress data —
+  incrementally, without full-buffer allocation. This reduces peak RSS
+  compared to full decompression, but is NOT equivalent to "no
+  decompression". Lets `codebase-memory-mcp` do token-level
+  forbidden-pattern detection with lower peak memory.
 - **Their implementation:** `internal/cbm/ac.h` — opaque automaton
   type `CBMAutomaton`, `CBMLz4Match` for batch output, `CBMLz4Entry`
   for batch input; `cbm_ac_scan_lz4_bitmask` returns the bitmask
