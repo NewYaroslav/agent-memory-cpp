@@ -596,7 +596,7 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 | Приоритет | Deliverable | Метрика успеха | Целевое значение |
 |---|---|---|---|
 | P0 | `ReverseIndexTable::find()` (DUPSORT lookup) | p99 latency на 100K keys | `< 5 µs` |
-| P0 | `Single KeyValueTable::put()` (no-sync, in-memory durability) | throughput на NVMe | `> 500K ops/sec` |
+| P0 | `Single KeyValueTable::put()` (no-sync / non-durable write path) | throughput на NVMe | `> 500K ops/sec` (acknowledged writes land в OS page cache; NOT durable across crash/power loss) |
 | P0 | `Single KeyValueTable::put() + Transaction::commit()` (fsync=on) | throughput на NVMe | bottlenecked by fsync latency (сотни µs на SSD, единицы ms на HDD/remote storage); не primary optimization target |
 | P0 | `Batched transaction: 1000 records per txn` (fsync=on) | throughput и p99 commit latency | `> 100K records/sec` AND `< 10ms` p99 commit latency |
 | P0 | `TypeDiscriminatedTable::find(tag, key, txn)` | p99 latency на 100K keys × 9 type tags | `< 8 µs` |
@@ -617,7 +617,7 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 | P3 | `GraphStore::purge_expired` (TZ §12.2) | correctness (eviction policy) | `0` orphaned edges после purge на synthetic workload |
 | P3 | `EventStore::recent` (TZ §12.3) | ordering by `observed_at_ms` vs `occurred_at_ms` | `100%` correct order на shuffled fixture |
 
-Измерительный протокол: не менее `30` независимых benchmark rounds, каждый round — `10000` операций на freshly-constructed state; p50/p95/p99 вычисляются по всем `30` round-ам (median across rounds), дополнительно per-round p50/p95/p99 фиксируются; warm-up period документируется (минимум `3` предварительных round-а отбрасываются); эффекты GC/памяти измеряются и комментируются; hardware doc фиксируется в `external/mdbx-containers/bench/results/<YYYY-MM>/`. Альтернативный упрощённый вариант: не менее `1 000 000` operation-level samples; p50/p95/p99 по полной выборке; median ± stddev между независимыми rounds.
+Измерительный протокол: не менее `30` независимых benchmark rounds, каждый round — `10 000` операций на freshly-constructed state; для каждого round-а вычисляются p50/p95/p99 по его `10 000` операциям; затем для каждого percentile (p50/p95/p99) вычисляется median (и dispersion: std-dev или IQR) по `30` rounds — это и есть финальная reported metric; дополнительно per-round p50/p95/p99 фиксируются; warm-up period документируется (минимум `3` предварительных round-а отбрасываются); эффекты GC/памяти измеряются и комментируются; hardware doc фиксируется в `external/mdbx-containers/bench/results/<YYYY-MM>/`. Альтернативный упрощённый вариант: не менее `1 000 000` operation-level samples; p50/p95/p99 по полной выборке; median ± stddev между независимыми rounds.
 
 Замечание о метриках: throughput в строках выше — три отдельные метрики, не одна. Async (no-sync) метрики ограничены RAM и CPU bandwidth, не storage latency. Batched (один `Transaction::commit()` на N записей) метрики отражают amortized fsync стоимость и дают качественно иные числа, чем одиночные durable записи. Durable single-write метрики ограничены fsync latency и в общем случае не являются primary optimization target для write-heavy сценариев — для них предпочтительны batched протоколы с явным amortization target.
 
