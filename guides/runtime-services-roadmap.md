@@ -222,6 +222,86 @@ response_cache
 - scope-aware keys: разные `scope_id` имеют разные cache entries.
 - TTL для `IResponseCache`: default 1 час, configurable per provider.
 
+## 3.9. CAG (Cache-Augmented Generation) and ContextCache Layer
+
+### Sources
+
+- arXiv:2412.15605 — "Don't Do RAG: When Cache-Augmented Generation is All You Need for Knowledge Tasks".
+- arXiv:2404.12457 — "RAGCache: Efficient Knowledge Caching for Retrieval-Augmented Generation".
+
+### What
+
+Two related but distinct ideas:
+
+- **CAG (Cache-Augmented Generation):** pre-load the entire relevant corpus into the model's context cache (KV-cache or extended context window). At query time skip retrieval and answer from cached knowledge.
+- **RAGCache:** cache intermediate states of an existing RAG pipeline (retrieved chunks, plans, KV-states) to accelerate RAG inference without changing the retrieval contract.
+
+The two paths differ in whether retrieval is bypassed (CAG) or retained and accelerated (RAGCache). They are not the same architecture and must not be conflated.
+
+### 3.9.1 CAG path (bypasses retrieval)
+
+```text
+Compiled knowledge pack (e.g. CompiledContextPack derived from CompiledWikiProfile)
+  -> pre-loaded into model context (KV-cache or extended context window)
+  -> query
+  -> generation
+```
+
+Suitable when corpus is small/stable enough to fit in context.
+
+### 3.9.2 RAGCache path (caches retrieval intermediates)
+
+```text
+query
+  -> retrieval
+  -> retrieved knowledge
+  -> cached inference states
+  -> generation
+```
+
+Suitable when corpus is too large for context or updates frequently.
+
+### 3.9.3 Decision rule
+
+Use CAG path when corpus fits in context, updates infrequently, query volume justifies pre-loading cost.
+Use RAGCache path when corpus overflows context or retrieval latency dominates.
+
+### 3.9.4 Storage tiers
+
+- `CompiledContextPack` (text/structured knowledge, stable across model versions): stored in MDBX as part of the profile / compiled pack.
+- `ProviderKVHandle` (runtime model KV-cache, model-specific and dtype-specific): NOT stored in MDBX; lives in GPU/host inference memory only.
+- `SerializedKVCache` (optional, backend-specific): some inference backends permit serialisation to disk; compatibility is conditional on model version, layer count, and dtype. Not a default capability; document per-backend.
+
+### 3.9.5 Integration candidates (tagged per path)
+
+CAG-side (CompiledContextPack layer):
+
+- `CompiledWikiProfile` → derived `CompiledContextPack` — prime CAG candidate (stable, compact, project-scoped). Pre-loaded into model context.
+
+RAGCache-side (intermediate result cache):
+
+- `SummaryTreeJob` — generated summaries cached and re-used across queries as retrieval-state intermediates.
+
+Related but distinct (post-generation):
+
+- `ResponseCache` (post-generation cache — complementary to both CAG and RAGCache; NOT an intermediate retrieval-pipeline state). Stores final LLM responses (memoization of completed generations); sits AFTER the generation step, not within the retrieval pipeline. См. §3.3 / §3.6.
+
+Both paths:
+
+- `PromptPrefixCache` (§3.2, always on for hybrid profiles) — agent-level prompt caching; both paths reuse the provider-side prefix mechanism.
+
+### 3.9.6 Relationship to existing PromptCache
+
+`IPromptPrefixCache` (§3.2) provides provider-side prefix caching. CAG extends it from "prompt prefix caching" to "context caching of compiled knowledge". The same provider-side prefix mechanism is reused; CAG adds agent-side context assembly and a `ContextCache` layer over compiled knowledge packs.
+
+### 3.9.7 Status
+
+Conceptual design for the M2 layer. No PR planned yet. Depends on stable `ContextBuilder` output (Layer 3 per `memory-stacks-roadmap.md`).
+
+### 3.9.8 Cross-reference
+
+See [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5 for the candidate DBI shape (compiled-context-pack storage, capability-gated).
+
 ## 4. AsyncIndexer
 
 ### 4.1. Purpose

@@ -40,6 +40,37 @@
 - **Multi-process support**: extension НЕ добавляет новый multi-process API. MDBX штатно поддерживает multi-process read-only режим без изменений в extension; agent-memory-cpp может использовать этот режим без mdbx-containers изменений (future research, не входит в M0/M1/M2 scope).
 - **Per-thread transaction model** сохраняется как primary design constraint (см. `common/Connection.hpp`); multi-table write обеспечивается одним `Transaction`-объектом, разделяемым между таблицами, а не координацией отдельных транзакций (см. `guides/memory-stacks-roadmap.md`, open issue 17.9).
 
+## 1.5. Текущее состояние
+
+Снимок того, что уже существует в upstream `mdbx-containers` на момент расширения. Документ описывает, какие классы уже есть, а какие добавляются или расширяются.
+
+### Что уже есть в upstream
+
+Базовые таблицы (см. `external/mdbx-containers/include/mdbx_containers/`):
+
+- `KeyValueTable<K, V, Options>` — map-like storage, single payload per key.
+- `KeyMultiValueTable<K, V, Options>` — DUPSORT, multi-payload per key.
+- `KeyTable<K, Options>` — set-like, ключи без payload.
+- `ValueTable<V>` — одиночный value по фиксированному имени.
+- `SequenceTable<V>` — auto-increment uint64 ID generator.
+- `AnyValueTable<K, Options>` — heterogeneous typed values с runtime type info.
+
+Инфраструктура (см. `external/mdbx-containers/common/`):
+
+- `Connection` — RAII handle на MDBX env, per-thread transaction model.
+- `Config` — env parameters (`max_dbs`, `max_dupsort_value_size`, path, flags).
+- `Transaction` — RAII обёртка над `MDBX_txn`, базовые `get`/`put`/`commit`/`abort`.
+- `detail::utils.hpp` — `to_bytes`/`from_bytes` хелперы, `popcount64` fallback.
+
+### Что расширяется и что добавляется
+
+- Расширения существующих классов — секция 4 (надстройки над `KeyValueTable`, `KeyMultiValueTable`, `KeyTable`, `ValueTable`, `SequenceTable`, `AnyValueTable`, `Connection`, `Config`).
+- Расширения существующих DBIs — секция 5.4 (infrastructure existing) и частично 5.1–5.3 (lexical / optimization / knowledge base — добавляют новые таблицы в дополнение к существующим).
+- Новые классы — секция 3 (ReverseIndexTable, RangeIndexTable, TypeDiscriminatedTable, CompositeKey, MultiTableWriter, пагинация, Connection extensions).
+- Новые таблицы — секция 5.5 (Memory-stack layer для компонентной архитектуры `Envelope + Components + Projections`).
+
+Иными словами, секции 3 и 5.5 — полностью новая поверхность; секции 4 и 5.1–5.4 — аддитивные расширения существующей инфраструктуры без поломки ABI.
+
 ## 2. Принципы
 
 1. **Header-only, C++11 baseline с C++17 guarded features.** Новые фичи используют те же guards, что и существующий код (см. `external/mdbx-containers/include/mdbx_containers/detail/utils.hpp:12-16`).
@@ -433,6 +464,35 @@ usage_stats_index                     ReverseIndexTable<CompositeKey<ScopeId, Un
 schema_info                           KeyValueTable<string, SchemaInfo>                  // envelope_version, component_versions[], profile_signature
 ```
 
+Сводная таблица DBI секции 5.5 (для быстрого чтения владельца PR и capability-зависимости):
+
+| DBI имя | Открывается по умолчанию | Версия payload | Owner PR | Назначение |
+|---|---|---|---|---|
+| `knowledge_units` | да (Layer A envelope hot path) | `agent_memory.knowledge_unit.v1` | TBD | Primary envelope storage по `UnitId` |
+| `knowledge_units_by_kind` | да (Layer A, DUPSORT) | `agent_memory.unit_by_kind.v1` | TBD | Reverse index `KnowledgeUnitKind -> UnitId[]` |
+| `unit_components` | да (Layer B operational) | `agent_memory.component.v1` | TBD | Tag-prefixed components (UsageStats, Speaker, Temporal, EmbeddingMeta, CompactionMeta) |
+| `qa_payloads` | по capability `QAPairs` | `agent_memory.qa.v1` | TBD | Per-kind payload для `QAPair` units |
+| `fact_payloads` | по capability `TemporalFact` | `agent_memory.fact.v1` | TBD | Per-kind payload для `Fact` units |
+| `conversation_episode_payloads` | по capability `ConversationMemory` | `agent_memory.episode.v1` | TBD | Per-kind payload для `ConversationEpisode` units |
+| `compiled_article_payloads` | по capability `CompiledArticles` | `agent_memory.compiled_article.v1` | TBD | Per-kind payload для `CompiledArticle` units |
+| `chunk_payloads` | по capability `ChunkedContent` | `agent_memory.chunk.v1` | TBD | Per-kind payload для `Chunk` units |
+| `unit_projections` | да (Layer C projections) | `agent_memory.projection.v1` | TBD | Multi-version `(scope, unit, ProjectionKind, revision)` projections |
+| `embedding_meta` | по capability `DenseVectors` | `agent_memory.embedding_meta.v1` | TBD | Версионированная мета (model_id, version, dim, encoder_id) |
+| `embedding_vectors` | по capability `DenseVectors` | `agent_memory.embedding_vector.v1` | TBD | Vector blob по `(scope, model_id, ProjectionKind, unit_id)` |
+| `inverted_token_to_unit` | по capability `LexicalIndex` | `agent_memory.inv_token.v1` | TBD | Scope-aware reverse index `(scope, token_id, projection, field) -> UnitId` |
+| `field_to_postings` | по capability `LexicalIndex` | `agent_memory.field_posting.v1` | TBD | Scope-aware `(scope, projection, field, token) -> PostingStats` |
+| `metadata_filters` | да (lightweight pre-filter) | `agent_memory.metadata_filter.v1` | TBD | Reverse index `(scope, metadata_key, metadata_value) -> UnitId` |
+| `graph_edges_by_src` | по capability `GraphIndex` | `agent_memory.graph_edge.v1` | TBD | Scope-aware outgoing edges |
+| `graph_edges_by_dst` | по capability `GraphIndex` | `agent_memory.graph_edge.v1` | TBD | Scope-aware incoming edges (reverse direction) |
+| `temporal_event_index` | по capability `TemporalIndex` | `agent_memory.event.v1` | TBD | Range index по `valid_from`/`valid_until` timestamps |
+| `temporal_unit_index` | по capability `TemporalIndex` | `agent_memory.unit_ts.v1` | TBD | Range index по `observed_at_ms` |
+| `speaker_to_units` | по capability `SpeakerAttribution` | `agent_memory.speaker.v1` | TBD | Reverse index `(scope, speaker_id) -> UnitId` |
+| `session_to_units` | по capability `SpeakerAttribution` | `agent_memory.session.v1` | TBD | Reverse index `(scope, session_id) -> UnitId` |
+| `usage_stats_index` | по capability `UsageTracking` | `agent_memory.usage_stats.v1` | TBD | Reverse index `(scope, unit_id) -> UsageStatsComponent` |
+| `schema_info` | да (schema metadata) | `agent_memory.schema.v1` | TBD | Envelope_version, component_versions[], profile_signature |
+
+Владелец каждой DBI будет зафиксирован в соответствующем PR; на этапе TZ — TBD. Версия payload соответствует общему контракту `agent_memory.<concept>.v1`, см. `guides/memory-stacks-roadmap.md`, секция 12 и ADR-001.
+
 Замечания:
 
 - `unit_projections` использует multi-version ключ `(scope_id, UnitId, ProjectionKind, revision)`. При write активной projection инкрементируется `revision`; старые revisions остаются до compaction purge (см. `guides/memory-stacks-roadmap.md`, open issue 17.4).
@@ -522,11 +582,44 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 
 ## 10. Метрики успеха
 
+### 10.1 Сквозные (cross-cutting) метрики
+
 1. **ABI compatibility:** все существующие тесты `external/mdbx-containers/tests/` (15 файлов) проходят без изменений после расширения.
-2. **Performance:** range queries через `RangeIndexTable` показывают O(log N) seek + O(K) page reads на бенчмарке 100K keys. `ReverseIndexTable::find` показывает O(log N) DUPSORT lookup.
-3. **Adoption:** новые классы используются как storage backend для `MdbxKnowledgeUnitStore`, `MdbxQAKnowledgeBase`, `MdbxGraphStore`, `MdbxTemporalIndex`, `MdbxBinaryBucketIndex`.
-4. **Documentation:** каждый новый публичный метод имеет Doxygen comment + usage example.
-5. **Cross-version:** новый код компилируется и работает в C++11 и C++17 режимах (verified двумя CMake конфигурациями, см. `external/mdbx-containers/build-mingw-11-tests.bat` и `build-mingw-17-tests.bat`).
+2. **Adoption:** новые классы используются как storage backend для `MdbxKnowledgeUnitStore`, `MdbxQAKnowledgeBase`, `MdbxGraphStore`, `MdbxTemporalIndex`, `MdbxBinaryBucketIndex`.
+3. **Documentation:** каждый новый публичный метод имеет Doxygen comment + usage example.
+4. **Cross-version:** новый код компилируется и работает в C++11 и C++17 режимах (verified двумя CMake конфигурациями, см. `external/mdbx-containers/build-mingw-11-tests.bat` и `build-mingw-17-tests.bat`).
+
+### 10.2 Per-deliverable измеримые targets
+
+Матрица связывает каждый `Deliverable` из приоритетов секции 6 с конкретной метрикой и целевым значением. Все targets валидируются в `external/mdbx-containers/tests/` (контрактные) и `agent-memory-cpp/tests/` (integration). Бенчмарки проводятся на reference hardware (NVMe SSD, 32 GB RAM, single-thread, `fsync=on`).
+
+| Приоритет | Deliverable | Метрика успеха | Целевое значение |
+|---|---|---|---|
+| P0 | `ReverseIndexTable::find()` (DUPSORT lookup) | p99 latency на 100K keys | `< 5 µs` |
+| P0 | `Single KeyValueTable::put()` (no-sync / non-durable write path) | throughput на NVMe | `> 500K ops/sec` (acknowledged writes land в OS page cache; NOT durable across crash/power loss) |
+| P0 | `Single KeyValueTable::put() + Transaction::commit()` (fsync=on) | throughput на NVMe | bottlenecked by fsync latency (сотни µs на SSD, единицы ms на HDD/remote storage); не primary optimization target |
+| P0 | `Batched transaction: 1000 records per txn` (fsync=on) | throughput и p99 commit latency | `> 100K records/sec` AND `< 10ms` p99 commit latency |
+| P0 | `TypeDiscriminatedTable::find(tag, key, txn)` | p99 latency на 100K keys × 9 type tags | `< 8 µs` |
+| P0 | `MultiTableWriter` (atomic 6-table write) | round-trip при success | `< 2×` стоимости одной `Transaction::commit` |
+| P1 | `MultiTableWriter` (batch, N=1000) | amortized fsync cost vs одиночная write | amortized latency per record ≤ 0.1 × single-record durable `Transaction::commit()` latency (~10× batching gain) |
+| P1 | `RangeIndexTable::range()` inclusive/exclusive | correctness на synthetic keys | `100%` ordered match vs `KeyMultiValueTable` baseline |
+| P1 | `paginated_range` over `CompositeKey` | ordering identical к sequential scan | `100%` |
+| P1 | `CompositeKey` round-trip | byte layout identity across compilers | golden-byte test: `to_bytes(key)` сравнивается с versioned expected blob; cross-compile-and-run на GCC, Clang, MSVC в C++11 и C++17 режимах; endian и padding policy документированы (рекомендация: little-endian, packed, no padding для стабильного layout) |
+| P2 | `KeyValueTable::paginated_range_forward()` | latency vs `range_reverse` | `< 1.5×` на 100K pages |
+| P2 | `KeyValueTable::diagnostics()` | reporting точность | reported `avg`/`p95` совпадают с external sampler ±5% |
+| P2 | `Config::enable_metrics` / `table_creation_callback` | integration overhead | `< 2%` per-writer overhead |
+| P2 | `hamming_neighbors_uint64` (radius 0-3, 24-28 bits) | lookup count, latency | соответствие ожидаемым таблицам cumulative: 24 bits → `1/25/301/2325` (radius 0/≤1/≤2/≤3); 28 bits → `1/29/407/3683` (radius 0/≤1/≤2/≤3) (см. `guides/optimization-roadmap.md` §"Neighbor Bucket Masks") |
+| P2 | `to_hex_string` / `from_hex_string` | round-trip identity | `100%` |
+| P3 | `KeyValueTable::merge` (same K, V types) | throughput vs полного reindex | `> 2×` speedup на 100K entries |
+| P3 | `KeyValueTable::snapshot` | memory overhead | `< 2×` raw storage size |
+| P3 | `SequenceTable::reserve` / `append_if_absent` | throughput per ID | `> 1M IDs/sec` |
+| P3 | `AnyValueTable::bulk_set_of_type<T>` | bulk write throughput | `> 0.5×` `KeyValueTable::add_many` |
+| P3 | `GraphStore::purge_expired` (TZ §12.2) | correctness (eviction policy) | `0` orphaned edges после purge на synthetic workload |
+| P3 | `EventStore::recent` (TZ §12.3) | ordering by `observed_at_ms` vs `occurred_at_ms` | `100%` correct order на shuffled fixture |
+
+Измерительный протокол: не менее `30` независимых benchmark rounds, каждый round — `10 000` операций на freshly-constructed state; для каждого round-а вычисляются p50/p95/p99 по его `10 000` операциям; затем для каждого percentile (p50/p95/p99) вычисляется median (и dispersion: std-dev или IQR) по `30` rounds — это и есть финальная reported metric; дополнительно per-round p50/p95/p99 фиксируются; warm-up period документируется (минимум `3` предварительных round-а отбрасываются); эффекты GC/памяти измеряются и комментируются; hardware doc фиксируется в `external/mdbx-containers/bench/results/<YYYY-MM>/`. Альтернативный упрощённый вариант: не менее `1 000 000` operation-level samples; p50/p95/p99 по полной выборке; median ± stddev между независимыми rounds.
+
+Замечание о метриках: throughput в строках выше — три отдельные метрики, не одна. Async (no-sync) метрики ограничены RAM и CPU bandwidth, не storage latency. Batched (один `Transaction::commit()` на N записей) метрики отражают amortized fsync стоимость и дают качественно иные числа, чем одиночные durable записи. Durable single-write метрики ограничены fsync latency и в общем случае не являются primary optimization target для write-heavy сценариев — для них предпочтительны batched протоколы с явным amortization target.
 
 ## 11. Открытые вопросы и риски
 
@@ -944,6 +1037,17 @@ void EmbeddingExtractionWorker::tick(std::int64_t now_ms,
 ```
 
 Использует API 12.5; сценарий помечен как опциональный для `agent-memory-cpp` и активируется при появлении второго реального потребителя job-очереди.
+
+## 13. Перекрёстные ссылки (потребители в agent-memory-cpp)
+
+Этот раздел фиксирует downstream-потребителей TZ: какие roadmap-документы и компоненты `agent-memory-cpp` будут использовать конкретные DBIs из секции 5.5 и API из секции 12.
+
+- [`guides/optimization-roadmap.md`](optimization-roadmap.md) §"Dense Index Modes (Backend Selection)" (mode/encoder/quality targets), §"HNSW Vector Index" — потребители `embedding_vectors` и `embedding_meta` DBI; `HammingTopK` kernel использует `hamming_neighbors_uint64` и popcount-хелперы из `detail/utils.hpp`.
+- [`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §5 — потребители `KnowledgeUnitStore` (использует `knowledge_units` + `unit_components` + `unit_projections`), `ComponentStore` (`unit_components` через `TypeDiscriminatedTable`), `FactStore`/`QAKnowledgeBase`/`GraphStore` (соответствующие per-kind payload DBI).
+- [`guides/lexical-search-roadmap.md`](lexical-search-roadmap.md) §"BM25 baseline" — потребитель `lexical_index_*` DBI (`inverted_token_to_unit`, `field_to_postings`); `MultiTableWriter` обеспечивает атомарность write primary + secondary indexes.
+- [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md) §"PromptCache" / §"AsyncIndexer" / §"WriteGate" — потребитель `context_cache_*` DBI (M2+ persistence для `IResponseCache`), `TaskQueue` (TZ §12.5) для `IAsyncIndexer`.
+- [`guides/compaction-roadmap.md`](compaction-roadmap.md) §"CompactionWorker" — потребитель `MultiTableWriter` (атомарный compaction), `usage_stats_index` (для `DecayJob`), `embedding_meta` (для `EmbeddingRecomputeJob`), `TaskQueue` (TZ §12.5) для job lifecycle.
+- [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §"Layer 1 (Storage Primitives)" — основной downstream-потребитель: все секции 5.5 DBIs становятся частью capability-aware MDBX-схемы компонентной архитектуры.
 
 ## Перекрёстные ссылки
 
