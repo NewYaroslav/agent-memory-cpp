@@ -43,6 +43,7 @@ Disclaimer:
 | LightRAG | Python framework | Dual-level graph + vector RAG (EMNLP 2025). | LightRAG = document RAG framework, не typed agent memory. Совпадает по hybrid retrieval pattern (graph + vector + RRF). |
 | Microsoft GraphRAG | Python pipeline | Modular graph-based RAG для corpora. Community detection, global questions. | Подобен для community detection + global questions (CommunitySummaryJob reference). Мы ближе к agent memory, GraphRAG — к document corpora. |
 | LlamaIndex | Python framework | Document agent + OCR + indices/graphs/retrievers/query engines/reranking. | LlamaIndex = огромный application framework. Совпадает по retriever interface pattern (IRetriever, HybridRetriever). Не конкуренты, разные abstraction levels. |
+| codebase-memory-mcp (research source / pattern donor, не direct competitor) | C static-binary MCP server | Code intelligence через tree-sitter + Hybrid LSP + SQLite-graph (14 MCP tools, ~162 KB pure C). | НЕ direct competitor (different scope: code intelligence, не agent memory). Изучен как pattern donor — 9 конкретных engineering patterns (MinHash + LSH, RotSQ quantization, coverage shadow graph, atomic shared ID, bounded BFS, team-shared artifact, Cypher subset, AC-over-LZ4, adaptive-poll watcher). См. детали и приоритеты в [`code-intelligence-roadmap.md`](code-intelligence-roadmap.md). License: MIT. |
 
 ## 3. Sister library references (C++ engineering inspiration)
 
@@ -115,6 +116,7 @@ Disclaimer:
 - M2: SPLADE / ColBERT adapters — пробовать интегрировать готовые реализации или LLM-distilled sparse vectors?
 - M3: Distributed scope routing — у mem0 и Zep это multi-tenant. У нас пока single-process. (out of scope, research)
 - M3: Embedded LLM distillation (compact embedding-LLM без external API) — uSearch-style или MiniLLM.
+- См. также [`code-intelligence-roadmap.md`](code-intelligence-roadmap.md) для 9 engineering patterns, позаимствованных из `codebase-memory-mcp` (MIT): MinHash + LSH near-clone detection, RotSQ scalar quantization, coverage shadow graph, atomic shared ID generator, bounded BFS + schema introspection, team-shared graph artifact, Cypher read subset, Aho-Corasick over LZ4, adaptive-poll background watcher.
 
 ## 8. References (cross-link)
 
@@ -150,3 +152,6 @@ Disclaimer:
 - libmdbx: https://github.com/erthink/libmdbx
 - LMDB: https://github.com/LMDB/lmdb
 - RocksDB: https://github.com/facebook/rocksdb
+
+### Research source / pattern donor (not a direct competitor):
+- codebase-memory-mcp: https://github.com/DeusData/codebase-memory-mcp (MIT; 9 patterns extracted in [`code-intelligence-roadmap.md`](code-intelligence-roadmap.md))

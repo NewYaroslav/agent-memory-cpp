@@ -464,6 +464,8 @@ usage_stats_index                     ReverseIndexTable<CompositeKey<ScopeId, Un
 schema_info                           KeyValueTable<string, SchemaInfo>                  // envelope_version, component_versions[], profile_signature
 ```
 
+См. также [`code-intelligence-roadmap.md`](code-intelligence-roadmap.md) для дополнительных Layer-1 primitives under consideration (Patterns 3, 4, 6): coverage shadow graph (новый §5.7 — `coverage_units`, `coverage_files`, `coverage_regions`), atomic shared ID generator (extends §4 SequenceTable P3 → P1), team-shared graph artifact (offline snapshot format — proposed job, not yet in `compaction-roadmap.md`).
+
 Сводная таблица DBI секции 5.5 (для быстрого чтения владельца PR и capability-зависимости):
 
 | DBI имя | Открывается по умолчанию | Версия payload | Owner PR | Назначение |
