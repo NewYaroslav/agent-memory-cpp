@@ -281,7 +281,10 @@ CAG-side (CompiledContextPack layer):
 RAGCache-side (intermediate result cache):
 
 - `SummaryTreeJob` — generated summaries cached and re-used across queries as retrieval-state intermediates.
-- `ResponseCache` (§3.3, opt-in) — repeated identical queries hit cache as a post-generation intermediate.
+
+Related but distinct (post-generation):
+
+- `ResponseCache` (post-generation cache — complementary to both CAG and RAGCache; NOT an intermediate retrieval-pipeline state). Stores final LLM responses (memoization of completed generations); sits AFTER the generation step, not within the retrieval pipeline. См. §3.3 / §3.6.
 
 Both paths:
 
