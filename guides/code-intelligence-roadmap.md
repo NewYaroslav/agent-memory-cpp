@@ -84,19 +84,25 @@ they are candidates for an M2/M3 planning wave.
   constant time, with bounded error. Used by `codebase-memory-mcp` as a
   fast, low-storage ranker between a query embedding and corpus
   embeddings.
-- **Their implementation:** `src/semantic/rotsq.h`:
+- **Their implementation:** `src/semantic/rotsq.h` — constants live
+  inside an `enum` (not `#define`):
 
 ```c
-#define CBM_RSQ_BITS     4
-#define CBM_RSQ_IN_DIM   768
-#define CBM_RSQ_CODE_BYTES (CBM_RSQ_IN_DIM / 2)  /* 384 bytes */
+enum {
+    CBM_RSQ_IN_DIM = 768,                 /* input dimension (CBM_SEM_DIM) */
+    CBM_RSQ_DIM = 1024,                   /* padded pow2 rotation dimension */
+    CBM_RSQ_BITS = 4,                     /* bits per coordinate */
+    CBM_RSQ_CODE_BYTES = CBM_RSQ_DIM / 2, /* two 4-bit codes per byte */
+};
 ```
 
-  Per-vector cost for a 768-dim embed: `384 B codes + 12 B metadata (scale
-  + offset + 4-byte residue) ≈ 524 B` vs `3 072 B` for raw float32, ≈6×
-  compression. Code expansion is deterministic and uses a fixed rotation
-  matrix baked into the encoder header, so the same encoder applied to
-  the same vector always yields the same code.
+  Note: `CBM_RSQ_CODE_BYTES` is derived from `CBM_RSQ_DIM` (the padded
+  pow2 rotation dimension, 1024), not from `CBM_RSQ_IN_DIM` (the input
+  dimension, 768). Per-vector cost for a 768-dim embed: `512 B codes +
+  12 B metadata (scale + offset + 4-byte Σ codes) ≈ 524 B` vs `3 072 B`
+  for raw float32, ≈6× compression. Code expansion is deterministic and
+  uses a fixed rotation matrix baked into the encoder header, so the
+  same encoder applied to the same vector always yields the same code.
 - **Our applicability:** slot alongside the Matryoshka and Product
   Quantization codecs documented in
   [`optimization-roadmap.md`](optimization-roadmap.md) §"Future
@@ -132,26 +138,44 @@ they are candidates for an M2/M3 planning wave.
   extract-only, or skipped/oversized). Queryable through normal graph
   queries without polluting the primary index. Lets `codebase-memory-mcp`
   answer "which files are missing from my index?" in one Cypher query.
-- **Their implementation:** `src/store/store.h`:
+- **Their implementation:** `src/store/store.h`. The coverage table
+  stores flat rows with a kind + free-form detail; the `Project →
+  Folder → File` graph under `<project>::missed` is a *derived* view
+  materialized by `cbm_store_coverage_replace` (so user Cypher queries
+  can traverse it without touching the real project's graph):
 
 ```c
-typedef struct cbm_coverage_row_s {
-    /* Project, Folder, File identity + miss class */
+typedef struct {
+    const char *rel_path;
+    const char *kind;       /* "parse_partial" | "read" | "extract" | "oversized" */
+    const char *detail;     /* line ranges or reason */
 } cbm_coverage_row_t;
 
-int cbm_store_coverage_shadow_project(const char* project_path, /* … */);
+int cbm_store_coverage_replace(cbm_store_t *s, const char *project,
+                                const cbm_coverage_row_t *rows, int count);
+
+void cbm_store_coverage_shadow_project(char *dst, size_t dstsz,
+                                       const char *project);
 ```
 
-  The shadow graph is stored under `<project>::missed` so it does not
-  collide with user query aliases.
+  `cbm_store_coverage_shadow_project` is a **getter** that writes the
+  derived shadow project name (`<project>::missed`) into `dst` — it
+  does not create the shadow graph itself. The writer is
+  `cbm_store_coverage_replace`, which materializes the `Project → Folder
+  → File` graph under that derived name. Storage is the separate
+  `index_coverage` table (coverage is metadata *about* the graph,
+  never mixed into the graph itself). There are exactly four `kind`
+  values: `"parse_partial"` (file was indexed but the parse tree had
+  ERROR/MISSING regions), `"read"` / `"extract"` / `"oversized"` (file
+  was not indexed at all; `detail` carries the reason).
 - **Our applicability:** maps to a new Layer-1 table family in
   [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md)
   §5.7 (proposed addition). Shadow rows live in dedicated DBIs
   `coverage_units`, `coverage_files`, `coverage_regions` keyed by
-  `(scope_id, miss_class, path_hash)` with `miss_class ∈ {Parsed,
-  PartialRead, ExtractOnly, Oversized, Skipped}`. The shadow data
-  answers "what coverage does my stack have?" and "which units were
-  truncated at indexing time?" — useful for the
+  `(scope_id, miss_class, path_hash)` with `miss_class ∈ {"parse_partial",
+  "read", "extract", "oversized"}`. The shadow data answers "what
+  coverage does my stack have?" and "which units were truncated at
+  indexing time?" — useful for the
   `RuntimeServices::AsyncIndexer` diagnostics
   ([`runtime-services-roadmap.md`](runtime-services-roadmap.md) §4) and
   for `ResourceIndexer` (see
@@ -176,18 +200,19 @@ int cbm_store_coverage_shadow_project(const char* project_path, /* … */);
   rather than under a transaction lock. Allows multiple workers
   (indexing threads, parallel reindex batches) to allocate distinct IDs
   without serialising on a coordinator.
-- **Their implementation:** `src/graph_buffer/graph_buffer.h`:
+- **Their implementation:** `src/graph_buffer/graph_buffer.h` — creates
+  a graph buffer whose internal ID counter is shared with another buffer
+  so that parallel extractors mint distinct, unique IDs:
 
 ```c
-int cbm_gbuf_new_shared_ids(
-    cbm_graph_buffer_t* buf,
-    _Atomic int64_t* id_source,
-    size_t count,
-    int64_t* out_ids);
+cbm_gbuf_t *cbm_gbuf_new_shared_ids(const char *project, const char *root_path,
+                                    _Atomic int64_t *id_source);
 ```
 
-  `id_source` is atomically advanced `count` times under load-acquire
-  semantics, yielding a contiguous ID range per call.
+  Subsequent `cbm_gbuf_upsert_node` calls atomically advance the shared
+  counter via `atomic_fetch_add` on `*id_source`. Passing `NULL` makes
+  the function behave like the regular `cbm_gbuf_new` (per-source
+  counter).
 - **Our applicability:** extends the existing
   `mdbx_containers::SequenceTable` (see
   [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md)
@@ -222,26 +247,27 @@ ship-it criteria.
   labels and property keys exist in this graph?" (schema introspection).
   Both are read-only and stable enough to ship as part of the public
   graph store contract.
-- **Their implementation:** `src/store/store.h`:
+- **Their implementation:** `src/store/store.h`. Both APIs are
+  read-only and operate on a returned `cbm_traverse_result_t` /
+  `cbm_schema_info_t` rather than a callback:
 
 ```c
-int cbm_store_bfs(
-    cbm_store_t* store,
-    const char* start_label,
-    int64_t start_id,
-    int max_depth,                       /* 1..5 */
-    const char* const* edge_kind_filter,/* NULL = all */
-    size_t edge_filter_count,
-    /* … callback + user state … */
-);
+int cbm_store_bfs(cbm_store_t *s, int64_t start_id, const char *direction,
+                  const char **edge_types, int edge_type_count,
+                  int max_depth, int max_results, cbm_traverse_result_t *out);
 
-int cbm_store_get_schema(
-    cbm_store_t* store,
-    /* … emits (label, key, type) triples … */);
+int cbm_store_get_schema(cbm_store_t *s, const char *project, cbm_schema_info_t *out);
 ```
 
-  `BFS` is bounded (`max_depth ∈ [1, 5]`); `get_schema` emits the label
-  → property key → value-type triple set for the whole graph.
+  `BFS` walks from `start_id`, returning visited nodes (with `hop`
+  depth) and the traversed edges (with endpoints, types, and raw
+  properties_json — useful for carrying CALLS argument expressions).
+  `direction` is `"inbound"` / `"outbound"` / `"any"`; `edge_types` and
+  `max_results` narrow the traversal; `max_depth` is an unbounded `int`
+  (no documented `[1, 5]` cap — that range was a fabrication in an
+  earlier draft). `get_schema` returns label/type counts, distinct
+  property keys per label/type, observed relationship patterns, and
+  sample names/qualified-names for the project.
 - **Our applicability:** maps to ADR-006 in
   [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) (GraphRelations
   capability). Our `GraphStore` does not currently expose BFS or schema
@@ -349,23 +375,34 @@ cycle.
   the original uncompressed offsets. Lets
   `codebase-memory-mcp` do token-level forbidden-pattern detection
   without ever decompressing the corpus.
-- **Their implementation:** `internal/cbm/ac.h`:
+- **Their implementation:** `internal/cbm/ac.h` — opaque automaton
+  type `CBMAutomaton`, `CBMLz4Match` for batch output, `CBMLz4Entry`
+  for batch input; `cbm_ac_scan_lz4_bitmask` returns the bitmask
+  directly (no out-param), and the batch variant takes an array of
+  pre-built LZ4 entries:
 
 ```c
-int cbm_ac_scan_lz4_bitmask(
-    const uint8_t* lz4_blob, size_t lz4_size,
-    const cbm_ac_automaton_t* A,
-    uint64_t* hit_bitmap /* (uncompressed_offset / 64) -> hitmask */);
+typedef struct CBMAutomaton CBMAutomaton;
 
-int cbm_ac_scan_lz4_batch(
-    const uint8_t* lz4_blob, size_t lz4_size,
-    const cbm_ac_automaton_t* A,
-    cbm_ac_hit_t* out_hits, size_t out_capacity);
+typedef struct { int file_index; uint64_t bitmask; } CBMLz4Match;
+
+typedef struct {
+    const char *data;
+    int compressed_len;
+    int original_len;
+} CBMLz4Entry;
+
+uint64_t cbm_ac_scan_lz4_bitmask(const CBMAutomaton *ac, const char *compressed,
+                                 int compressed_len, int original_len);
+
+int cbm_ac_scan_lz4_batch(const CBMAutomaton *ac, const CBMLz4Entry *entries,
+                          int num_entries, CBMLz4Match *out_matches, int max_matches);
 ```
 
-  The automaton is built externally; the scan operates on
-  compressed blocks. Useful for very large logs/codestores where
-  decompression for every query is too expensive.
+  The automaton is built externally (via `cbm_ac_build`); the scan
+  operates directly on compressed LZ4 blocks. Useful for very large
+  logs/codestores where decompression for every query is too
+  expensive.
 - **Our applicability:** niche. Relevant only if we add a "search over
   compressed text without decompressing" capability to the lexical or
   document store. Our lexical index is built at write time over the
@@ -385,33 +422,42 @@ int cbm_ac_scan_lz4_batch(
   errno from a stat/open syscall, is the root gone or is this a
   transient EACCES/EIO?". The watcher loop is the easy part; the
   reusable part is the classifier.
-- **Their implementation:** `src/watcher/watcher.h`:
+- **Their implementation:** `src/watcher/watcher.h`. The classifier is
+  a small predicate that returns `true` ONLY for permanent-gone
+  conditions (ENOENT, ENOTDIR); any other failure (EACCES, EIO,
+  transient mounts, macOS TCC revocation) must NOT count as gone —
+  per the source comment, "the cached DB holds user-authored data and
+  is unrecoverable once pruned":
 
 ```c
-typedef enum cbm_root_status_e {
-    CBM_ROOT_PRESENT        = 0,
-    CBM_ROOT_GONE           = 1, /* ENOENT, etc. */
-    CBM_ROOT_TRANSIENT_ERR  = 2, /* EACCES, EIO, EBUSY */
-} cbm_root_status_t;
-
-cbm_root_status_t cbm_watcher_root_missing_errno(int err);
+bool cbm_watcher_root_missing_errno(int err);
 ```
+
+  Note: there is no three-state enum upstream — the earlier draft's
+  `cbm_root_status_e {PRESENT, GONE, TRANSIENT_ERR}` block was a
+  fabrication. The function is the entire exposed classifier
+  surface; everything else (the watcher loop, debouncing,
+  inotify/FSEvents) lives outside the header as project-specific
+  glue.
 
 - **Our applicability:** aligns with
   [`runtime-services-roadmap.md`](runtime-services-roadmap.md) §4
   (AsyncIndexer) for the resource-watcher portion. Our `AsyncIndexer`
   reads resource manifests (see also `resource-reindexing.md`) and
   needs an errno classifier for its poll loop. The classifier is
-  small, pure, and unit-testable — adopt without ceremony. The rest
-  of the watcher (file-system notifications, debouncing) is more
-  project-specific.
+  small, pure, and unit-testable (exposed by upstream specifically
+  for direct unit testing with injected `errno` values) — adopt
+  without ceremony. The rest of the watcher (file-system
+  notifications, debouncing) is more project-specific.
 - **Priority:** P2 — straightforward import.
 - **Open questions:**
-  - The classifier is platform-specific (POSIX errno values); Windows
-    equivalents need to map to the same three-state result. We have
-    a Windows-supported baseline (per
+  - The classifier is platform-specific (POSIX `errno` values);
+    Windows equivalents (`ERROR_FILE_NOT_FOUND`,
+    `ERROR_PATH_NOT_FOUND`) need to map to the same permanent-gone
+    predicate. We have a Windows-supported baseline (per
     [`build-and-test.md`](build-and-test.md)), so the mapping must
-    be cross-platform.
+    be cross-platform and must preserve the "do not count
+    revocable failures" rule.
   - The watcher loop in `codebase-memory-mcp` ties to inotify/FSEvents;
     `AsyncIndexer` currently uses timer-driven polling
     (per [`runtime-services-roadmap.md`](runtime-services-roadmap.md) §4).
@@ -438,6 +484,7 @@ The implementation rule is therefore:
 | Algorithms | LSH banding, RotSQ inner-product estimator, BFS bounded by depth | Re-implement in our own code, document the reference. |
 | Source code | A block of `.c` from `src/simhash/minhash.h` | Do not copy. Re-derive independently, or skip. |
 | API names | `cbm_store_coverage_shadow_project` | Rename to fit our naming. |
+| API signatures | `cbm_store_bfs`, `cbm_watcher_root_missing_errno`, `cbm_gbuf_new_shared_ids` | Re-derive our own signatures; do not invent plausible-but-fake upstream-shaped APIs. |
 
 ### 3.2. Constant provenance
 
@@ -455,6 +502,11 @@ constexpr std::uint32_t kLshRows  = 2;
 Adopt the per-constant provenance comment style in either the header
 where the constant lives, or the `code-intelligence-roadmap.md` table
 above (this guide serves as the prose side of the same audit).
+
+LSH banding (Pattern 1) is the classic Leskovec/Rajaraman/Ulldevoll
+b-and-r threshold — generally unencumbered for academic/OSS use. We
+re-derive constants from this section and do not inherit
+`codebase-memory-mcp`'s specific tunings verbatim.
 
 ### 3.3. Integration with existing roadmap
 
