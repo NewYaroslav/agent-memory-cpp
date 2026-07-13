@@ -613,12 +613,26 @@ Each pattern introduces (or assumes) a small set of build dependencies:
 
 ## 4. Implementation order
 
+This section uses three orthogonal priority axes:
+
+- **Value priority** (V0/V1/V2/V3): how much user-visible value the
+  pattern delivers once implemented. Higher = more impactful.
+- **Implementation readiness** (R-planned / R-blocked / R-in-progress /
+  R-done): how close we are to actually implementing it. Independent of
+  value.
+- **Dependency priority** (D0/D1/D2): how much the pattern unblocks other
+  work. Higher = more foundational.
+
+A pattern can be V1 (high value) but R-blocked (waiting on a dependency);
+another can be V3 (low value) but R-done (already trivial to ship). Use
+the right axis for the question you're asking.
+
 Ordered for review-board submission. Status: `planned` = not yet on a
 PR; `proposed` = on a candidate-PR list; `blocked` = depends on
 another track that has not started.
 
-| # | Pattern | Target file / section | Complexity | Depends on | Status |
-|---|---|---|---|---|---|
+| # | Pattern | Target file / section | Complexity | Depends on | Value priority | Status (readiness) |
+|---|---|---|---|---|---|---|
 | 1 | Pattern 3 — Coverage shadow | new `src/agent_memory/infrastructure/mdbx/CoverageStore.{hpp,cpp}`, [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.7 | small (1 PR) | MDBX TZ §3 P0 deliverable landed | planned |
 | 2 | Pattern 5 — Bounded BFS + schema introspection | extension to `src/agent_memory/knowledge_base/GraphStore.{hpp,cpp}`, [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) ADR-006 | small (1 PR) | MDBX TZ §5.5 GraphStore shim landed | planned |
 | 3 | Pattern 9 — Adaptive-poll watcher (errno classifier only) | extension to `src/agent_memory/runtime/AsyncIndexer.{hpp,cpp}`, new `src/agent_memory/runtime/RootStatusClassifier.{hpp,cpp}`, [`runtime-services-roadmap.md`](runtime-services-roadmap.md) §4 | small (1 PR) | none | planned |
@@ -681,6 +695,5 @@ Be honest about the patterns that do not fit us:
     subset).
   - [`compaction-roadmap.md`](compaction-roadmap.md) — proposed
     offline-snapshot job cross-link (Pattern 6: team-shared artifact).
-    cross-link (Pattern 6: team-shared artifact).
   - [`runtime-services-roadmap.md`](runtime-services-roadmap.md) — §4
     AsyncIndexer (Pattern 9: adaptive-poll watcher errno classifier).
