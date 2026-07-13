@@ -216,12 +216,12 @@ cbm_gbuf_t *cbm_gbuf_new_shared_ids(const char *project, const char *root_path,
 - **Our applicability:** extends the existing
   `mdbx_containers::SequenceTable` (see
   [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md)
-  §3 "SequenceTable extension" — already planned at P3 priority). The
+  §4 "SequenceTable extension" — already planned at P3 priority). The
   shared-atomic backend is a different concrete implementation of the
   same allocator contract: it drops the per-thread transaction cost for
   ID minting and lets `ResourceIndexer` workers run free of the MDBX
   write lock during the ID allocation phase.
-- **Priority:** P1 — wait until the MDBX TZ §3 P3 SequenceTable
+- **Priority:** P1 — wait until the MDBX TZ §4 P3 SequenceTable
   extension is actually scheduled; do not pre-empt.
 - **Open questions:**
   - Atomic backend persistence: a process-local atomic survives only
@@ -268,9 +268,12 @@ int cbm_store_get_schema(cbm_store_t *s, const char *project, cbm_schema_info_t 
   earlier draft). `get_schema` returns label/type counts, distinct
   property keys per label/type, observed relationship patterns, and
   sample names/qualified-names for the project.
-- **Our applicability:** maps to ADR-006 in
-  [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) (GraphRelations
-  capability). Our `GraphStore` does not currently expose BFS or schema
+- **Our applicability:** maps to ADR-006 GraphStorage plus the
+  `GraphRelations` capability flag in
+  [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) (the storage
+  substrate ADR and the capability flag are related but distinct — see
+  ADR-006 GraphStorage for the substrate). Our `GraphStore` does not
+  currently expose BFS or schema
   introspection; both are likely P1 additions to support retrieval-flow
   debugging and context-block assembly (a common ask: "give me everything
   connected to this entity within 2 hops, weighted by relevance").
@@ -310,17 +313,21 @@ typedef enum cbm_artifact_quality_e {
   Output path: `.codebase-memory/graph.db.zst`. Auto-created
   `.gitattributes` with `*.zst merge=ours` for branches that have not
   synced on the same artifact.
-- **Our applicability:** aligns with §"Compaction/ExportJob" in
-  [`compaction-roadmap.md`](compaction-roadmap.md) (the planned
-  `SnapshotExportJob` for a single-team-stack handoff). Reuses the
-  zstd compression contract already documented in
+- **Our applicability:** aligns with a *proposed* offline-snapshot job
+  to be added to [`compaction-roadmap.md`](compaction-roadmap.md)
+  (currently no such job exists there — `compaction-roadmap.md` covers
+  DecayJob / DedupeJob / MergeJob / ArchiveColdJob /
+  SummaryPromotionJob / EmbeddingRecomputeJob / CompactionHandoffJob
+  / SummaryTreeJob / CommunitySummaryJob). The team-shared artifact
+  reuses the zstd compression contract already documented in
   [`optimization-roadmap.md`](optimization-roadmap.md) §"Compression
   Contracts" (§"Optional Zstd Adapter"). The
   `.gitattributes merge=ours` rule is novel and worth documenting
   alongside the job so teams can adopt it without re-discovering the
   pattern.
-- **Priority:** P2 — wait for the SnapshotExportJob TZ to land first;
-  this pattern is a "value-add" rather than a foundational capability.
+- **Priority:** P2 — wait for the proposed offline-snapshot job TZ to
+  land first; this pattern is a "value-add" rather than a foundational
+  capability.
 - **Open questions:**
   - Schema version: `CBM_ARTIFACT_SCHEMA_VERSION = 2` is upstream's
     current value; ours will start at 1 and follow ADR versioning
@@ -350,7 +357,7 @@ cycle.
   + parser + evaluator in pure C. The "unsupported …" error catalogue is
   documented in the per-construct header.
 - **Our applicability:** optional, M2+ thinking. Our
-  `IRetrievalEngine` already composes retrievers via RRF (see
+  `HybridRetrievalEngine` already composes retrievers via RRF (see
   [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §"M2+
   Retrieval Hooks"); a graph-traversal query language on top would be
   powerful for knowledge-base-heavy profiles. Mark as an
@@ -518,9 +525,9 @@ The patterns above interact with existing PR-track work in
 | 1. MinHash | [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Bucket Index Tasks" (PR #29 binary signatures) | Augments — separate metric (Jaccard vs Hamming). |
 | 2. RotSQ    | [`optimization-roadmap.md`](optimization-roadmap.md) §"Future Encodings" (Matryoshka, PQ codecs) | Sibling codec — adds to `IEmbeddingCodec` registry. |
 | 3. Coverage shadow | [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5 (memory-stack layer) | New Layer-1 table family (proposed §5.7). |
-| 4. Atomic shared ID | [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §3 (SequenceTable extension, P3) | Bumps P3 to P1 if MDBX TZ §3 lands. |
-| 5. Bounded BFS | [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) ADR-006 (GraphRelations) | Direct extension to `GraphStore`. |
-| 6. Team-shared artifact | [`compaction-roadmap.md`](compaction-roadmap.md) ("SnapshotExportJob") | Value-add on top of zstd compression already in [`optimization-roadmap.md`](optimization-roadmap.md) §"Optional Zstd Adapter". |
+| 4. Atomic shared ID | [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §4 (SequenceTable extension, P3) | Bumps P3 to P1 if MDBX TZ §4 lands. |
+| 5. Bounded BFS | [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) ADR-006 GraphStorage + `GraphRelations` capability flag | Direct extension to `GraphStore`. |
+| 6. Team-shared artifact | [`compaction-roadmap.md`](compaction-roadmap.md) (to be added — proposed offline-snapshot job) | Value-add on top of zstd compression already in [`optimization-roadmap.md`](optimization-roadmap.md) §"Optional Zstd Adapter". |
 | 7. Cypher | [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §"M2+ Retrieval Hooks" | Optional second-stage retrieval. |
 | 8. AC over LZ4 | none | Watch only. |
 | 9. Adaptive-poll watcher | [`runtime-services-roadmap.md`](runtime-services-roadmap.md) §4 AsyncIndexer | Import the classifier, not the loop. |
@@ -529,10 +536,10 @@ The patterns above interact with existing PR-track work in
 
 Each pattern introduces (or assumes) a small set of build dependencies:
 
-- **Pattern 1 (MinHash + LSH):** SHA-1 or a 64-bit hash (e.g. xxHash)
-  for the per-shingle hash; no other deps. Our current project already
-  pulls in `xxhash` candidates through
-  [`dependencies.md`](dependencies.md) for general use; reuse.
+- **Pattern 1 (MinHash + LSH):** a per-shingle hash such as SHA-1 (no
+  external dep beyond a stdlib implementation); 64-bit hashes like
+  xxHash would require adding `xxhash` to `dependencies.md` first and
+  are NOT inherited from current deps.
 - **Pattern 2 (RotSQ):** deterministic code expansion needs a fixed
   rotation matrix (encoder-side constant) and a small SIMD-friendly
   inner-product routine; the latter overlaps with
@@ -570,9 +577,9 @@ another track that has not started.
 | 1 | Pattern 3 — Coverage shadow | new `src/agent_memory/infrastructure/mdbx/CoverageStore.{hpp,cpp}`, [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.7 | small (1 PR) | MDBX TZ §3 P0 deliverable landed | planned |
 | 2 | Pattern 5 — Bounded BFS + schema introspection | extension to `src/agent_memory/knowledge_base/GraphStore.{hpp,cpp}`, [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) ADR-006 | small (1 PR) | MDBX TZ §5.5 GraphStore shim landed | planned |
 | 3 | Pattern 9 — Adaptive-poll watcher (errno classifier only) | extension to `src/agent_memory/runtime/AsyncIndexer.{hpp,cpp}`, new `src/agent_memory/runtime/RootStatusClassifier.{hpp,cpp}`, [`runtime-services-roadmap.md`](runtime-services-roadmap.md) §4 | small (1 PR) | none | planned |
-| 4 | Pattern 6 — Team-shared artifact | post-SnapshotExportJob addition; bundle reader in `src/agent_memory/infrastructure/artifacts/`, [`compaction-roadmap.md`](compaction-roadmap.md) §"SnapshotExportJob" | medium (1-2 PRs) | SnapshotExportJob TZ landed, zstd adapter landed | blocked |
+| 4 | Pattern 6 — Team-shared artifact | post-offline-snapshot-job addition; bundle reader in `src/agent_memory/infrastructure/artifacts/`, [`compaction-roadmap.md`](compaction-roadmap.md) (job to be added — proposed) | medium (1-2 PRs) | Proposed offline-snapshot job TZ landed, zstd adapter landed | blocked |
 | 5 | Pattern 1 — MinHash + LSH | `src/agent_memory/lexical/MinhashLshIndex.{hpp,cpp}`, secondary stage after Hamming bucket lookup, [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Bucket Index Tasks" | medium (1-2 PRs) | PR #29 binary signatures shipped | proposed |
-| 6 | Pattern 4 — Atomic shared ID | extension to `external/mdbx-containers/include/mdbx_containers/SequenceTable.hpp`, [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §3 (P3 → P1) | small (1 PR) | MDBX TZ §3 P3 scheduled | blocked |
+| 6 | Pattern 4 — Atomic shared ID | extension to `external/mdbx-containers/include/mdbx_containers/SequenceTable.hpp`, [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §4 (P3 → P1) | small (1 PR) | MDBX TZ §4 P3 scheduled | blocked |
 | 7 | Pattern 2 — RotSQ codec | `src/agent_memory/embedding/RotsqCodec.{hpp,cpp}`, [`optimization-roadmap.md`](optimization-roadmap.md) §"Future Encodings" | medium (1-2 PRs) | `IEmbeddingCodec` interface + per-bit Recall@10 baseline landed | proposed |
 | 8 | Pattern 7 — Cypher read subset | `src/agent_memory/cypher/{parser,evaluator}.{hpp,cpp}`, [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §"Retrieval Composition" | large (≥2 PRs) | `GraphStore` introspection (Pattern 5) | blocked |
 | 9 | Pattern 8 — AC over LZ4 | speculative; no concrete target | large | lz4 dependency added + use case validated | blocked |
@@ -607,8 +614,13 @@ Be honest about the patterns that do not fit us:
 
 - Upstream: <https://github.com/DeusData/codebase-memory-mcp>.
 - License: MIT.
-- Hash-function candidate: <https://github.com/Cyan4973/xxHash> (BSD-2,
-  used optionally per [`dependencies.md`](dependencies.md)).
+- Hash-function candidate (NOT yet adopted): <https://github.com/Cyan4973/xxHash>
+  (BSD-2). Pattern 1 should default to a stdlib hash such as SHA-1;
+  adding `xxhash` requires first amending
+  [`dependencies.md`](dependencies.md) (current flat submodules are
+  `external/libmdbx` and `external/mdbx-containers`; planned optional
+  deps are Zstd, Eigen, simdutf, utfcpp, ICU, Miniz/zlib or LZ4,
+  Xapian, PISA — no xxhash).
 - Cross-links to our roadmap:
   - [`related-projects.md`](related-projects.md) — §6 entry added in
     this cycle, tagged "Research source / pattern donor".
@@ -622,7 +634,8 @@ Be honest about the patterns that do not fit us:
   - [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) —
     Optional second-stage retrieval layer (Pattern 7: Cypher read
     subset).
-  - [`compaction-roadmap.md`](compaction-roadmap.md) — SnapshotExportJob
+  - [`compaction-roadmap.md`](compaction-roadmap.md) — proposed
+    offline-snapshot job cross-link (Pattern 6: team-shared artifact).
     cross-link (Pattern 6: team-shared artifact).
   - [`runtime-services-roadmap.md`](runtime-services-roadmap.md) — §4
     AsyncIndexer (Pattern 9: adaptive-poll watcher errno classifier).
