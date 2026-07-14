@@ -266,6 +266,8 @@ Non-goals:
 
 Эти архитектуры естественно ложатся на наш стек — capability flags уже предусмотрены ADR или близки к существующим `MemoryProfileSpec`.
 
+> **Proposed API sketch — not implemented.** `HybridRetriever` и `GraphRetriever` в этой таблице — illustrative orchestrator-имена для описания архитектурного паттерна. Реальный тип — `HybridRetrievalEngine` (`src/agent_memory/retrieval/HybridRetrievalEngine.hpp`). Capability-флаги (`Lexical + DenseVectors + GraphRelations`) — также proposed.
+
 | Архитектура | Что подходит | Capability соответствие |
 |---|---|---|
 | **Блок фактов (flat)** | Через `Fact kind` + `FactPayload` + короткий `primary_text` | `enable_fact_payload = true` (M0 готов) |
@@ -310,7 +312,7 @@ Non-goals:
 4. **Cyrillic anti-loop.** СВИНОПАС специально использует лемматизацию/стемминг для русского + alias resolution. Нужно ли это для нашего стека на уровне archetype или на уровне per-stack (например, для Russian-language `BasicRag`)? [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/rag-knowledge/Внешняя память LLM-агентов — система СВИНОПАС.md]
 5. **Bi-temporal validation.** Zep использует bi-temporal model. Наш `TemporalComponent.valid_from_ms`/`valid_until_ms` одномерный. Нужно ли расширять?
 6. **ToM sidecar vs IntentRouter.** Где кончается `IntentRouter` (классификация intent → retriever selection) и начинается ToM sidecar (persistent user model)? Сейчас у нас только `IntentRouter`. ToM — потенциальный M2+ extension.
-7. **Embedding anisotropy problem.** NOUZ явно признаёт, что сырой cosine обманчив из-за анизотропии embeddings [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/NOUZ — структурированная память для ИИ-агентов в Obsidian.md]. Нужна ли calibration layer для нашего dense retrieval? Mem0 обходит это через multi-signal scoring; возможно, мы автоматически получаем benefit из `HybridRetriever` fusion.
+7. **Embedding anisotropy problem.** NOUZ явно признаёт, что сырой cosine обманчив из-за анизотропии embeddings [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/NOUZ — структурированная память для ИИ-агентов в Obsidian.md]. Нужна ли calibration layer для нашего dense retrieval? Mem0 обходит это через multi-signal scoring; возможно, мы автоматически получаем benefit из `HybridRetriever` fusion (см. §7.1: `HybridRetriever` — proposed API sketch; реальный тип — `HybridRetrievalEngine`).
 8. **Anti-loop для не live-chat workloads.** Cooldown механизм СВИНОПАС разработан для voice-streamed chat. Как он работает для batch retrieval workloads (one-shot Q&A)? Возможно, нужен different decay curve.
 
 ## §9. References

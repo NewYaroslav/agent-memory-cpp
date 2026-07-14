@@ -171,6 +171,8 @@ Default chunker — это baseline, который работает для **ge
 - Один pipeline для всех HTML-derived content.
 - Markdown conversion обычно сохраняет семантику (headings, lists, links).
 
+> **Proposed API sketch — not implemented.** `IResourceAdapter.preprocess(resource)` — illustrative interface; в текущем коде отдельный preprocess-hook может быть интегрирован через `IResourceStore`-based adapter chain, но имя `IResourceAdapter.preprocess` не зафиксировано.
+
 В нашем стеке HTML → Markdown adapter реализуется через `IResourceAdapter.preprocess(resource)`, который эмитит MD-файл, передаваемый дальше в Markdown chunker.
 
 ### 3.6. Comparison Table
@@ -225,6 +227,8 @@ class LegalChunkMetadata:
 - **recreate_collection flag** для bulk reindex.
 
 В нашем стеке:
+
+> **Proposed API sketch — not implemented.** `IResourceAdapter.preprocess` — illustrative; см. §3.5 disclaimer. `KnowledgeUnitKey = (kind, scope, ContentHash)` определён в `knowledge-units-roadmap.md` и реально существует.
 
 - `LegalChunkMetadata.source` ↔ `envelope.sources[].uri` (SourceRef, см. `knowledge-units-roadmap.md` §3).
 - `LegalChunkMetadata.citation` ↔ chunk header text.
@@ -298,6 +302,8 @@ Pipeline (тот же источник):
 - Audio transcription (speech-to-text).
 - Built-in contextualization API.
 
+> **Proposed API sketch — not implemented.** Имя `metadata_typed["image_caption"]` — illustrative JSON-like access к chunk metadata; реальный доступ — через `ChunkPayload` и `metadata_typed` (key→value typed map), но конкретный ключ `image_caption` ещё не зафиксирован в `knowledge-units-roadmap.md`. Docling `IResourceAdapter` integration — illustrative pattern.
+
 В нашем стеке Docling реализуется как `IResourceAdapter`:
 
 ```text
@@ -338,6 +344,8 @@ Pipeline (тот же источник):
 ```
 
 Префикс описывает: тип документа, главную тему, раздел/подтему, конкретные сущности (компания, продукт, версия, период). **Не** пересказывает chunk, **не** делает выводов.
+
+> **Proposed API sketch — not implemented.** `IAsyncIndexer.preindex` — illustrative contract для LLM-обогащения chunks перед индексацией. В `memory-stacks-roadmap.md` §13 определён контракт `IAsyncIndexer`, но имя hook'а `preindex` — placeholder; реализация потенциально через `AsyncIndexer` worker.
 
 В нашем стеке это реализуется через `IAsyncIndexer.preindex` hook:
 
@@ -459,6 +467,8 @@ Trade-offs:
 - **`envelope.revision` increments** на content-bearing change.
 
 ### 8.2. M1 (Production)
+
+> **Proposed API sketch — not implemented.** Bullet'ы этой секции, ссылающиеся на `IResourceAdapter.preprocess` и `IResourceAdapter` контракт, — illustrative (см. §3.5 disclaimer).
 
 Дополнительно:
 

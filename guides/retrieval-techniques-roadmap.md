@@ -25,6 +25,8 @@ Related roadmaps:
 
 ## §1. Purpose
 
+> **Proposed API sketch — not implemented.** Имена `HybridRetriever`, `IQueryTransformer`, `RetrievalPlan.retrievers[]` и связанные контракты в этом разделе иллюстративны и не существуют в текущей кодовой базе в этом виде. Реальные типы — `HybridRetrievalEngine`, `IRetriever` и `HybridRetrievalConfig`. Не полагайтесь на эти имена до утверждения ADR.
+
 Этот документ предназначен для трёх целей:
 
 1. **Typology of retrieval techniques.** Свести в одну карту 8+ классов retrieval: Naive / Advanced / Hybrid / Contextual / Graph / Fusion / Adaptive / Agentic / RLM — какие техники в каждом классе, когда включать, какая сложность.
@@ -307,6 +309,8 @@ Both-PRF:
 | nDCG@10/MAP критичен (precision-first) | Both-PRF с **uniCOIL** |
 
 ### 6.3. Применимость к нашему стеку
+
+> **Proposed API sketch — not implemented.** `HybridRetriever` как orchestrator-контракт иллюстративен; реальный тип — `HybridRetrievalEngine`. Fusion strategy names `WeightedMax`/`Learned` — placeholder'ы для будущего API.
 
 RRF (Reciprocal Rank Fusion) — у нас по умолчанию для `HybridRetriever` (см. `knowledge-base-roadmap.md` §7.3). Linear interpolation с α — `WeightedMax` или `Learned` fusion варианты в M2+.
 
@@ -621,6 +625,8 @@ RLM — root LM в Python REPL, которая пишет код для иссл
 
 ### 12.2. В нашем стеке
 
+> **Proposed API sketch — not implemented.** RLM-integration через `HybridRetriever` — illustrative; в текущем коде RLM не интегрирован.
+
 RLM — **альтернатива**, а не расширение. RLM живёт в Python REPL с sub-RLM вызовами; это другой execution model. Hybrid RAG → RLM (RAG top-100 → RLM deep processing) — потенциальный M2+ extension, если потребуется completeness-critical задача поверх нашего `HybridRetriever`.
 
 Конкретные implementation choices для RLM-стиля — за пределами C++ core, живут в Python worker.
@@ -669,7 +675,7 @@ RLM — **альтернатива**, а не расширение. RLM живё
 
 1. **Optimal RRF k per stack.** Значение k=60 — common default, но для разных workloads возможно нужны per-stack tuning. Нужны benchmarks на `AgentLTM`, `BasicRag`, `QAKB`.
 2. **α для linear interpolation vs RRF.** RRF не требует cross-backend score normalization, но linear interpolation может дать лучший top-K [Source: arXiv:2205.00235 — "To Interpolate or not to Interpolate" (Li et al., SIGIR 2022)] <br>[Internal note: ai-agent-playbook/concepts/rag-knowledge/PRF interpolation timing - Pre-PRF vs Post-PRF vs Both-PRF.md]. Нужны head-to-head benchmarks.
-3. **Both-PRF в нашем HybridRetriever.** PRF не реализовано в текущем контракте; Both-PRF даёт 1-3% nDCG@10 vs Post-PRF, но стоимость двойной работы [Source: arXiv:2205.00235 — "To Interpolate or not to Interpolate" (Li et al., SIGIR 2022)] <br>[Internal note: ai-agent-playbook/concepts/rag-knowledge/PRF interpolation timing - Pre-PRF vs Post-PRF vs Both-PRF.md]. Стоит ли реализовывать через `IQueryTransformer`?
+3. **Both-PRF в нашем HybridRetriever.** PRF не реализовано в текущем контракте; Both-PRF даёт 1-3% nDCG@10 vs Post-PRF, но стоимость двойной работы [Source: arXiv:2205.00235 — "To Interpolate or not to Interpolate" (Li et al., SIGIR 2022)] <br>[Internal note: ai-agent-playbook/concepts/rag-knowledge/PRF interpolation timing - Pre-PRF vs Post-PRF vs Both-PRF.md]. Стоит ли реализовывать через `IQueryTransformer`? (см. §1: `HybridRetriever`/`IQueryTransformer` — proposed API sketch).
 4. **Anthropic 49% reduction на русском корпусе.** Не воспроизведено [Source: Anthropic blog "Introducing Contextual Retrieval" (2024-09-19, https://www.anthropic.com/news/contextual-retrieval)] <br>[Internal note: ai-agent-playbook/concepts/rag-knowledge/Contextual Retrieval — LLM-обогащение чанков контекстом документа.md]. Наша документация преимущественно русскоязычная — нужен ли пилот?
 5. **Anti-loop formula для не-live workloads.** Cooldown+decay по СВИНОПАС разработан для voice-streamed chat [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/rag-knowledge/Внешняя память LLM-агентов — система СВИНОПАС.md]. Какой decay curve оптимален для batch retrieval?
 6. **Spreading activation depth & decay-per-hop.** lifemodel не публикует конкретные параметры [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/ai-agents/Dual-layer memory retrieval LanceDB и spreading activation graph.md]. Нужны работы на наших корпусах.
