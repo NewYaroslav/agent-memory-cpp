@@ -551,7 +551,7 @@ Content edits создают новую identity. Стабилен при пов
 - `ai-agent-playbook/concepts/rag-knowledge/Local RAG для проприетарного API - паттерн декомпиляции и карточки сущности.md` (internal note — no public source available) — entity-card pattern, «только подтверждённые факты».
 - `ai-agent-playbook/playbooks/rag-knowledge/Local RAG build pipeline - decompile enrich bge-m3 agent manifest.md` (internal note — no public source available) — 7-шаговый pipeline для decompiled code.
 - `ai-agent-playbook/playbooks/rag-knowledge/Legal-RAG - структурный чанкинг по статьям и пунктам.md` (internal note — no public source available) — НПА structural chunker, citations, UUID5, OCR.
-- **github.com/ibm-ai-platform/Docling (Apache-2.0); arXiv:2408.09869 — Docling paper.** Private provenance: `ai-agent-playbook/playbooks/rag-knowledge/Docling RAG Agent — шаблон для обработки любых форматов.md` (internal note) — Docling multimodal.
+- **github.com/docling-project/docling (MIT); arXiv:2408.09869 — Docling paper.** Private provenance: `ai-agent-playbook/playbooks/rag-knowledge/Docling RAG Agent — шаблон для обработки любых форматов.md` (internal note) — Docling multimodal.
 
 **Context enrichment:**
 
