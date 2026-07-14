@@ -496,7 +496,7 @@ Trade-offs:
 
 Three distinct chunk-identity strategies exist. Pick one per chunk kind; mixing требует явной пометки в chunk contract.
 
-| Model | Formula | Stable against | Breaks on | Use case |
+| Model | Formula | Stable against | Change semantics | Use case |
 |---|---|---|---|---|
 | **Position** (baseline, fragile) | `UUID5(source + chunk_index)` | Re-indexing of identical segmentation | Insert-points shift; segmentation changes | Stable-by-construction corpora only (rare) |
 | **Structural** | `UUID5(document_id + structural_path)` | Insert-points; intra-document restructuring | **Stable against:**<br>• insertions in other parts of the document;<br>• content edits of the same logical section (revision bumps, identity stays).<br><br>**Identity changes on:**<br>• structural path renumbering (article removed/renumbered);<br>• re-anchoring (section moves);<br>• logical section replacement (semantic identity change). | Legal, regulatory, codified documents |
