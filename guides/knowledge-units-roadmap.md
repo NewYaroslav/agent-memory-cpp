@@ -276,6 +276,8 @@ Migration запускается отдельной утилитой (`agent-mem
 
 ### 5.1. ChunkPayload
 
+See [`chunkers-roadmap.md`](chunkers-roadmap.md) for format-specialized chunker patterns: OpenAPI (resolves `$ref`), Markdown (heading tree + parent chain), AsciiDoc, PlantUML, HTML→MD, Legal-strukturalnyy (по «Статьям»), Docling multimodal, Smart3D-style decompiled-code entity cards. Plus contextual chunking (Anthropic) and two-stage indexing (chunks + synthetic questions).
+
 Payload для `KnowledgeUnitKind::Chunk`. Chunk — default kind для indexed retrieval.
 
 ```cpp

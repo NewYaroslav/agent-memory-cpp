@@ -52,6 +52,8 @@ Non-goals документа:
 
 См. также [`code-intelligence-roadmap.md`](code-intelligence-roadmap.md) для Bounded BFS + schema introspection (Pattern 5) borrowed from `codebase-memory-mcp` — это extension candidate для `GraphStore` (расширяет capability flag `GraphRelations` поверх substrate из ADR-006 GraphStorage; storage substrate и capability flag — отдельные сущности, не синонимы).
 
+See [`memory-architectures-roadmap.md`](memory-architectures-roadmap.md) for a comparison of 13+ external memory architectures (Karpathy / A-MEM / lifemodel / СВИНОПАС / NOUZ / Self-Evolving / Vault Audit AI / Mem0 / Letta / Zep / Memoria) and their applicability to the in-house stack patterns.
+
 ## 3. ADR-001: Memory Data Model
 
 ### 3.1. Решение

@@ -926,6 +926,8 @@ Multi-encoder migration flow:
 
 ## Dense Index Modes (Backend Selection)
 
+See [`retrieval-techniques-roadmap.md`](retrieval-techniques-roadmap.md) for dense retrieval details: bi-encoder vs decoder-based embeddings, hard-negative mining, EOS pooling, decoder-LLM-based retrievers (BGE/Qwen-Embed/NV-Embed).
+
 `IDenseIndex` interface расширен с одной реализации до 5 modes
 (4 base modes + HNSW M2+), выбираемых через `DenseIndexMode`:
 
