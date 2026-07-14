@@ -1,6 +1,8 @@
 # Binary Embeddings Roadmap
 
-> C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо `std::span` и явные конструкторы вместо designated initializers. PR #29 binary signatures — это cache-friendly fingerprints для coarse filter (bucket index); binary embeddings — это semantic-preserving quantizers общего назначения. Этот гайд расширяет PR #29 до общего compression layer; cross-link с [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Signature Index Tasks" обязателен.
+> C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо `std::span` и явные конструкторы вместо designated initializers. Binary signatures (`BinarySignature`, `IBinarySignatureEncoder`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH`, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`) — это cache-friendly fingerprints для coarse filter (bucket index); binary embeddings — это semantic-preserving quantizers общего назначения. Этот гайд расширяет roadmap binary signatures до общего compression layer; cross-link с [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Signature Index Tasks" обязателен.
+
+> **Scope note.** All symbols listed in this guide (`BinarySignature`, `BinarySignatureInfo`, `IBinarySignatureEncoder`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH`, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`, `DenseIndexMode::BinaryOnly`, `DenseIndexMode::ApproximateVector`, `BinaryOnlyIndex`, `ApproximateVectorIndex`, `AutoencoderBinarySignatureEncoder`, `IAutoencoderEncoder`, `IAutoencoderDecoder`, `BinarySignature::hamming_distance`) are roadmap-only. None are implemented in `src/agent_memory/` yet (verified by `git ls-files 'src/agent_memory/**/*.hpp'`). Implementation requires separate PRs; M0 here means "roadmap-only, intended for the first PR lane", NOT "already shipped".
 
 ## Source attribution policy
 
@@ -11,7 +13,7 @@
 
 Внутренние заметки — это discovery aids, а не авторитетные цитаты. Публичные roadmap-заявления цитируют публичный источник первым; внутренние заметки служат лишь маркером частного происхождения.
 
-Этот гайд покрывает **binary embeddings** как общий compression layer поверх continuous эмбеддингов. Цель — дать набор решений «когда какой метод», включая relationship к PR #29 binary signatures, SIMD-accelerated distance (XOR + POPCNT), и quality vs storage tradeoff на 64/128/256/512 bit.
+Этот гайд покрывает **binary embeddings** как общий compression layer поверх continuous эмбеддингов. Цель — дать набор решений «когда какой метод», включая relationship к roadmap binary signatures (Planned API, not yet implemented), SIMD-accelerated distance (XOR + POPCNT), и quality vs storage tradeoff на 64/128/256/512 bit.
 
 Related roadmaps:
 
@@ -25,17 +27,17 @@ Related roadmaps:
 
 Этот гайд существует для трёх целей:
 
-1. **Extend PR #29 to general compression layer.** PR #29 binary signatures — cache-friendly fingerprints для coarse bucket filter; binary embeddings — semantic-preserving quantizers общего назначения, расширяющие signature-only подход до storage tier (binary + optional decoder) и hybrid modes (binary + dense rerank).
+1. **Extend binary-signatures roadmap to general compression layer.** Binary signatures (cache-friendly fingerprints для coarse bucket filter) — roadmap-only, not yet implemented. Binary embeddings — semantic-preserving quantizers общего назначения, расширяющие signature-only подход до storage tier (binary + optional decoder) и hybrid modes (binary + dense rerank).
 2. **Comparison framework.** Свести в одну карту методы binarization (sign-based, autoencoder, LSH, PQ), по единому набору осей: compression ratio, accuracy retention, training cost, inference cost, hardware-friendliness.
-3. **Adoption guidance.** Для каждого метода пометить, что из него `agent-memory-cpp` может воспроизвести через наши существующие примитивы (`BinarySignature`, `BinarySignatureEncoderRegistry`, `IBinarySignatureEncoder`, `DenseIndexMode`) и что требует нового контракта.
+3. **Adoption guidance.** Для каждого метода пометить, что из него `agent-memory-cpp` может воспроизвести через наши planned primitives (`BinarySignature`, `BinarySignatureEncoderRegistry`, `IBinarySignatureEncoder`, `DenseIndexMode`) и что требует нового контракта.
 
 Non-goals:
 
-- Не повторять детальную спецификацию `BinarySignatureEncoderRegistry` (это в `optimization-roadmap.md` §"Encoder Registry и Versioning").
+- Не повторять детальную спецификацию `BinarySignatureEncoderRegistry` (это в `optimization-roadmap.md` §"Encoder Registry и Versioning"). `BinarySignatureEncoderRegistry` сам по себе roadmap-only.
 - Не описывать float32 / float16 / int8 codecs (это в `optimization-roadmap.md` §"Future Encodings").
 - Не каталогизировать ANN-методы (HNSW, IVF, DiskANN — это в `optimization-roadmap.md` §"Dense Index Modes").
 
-Binary embeddings — **не замена** full vectors. Это tradeoff между accuracy и storage/query cost. Quality-sensitive rerank остаётся обязательным; binary embeddings могут быть **only candidate filter** (PR #29 mode `BinaryCandidateFilter`) или **primary** storage tier (experimental modes `BinaryOnly`, `ApproximateVector`).
+Binary embeddings — **не замена** full vectors. Это tradeoff между accuracy и storage/query cost. Quality-sensitive rerank остаётся обязательным; binary embeddings могут быть **only candidate filter** (planned `DenseIndexMode::BinaryCandidateFilter`) или **primary** storage tier (experimental modes `BinaryOnly`, `ApproximateVector`).
 
 ## §2. Binarization Landscape
 
@@ -48,7 +50,7 @@ Binary embeddings — **не замена** full vectors. Это tradeoff меж
 | **Product Quantization (PQ)** | m bytes (typ. 8) | 96× (768-dim) | ~95% | FAISS, Milvus, billion-scale ANN |
 | **Binary (1 bit/dim)** | d / 8 bytes | 32× (768-dim) | ~85% | Coarse filter, edge, in-memory cache |
 | **Binary learned (Tissier 2018)** | 64-512 bits total | 6-48× | ~98% (256 bit) | Coarse-to-fine retrieval, dense storage tier |
-| **LSH (random hyperplanes)** | 64-512 bits total | 6-48× | ~85% (256 bit) | Cache-friendly candidate filter (PR #29) |
+| **LSH (random hyperplanes)** | 64-512 bits total | 6-48× | ~85% (256 bit) | Cache-friendly candidate filter (planned; `RandomHyperplaneLSH` not yet implemented) |
 | **RotSQ** | ~6 bytes/dim + 12 B metadata | ~6× | ~95% | Sibling codec alongside Matryoshka, PQ |
 
 Binary embeddings занимают **наименьший размер на вектор** при сохранении семантики; tradeoff — потеря ~2% на retrieval при 256+ битах для learned encoders. На 64 бит compression выше (150×) но потери до 16% на больших датасетах.
@@ -63,9 +65,11 @@ b_i = H(x_i)
 
 `H` — Heaviside step function. Naive approach: один бит на компоненту embedding'а.
 
-- **Pros:** zero training, dependency-free, trivially invertible (sign preserves order).
-- **Cons:** keeps same dimension; no CPU-register alignment; loses magnitude info (only sign).
+- **Pros:** zero training, dependency-free, deterministic.
+- **Cons:** keeps same dimension; no CPU-register alignment; loses magnitude info (only sign); NOT invertible without a learned decoder or external magnitude metadata.
 - **Use case:** experimental baseline; production-grade needs learned quantization.
+
+> Zero-training and deterministic: `b_i = sign(x_i)` is one bit per component, requiring no model. Preserves only the sign of each component; the magnitude and ordering among positive values are NOT recoverable. Not invertible without a learned decoder or external magnitude metadata.
 
 [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Бинаризация эмбеддингов для экономии памяти и ускорения retrieval.md]
 
@@ -79,7 +83,9 @@ Decoder:  x_hat = tanh(W^T · b + c)
 Loss:     L = MSE(x, x_hat) + lambda · Σ_{i<j} corr(b_i, b_j)^2
 ```
 
-Weight tying is forced: `H` is non-differentiable, so the encoder does not receive a direct gradient. The gradient flows only through the decoder; `W` is updated by the decoder signal. This is functionally a straight-through estimator: `dL/dW ≈ dL/dx_hat · dx_hat/dW` (assuming `dH/dz ≈ 1`).
+Weight tying is forced: `H` is non-differentiable, so the encoder does not receive a direct gradient. The gradient flows only through the decoder; `W` is updated by the decoder signal.
+
+> **Gradient flow (tied weights):** With weight tying `W = W_decoder^T`, encoder weights `W` are updated indirectly through the decoder path during training. The binary encoder `H(Wx)` is non-differentiable; gradient does NOT pass through `H`. This is NOT a straight-through estimator (STE) — STE would require an artificial non-zero derivative at `H` during backward pass, which is not used here. The autoencoder instead learns useful `W` representations through decoder-side updates.
 
 **Decorrelation regulariser** penalises pairwise correlations between code bits. Without it, the autoencoder learns to reconstruct numbers well (decoder MSE), but poorly preserves semantics — the encoder gradient is absent, and `W` discards semantic information in favour of numerical accuracy. The regulariser forces code bits to carry independent semantic information.
 
@@ -106,19 +112,19 @@ Key empirical findings:
 
 ### 3.3. Locality-Sensitive Hashing (LSH)
 
-LSH for binarization uses random hyperplanes (this is the `RandomHyperplaneLSH` encoder from PR #29):
+LSH for binarization uses random hyperplanes (planned: `RandomHyperplaneLSH` encoder, **not yet implemented**):
 
 ```text
 bit_i = sign(dot(embedding, random_hyperplane_i))
 ```
 
-- **Pros:** zero training; deterministic by `(dim, bit_count, seed)`; perfect for bucket indexing; PR #29 baseline.
-- **Cons:** no semantic preservation beyond the random hyperplane approximation; ~85-90% Recall@10 of float baseline at 128 bits.
+- **Pros:** zero training; deterministic by `(dim, bit_count, seed)`; planned as the baseline encoder in the roadmap.
+- **Cons:** no semantic preservation beyond the random hyperplane approximation; ~85-90% Recall@10 of float baseline at 128 bits (hypothesis, not contract).
 - **Use case:** cache-friendly candidate filter; bucket prefiltering.
 
 [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Бинаризация эмбеддингов для экономии памяти и ускорения retrieval.md]
 
-This is the **same approach** as PR #29 baseline encoder; cross-link to `optimization-roadmap.md` §"Baseline Encoder" and §"Binary Signature Index Tasks". This guide treats LSH as the first member of the binarization family (zero-training baseline); autoencoder-binarization is the learned upgrade.
+This is the **same approach** as the planned baseline encoder in the binary-signatures roadmap; cross-link to `optimization-roadmap.md` §"Baseline Encoder" and §"Binary Signature Index Tasks". This guide treats LSH as the first member of the binarization family (zero-training baseline); autoencoder-binarization is the learned upgrade.
 
 ### 3.4. Product Quantization (PQ) for Hybrid Binary + FP
 
@@ -153,21 +159,21 @@ The killer feature of binary embeddings is **SIMD-accelerated distance via XOR +
 hamming_distance(b1, b2) = popcount(b1 XOR b2)
 ```
 
-This is **one assembly instruction** on modern x86 (POPCNT). Linear scan of 1M 256-bit vectors = 1M × 1 instruction = a few milliseconds. Compare with cosine similarity, which requires multiplications and additions per dimension.
+This is **cheap per operation** on modern x86 (POPCNT instructions on `uint64_t` words), but the wall-clock cost is NOT "one instruction per vector". Hamming distance between two 256-bit signatures decomposes into `4 × XOR64` + `4 × POPCNT64` + integer adds, plus loads, loop overhead, and top-K maintenance. AVX2 does NOT have native vector popcount (`_mm256_popcnt_u64` does not exist); a vectorized implementation typically uses a 16-bit nibble LUT + PSHUFB lookup (Bradford-Larson or similar). Wall-clock latency for 1M vectors depends on CPU, memory bandwidth, cache hit rate, and the top-K algorithm; do not quote absolute numbers without a benchmark setup. Compare with cosine similarity, which requires multiplications and additions per dimension.
 
 ### 4.1. CPU Register Alignment
 
-Bit sizes match CPU register widths and cache-line sizes:
+Bit sizes, register widths, and cache-line occupancy are **independent properties**. A 256-bit signature fits comfortably in one AVX2 register (32 bytes) but spans only **half** a 64-byte cache line. The table below separates the two:
 
-| Bit size | Register alignment | Cache line | Use case |
-|---|---|---|---|
-| 32 bit | partial register | partial | experimental, super-fast coarse filter (NOT default) |
-| 64 bit | `uint64_t` | partial | BasicRag default, minimum practical |
-| 128 bit | SSE | half line | AgentLTM default, normal candidate filter |
-| 256 bit | AVX2 | full line | CompiledWiki, quality-oriented |
-| 512 bit | AVX-512 | two lines | M2+ experimental, near-float quality |
+| Bit size | Bytes | AVX2 register (32 B) fit | Cache line (64 B) occupancy | Use case |
+|---|---|---|---|---|
+| 32 bit | 4 B | one eighth | one sixteenth | experimental, super-fast coarse filter (NOT default) |
+| 64 bit | 8 B | one quarter | one eighth | BasicRag default, minimum practical |
+| 128 bit | 16 B | one half | one quarter | AgentLTM default, normal candidate filter |
+| 256 bit | 32 B | full register | one half | CompiledWiki, quality-oriented |
+| 512 bit | 64 B | spans 2 registers | full cache line | M2+ experimental, near-float quality |
 
-Rationale: 64/128/256 bits align with CPU register sizes (`uint64_t`, SSE, AVX2); 32-bit is not alignment-friendly for popcount/Hamming through `__builtin_popcount`.
+Rationale: 64/128/256 bits align with CPU register sizes (`uint64_t`, SSE, AVX2) on the register side; on the cache-line side, the same bit counts occupy 1/8, 1/4, 1/2 of a 64-byte cache line respectively. 32-bit is not alignment-friendly for popcount/Hamming through `__builtin_popcount`. A 512-bit signature occupies a full cache line, which is desirable for sequential scans and SIMD loads but increases cache pressure when many signatures are processed together.
 
 ### 4.2. SIMD Dispatch
 
@@ -204,22 +210,22 @@ uint32_t hamming_distance_u64(
 }  // namespace simd
 ```
 
-This is the same SIMD layer defined in [`optimization-roadmap.md`](optimization-roadmap.md) §"Eigen и SIMD стратегия". Binary embeddings reuse it via `BinarySignature::hamming_distance(lhs, rhs)` and the `HammingTopK` kernel (see `optimization-roadmap.md` §"HammingTopK kernel" for the full design).
+This is the same SIMD layer defined in [`optimization-roadmap.md`](optimization-roadmap.md) §"Eigen и SIMD стратегия". Binary embeddings are planned to reuse it via `BinarySignature::hamming_distance(lhs, rhs)` (Planned API, **not yet implemented**) and the `HammingTopK` kernel (see `optimization-roadmap.md` §"HammingTopK kernel" for the full design).
 
-## §5. Relationship to PR #29
+## §5. Relationship to the Binary-Signatures Roadmap
 
-PR #29 binary signatures vs binary embeddings — two sides of the same coin:
+Planned binary signatures vs planned binary embeddings — two sides of the same coin (all symbols roadmap-only):
 
-| Aspect | PR #29 Binary Signatures | Binary Embeddings |
+| Aspect | Planned Binary Signatures | Planned Binary Embeddings |
 |---|---|---|
 | **Purpose** | Cache-friendly fingerprints (bucket prefilter) | Semantic-preserving quantizers (general compression) |
 | **Storage** | `(scope_id, projection_kind, short_key)` bucket index | Optional embedding storage tier (binary only / binary + decoder) |
 | **Encoder** | `RandomHyperplaneLSH` baseline + `AutoencoderBinarizer` M2+ | Multiple encoders (sign, LSH, autoencoder, PQ, RotSQ) |
 | **Reconstruction** | None (fingerprint only) | Optional decoder for `ApproximateVector` mode |
-| **Quality target** | Coarse filter: Recall@10 ≥ 0.95 (binary + float rerank) | Standalone: Recall@10 ≥ 0.95 (256+ bits); binary-only: ≥ 0.85 (experimental) |
-| **Use in `DenseIndexMode`** | `BinaryCandidateFilter` (mandatory with float) | `BinaryCandidateFilter` / `BinaryOnly` / `ApproximateVector` |
+| **Quality target** | Coarse filter: Recall@10 ≥ 0.95 (binary + float rerank, hypothesis) | Standalone: Recall@10 ≥ 0.95 (256+ bits, hypothesis); binary-only: ≥ 0.85 (hypothesis) |
+| **Use in `DenseIndexMode`** | `BinaryCandidateFilter` (planned default) | `BinaryCandidateFilter` / `BinaryOnly` / `ApproximateVector` |
 
-PR #29 = **the first slice** of the binary embeddings roadmap. It establishes the encoder registry, signature value types, and bucket index. Binary embeddings roadmap **extends** that into:
+The binary-signatures roadmap is **the first slice** of the binary embeddings roadmap. It plans to establish the encoder registry, signature value types, and bucket index. Binary embeddings roadmap **extends** that into:
 
 - Standalone binary embeddings as a storage tier (drop float, keep binary).
 - Hybrid binary + dense indexes (binary for candidate filter + dense rerank).
@@ -231,23 +237,25 @@ Cross-link to [`optimization-roadmap.md`](optimization-roadmap.md) §"Dense Inde
 
 ## §6. Quality vs Storage Tradeoff
 
-Per-bit-size quality targets for binary embeddings. Values are `Recall@10(binary_only)` normalised against `Recall@10(float_baseline)`. Full quality targets across `DenseIndexMode` × encoder × bit_size live in [`optimization-roadmap.md`](optimization-roadmap.md) §"Quality Targets Per Mode" and §"Per-Bit-Size Recall Targets".
+Per-bit-size quality targets for binary embeddings. **The numbers below are starting hypotheses for benchmarking, not acceptance contracts.** Full quality targets across `DenseIndexMode` × encoder × bit_size live in [`optimization-roadmap.md`](optimization-roadmap.md) §"Quality Targets Per Mode" and §"Per-Bit-Size Recall Targets"; that file carries the same hypothesis caveat.
+
+> **Hypothesis, not contract.** The numbers above are starting hypotheses for benchmarking, derived from Tissier et al. 2018 results on word-level GloVe embeddings. They MUST be re-validated separately for every target embedding model (BERT, E5, BGE) and dataset. Failure to reach these numbers does NOT indicate an implementation bug — it indicates the hypothesis needs recalibration. Recall@10 of modern sentence-transformer embeddings CANNOT be derived from Spearman correlation on WS353 or AG-News classification accuracy from 2018.
 
 ```text
-autoencoder_binarizer_128bit:
-  Recall@10(binary_only) >= 0.95 x Recall@10(float_baseline)
-  candidate_count: ~1.5x float top-K при Recall@10 = 0.95
+autoencoder_binarizer_128bit (hypothesis):
+  Recall@10(binary_only) ≈ 0.95 x Recall@10(float_baseline)    # Tissier-style extrapolation
+  candidate_count: ~1.5x float top-K при Recall@10 = 0.95      # rough heuristic
 
-autoencoder_binarizer_64bit:
-  Recall@10(binary_only) >= 0.90 x Recall@10(float_baseline)
+autoencoder_binarizer_64bit (hypothesis):
+  Recall@10(binary_only) ≈ 0.90 x Recall@10(float_baseline)
 
-random_hyperplane_lsh_64bit (baseline):
-  Recall@10(binary_only) >= 0.85 x Recall@10(float_baseline)
+random_hyperplane_lsh_64bit (baseline, hypothesis):
+  Recall@10(binary_only) ≈ 0.85 x Recall@10(float_baseline)
 
-random_hyperplane_lsh_128bit (baseline):
-  Recall@10(binary_only) >= 0.90 x Recall@10(float_baseline)
+random_hyperplane_lsh_128bit (baseline, hypothesis):
+  Recall@10(binary_only) ≈ 0.90 x Recall@10(float_baseline)
 
-Tissier 2018 results (word-level GloVe 300-dim, 2018):
+Tissier 2018 results (word-level GloVe 300-dim, 2018) — observation only:
   64-bit:  ~50% of float quality on WS353 Spearman
   128-bit: ~74% of float quality
   256-bit: ~93% of float quality, 30x retrieval speedup
@@ -256,9 +264,9 @@ Tissier 2018 results (word-level GloVe 300-dim, 2018):
 
 [Source: arXiv:1803.09065 — Tissier, Gravier, Habrard 2018] <br>[Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Бинаризация эмбеддингов для экономии памяти и ускорения retrieval.md]
 
-Storage estimates per 1M units × 768-dim:
+Storage estimates per 1M units × 768-dim (hypotheses; expected compression ratios, not validated quality targets):
 
-| Encoding | Storage | Compression vs float | Quality target |
+| Encoding | Storage | Compression vs float | Quality hypothesis |
 |---|---|---|---|
 | Float32 (baseline) | ~3.0 GB | 1× | 1.00 (ground truth) |
 | Float16 | ~1.5 GB | 2× | ~0.99 |
@@ -272,15 +280,15 @@ Storage estimates per 1M units × 768-dim:
 | Binary + decoder (AE-256, Compact) | ~32 MB + ~768 KiB decoder | ~96× | ~0.95 |
 | PQ (m=8, k=256) | ~8 MB | ~384× | ~0.95 |
 
-Decoder matrix shared across stack (one per encoder registry): ~384 KiB (`W_decoder` float32, 128-bit × 768-dim) + ~3 KiB `b_decoder` ≈ ~387 KiB per encoder registry.
+Decoder matrix shared across stack (one per encoder registry, roadmap): ~384 KiB (`W_decoder` float32, 128-bit × 768-dim) + ~3 KiB `b_decoder` ≈ ~387 KiB per encoder registry.
 
 ## §7. Compatibility with `optimization-roadmap.md`
 
-Binary embeddings slot into the existing `optimization-roadmap.md` binary-signatures bucket and the broader quantizer section.
+Binary embeddings slot into the planned `optimization-roadmap.md` binary-signatures bucket and the broader quantizer section.
 
-### 7.1. Existing Bucket
+### 7.1. Planned Bucket
 
-PR #29 bucket (existing): `binary_bucket_index` keyed by `(scope_id, projection_kind, short_key)`, posting lists of `BinaryBucketPosting { unit_id, full_signature, unit_revision, resource_generation }`. Encoder registry: `BinarySignatureEncoderRegistry` with `.bse` file format.
+Planned binary-signatures bucket (roadmap, **not yet implemented**): `binary_bucket_index` keyed by `(scope_id, projection_kind, short_key)`, posting lists of `BinaryBucketPosting { unit_id, full_signature, unit_revision, resource_generation }`. Planned encoder registry: `BinarySignatureEncoderRegistry` with `.bse` file format.
 
 ### 7.2. Quantizer Section
 
@@ -319,19 +327,21 @@ struct DenseIndexConfig {
 
 ## §8. Implementation Ladder
 
-### M0: Binary Signatures Only (PR #29 — already shipped)
+### M0: Binary Signatures Only (roadmap-only, not yet implemented)
 
-PR #29 ships:
+> **Planned API — not yet implemented.** Every symbol in the M0 list below is a roadmap item, not a shipped feature. None of `BinarySignature`, `BinarySignatureInfo`, `IBinarySignatureEncoder`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH`, `binary_bucket_index`, or `DenseIndexMode::BinaryCandidateFilter` are in `src/agent_memory/` (verified by `git ls-files 'src/agent_memory/**/*.hpp'`). Each requires its own PR; M0 here denotes the **first** PR lane, not a shipped milestone.
 
-- `BinarySignature` value type with `std::vector<std::uint64_t> words`.
-- `BinarySignatureInfo` with encoder id, model id, source projection kind.
-- `IBinarySignatureEncoder` interface.
-- `BinarySignatureEncoderRegistry` with `.bse` file format.
-- `RandomHyperplaneLSH` baseline encoder.
-- `binary_bucket_index` MDBX layout.
-- `DenseIndexMode::BinaryCandidateFilter` default production mode.
+M0 (planned scope):
 
-This guide treats M0 as the starting point.
+- `BinarySignature` value type with `std::vector<std::uint64_t> words` (Planned API).
+- `BinarySignatureInfo` with encoder id, model id, source projection kind (Planned API).
+- `IBinarySignatureEncoder` interface (Planned API).
+- `BinarySignatureEncoderRegistry` with `.bse` file format (Planned API).
+- `RandomHyperplaneLSH` baseline encoder (Planned API).
+- `binary_bucket_index` MDBX layout (Planned API).
+- `DenseIndexMode::BinaryCandidateFilter` default candidate-filter mode (Planned API).
+
+This guide treats M0 as the starting point of the roadmap.
 
 ### M1: Binary Embeddings Standalone
 
@@ -350,7 +360,7 @@ This guide treats M0 as the starting point.
 ### M2: Hybrid Binary + Dense Indexes
 
 - `DenseIndexMode::Hnsw` (`HnswVectorIndex`) — mainline M2+ backend, optionally combined with `BinaryCandidateFilter` for hybrid.
-- Hybrid retrieval: binary filter produces candidate set (Recall@10 ≥ 0.95), HNSW ranks within candidate set, dense rerank on top.
+- Hybrid retrieval: binary filter produces candidate set (Recall@10 ≥ 0.95 — hypothesis, see §6), HNSW ranks within candidate set, dense rerank on top.
 - Adaptive per-query mode selection via `RetrievalPlan::dense_index_mode_override`.
 - Multi-encoder hybrid: binary embeddings + PQ codes for finer rerank (asymmetric ADC distance).
 
@@ -358,7 +368,7 @@ This guide treats M0 as the starting point.
 
 1. **Calibration of binary quality targets.** The Tissier 2018 results are on word-level GloVe; transfer to sentence-transformer embeddings (BERT, E5, BGE, M3-Embedding) is not validated. Same open question as `memory-routing-roadmap.md` §11: does the autoencoder objective generalise from 300-dim GloVe to 768-1024 dim modern embeddings?
 2. **Comparison with ANN methods (HNSW, IVF, ScaNN).** On corpora >10M vectors, does binary embedding remain competitive, or does HNSW dominate? Benchmark-driven choice is required.
-3. **Multi-bit quantization (2-4 bits/dim).** Active research direction since 2020. Promises intermediate trade-off between binary (1 bit) and float8 (8 bits). Integration with PR #29 encoder registry: new `BinarySignatureEncoderId` value, new `.bse` encoder format, new bit-count handling in `BinarySignature`.
+3. **Multi-bit quantization (2-4 bits/dim).** Active research direction since 2020. Promises intermediate trade-off between binary (1 bit) and float8 (8 bits). Integration with the planned binary-signatures encoder registry: new `BinarySignatureEncoderId` value, new `.bse` encoder format, new bit-count handling in `BinarySignature`.
 4. **Multilingual and code-model embeddings.** Structure of semantic space differs from GloVe/fasttext. Does Tissier 2018's `MSE + decorrelation penalty` objective still work for multilingual and code embeddings?
 5. **LLM-based hashing.** Frozen LLM + hash head vs joint fine-tuning. Trade-off: training cost vs code quality. No public benchmark comparing both approaches on retrieval metrics (mAP, NDCG).
 6. **Adversarial robustness.** Small text edit (paraphrase, synonym swap) can radically change binary code. How robust is binary coarse-filter for production RAG with paraphrased queries?
