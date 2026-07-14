@@ -96,7 +96,7 @@ Default chunker — это baseline, который работает для **ge
 - `$ref` resolution устраняет forward-reference ambiguity.
 - API metadata (path, method, params, response codes) доступны как structured payload.
 
-В нашем стеке chunker парсит YAML/JSON, разворачивает `$ref`, отбрасывает `components`, и для каждого `(path, method)` эмитит `ChunkPayload` с `byte_offset`, `byte_length`, `heading_path = [<api_title>]`, `symbols = [<method_name>]`.
+В нашем стеке chunker парсит YAML/JSON, разворачивает `$ref`, отбрасывает `components`, и для каждого `(path, method)` эмитит `ChunkPayload` со структурным идентификатором и metadata (см. §7 «OpenAPI chunk metadata contract»).
 
 ### 3.2. Markdown
 
@@ -198,8 +198,10 @@ Domain-specialized chunker'ы оптимизированы под конкрет
 ```text
 Подход: regex по «Статья N», «N.» → TextChunk + metadata.
         Citation пишется в заголовок чанка.
-        UUID5 (source + chunk_index) обеспечивает идемпотентность.
+        UUID5 (source + structural_path) обеспечивает structural-identity.
 ```
+
+> **Не путать с UUID5(source + chunk_index).** Базовая UUID5(source + chunk_index) FRAGILE: добавление новой статьи в начало документа сдвигает все downstream chunk_indexes → все downstream identities меняются → не годно для legal/regulatory, где требуется стабильность при insert-points. См. §7.2 «Two chunk identity strategies».
 
 Ключевые решения (тот же источник):
 
@@ -316,7 +318,13 @@ PDF → Docling.parse() → chunks + extracted images + audio transcripts
               SearchProjection(text=chunk + image_captions)
 ```
 
-Chunk contextualization API Docling даёт `chunk.contextualize(doc)` — это **именно** Anthropic Contextual Retrieval встроенный в парсер.
+### Two distinct contextualization strategies
+
+`Docling`'s `chunk.contextualize(doc)` — **structural contextualization**: сериализует headings, captions, table captions, image references, parent hierarchy в текстовое представление, присоединяемое как prefix к chunk. Это deterministic, local, **без вызова LLM**.
+
+`Anthropic Contextual Retrieval` (Anthropic, 2024-09-19) — отдельная техника: вызывает LLM (default Haiku) для генерации 50–100-токенового free-form explaining prefix per chunk, с prompt caching для cost efficiency.
+
+Две техники **не эквивалентны**. Композиция возможна: Docling chunk → optional Anthropic-style LLM enrichment → index.
 
 ## §5. Context-Enrichment Strategies
 
@@ -451,6 +459,46 @@ Trade-offs:
 | `used_ocr` | metadata_typed | для PDF/OCR provenance (Legal-RAG pattern) |
 
 Без `source`/`version`/`structure_path` chunk не может быть retrieved в hybrid search (BM25F по полям требует структурированной разметки). Без `contextual_summary` chunk не может участвовать в Anthropic-style enrichment (если такая enrichment будет применяться).
+
+### 7.1. OpenAPI chunk metadata contract
+
+После `$ref`-resolution + удаления секции `components`, chunk больше **не является contiguous range** исходного файла. Внутренний `$ref` может ссылаться на контент из разных секций, разных файлов, или shared across endpoints.
+
+Используйте **JSON Pointer** как идентификатор chunk, например:
+- `/paths/~1users/get` — указывает на resolved `get` operation на `/users`
+- `/components/schemas/User` — указывает на resolved schema component
+
+Каждый chunk несёт:
+- `json_pointer` — расположение в **fully dereferenced OpenAPI document** (in-memory или reconstructed YAML/JSON, не исходный файл)
+- `source_path` — путь к оригинальному `.yaml`/`.json` файлу
+- `source_section_anchor` — YAML/JSON pointer в **ORIGINAL** source для citation (может отличаться от chunk-pointer)
+- `structural_kind` — один из `path`, `operation`, `schema`, `parameter`, `requestBody`, `response`, и т.д.
+
+**НЕ используйте** `byte_offset` + `byte_length` для chunks, произведённых после `$ref`-resolution. Они будут ложно cite'ить другое место.
+
+### 7.2. Two chunk identity strategies
+
+Выберите **одну** per chunk kind; не смешивайте без явной пометки.
+
+**Stable structural identity** (рекомендуется для legal, regulatory, codified documents):
+
+```
+UUID5(document_id + structural_path)   // e.g., UUID5(doc_id, "/article/5/point/3")
+```
+
+Insert в середине документа **НЕ** сдвигает существующие identities. Content edits получают новую identity by intent.
+
+**Content identity** (рекомендуется для source code, transcripts, dynamic corpora):
+
+```
+UUID5(hash(structural_path + normalized_content))
+```
+
+Content edits создают новую identity. Стабилен при повторных run'ах с идентичным content.
+
+**Baseline (fragile)**: `UUID5(source + chunk_index)` подходит для stable-by-construction corpora, где segmentation никогда не сдвигается (редко). Это **НЕ** robust general strategy.
+
+Выбирайте исходя из того, должны ли insert-points быть стабильны или должен ли content hash быть стабилен. Задокументируйте выбор per chunk kind в contract'е `knowledge-units-roadmap.md`.
 
 ## §8. Implementation Ladder
 
