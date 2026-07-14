@@ -25,7 +25,7 @@ Related roadmaps:
 
 ## §1. Purpose
 
-> **Proposed API sketch — not implemented.** Имена `HybridRetriever`, `IQueryTransformer`, `RetrievalPlan.retrievers[]` и связанные контракты в этом разделе иллюстративны и не существуют в текущей кодовой базе в этом виде. Реальные типы — `HybridRetrievalEngine`, `IRetriever` и `HybridRetrievalConfig`. Не полагайтесь на эти имена до утверждения ADR.
+> **Three tiers of API references in this doc.** (1) **Real** (есть в `src/agent_memory/`): `HybridRetrievalEngine`, `IRetriever`. (2) **Planned API — not yet implemented.** Определены как roadmap-структуры в `memory-stacks-roadmap.md` §13 / `policies-roadmap.md` / `lexical-search-roadmap.md`, но не в actual code: `HybridRetrievalConfig`, `IQueryTransformer`, `IAsyncIndexer`, `RetrievalPlan`. (3) **Proposed API sketch — not implemented.** Иллюстративные имена/методы/поля, не зафиксированные ни в каком ADR: `HybridRetriever` (≠ `HybridRetrievalEngine`), `RetrievalPlan.retrievers[]`, `WeightedMax`/`Learned` fusion names. Не полагайтесь на эти имена до утверждения ADR.
 
 Этот документ предназначен для трёх целей:
 
@@ -301,7 +301,7 @@ Both-PRF:
 
 ### 6.3. Применимость к нашему стеку
 
-> **Proposed API sketch — not implemented.** `HybridRetriever` как orchestrator-контракт иллюстративен; реальный тип — `HybridRetrievalEngine`. Fusion strategy names `WeightedMax`/`Learned` — placeholder'ы для будущего API.
+> **Real** (есть в code): `HybridRetrievalEngine` (`src/agent_memory/retrieval/HybridRetrievalEngine.hpp`) — orchestrator для fusion. **Proposed API sketch — not implemented.** `HybridRetriever` (без `Engine`) и fusion-strategy names `WeightedMax`/`Learned` — placeholder'ы для будущего API, не зафиксированы в ADR.
 
 RRF (Reciprocal Rank Fusion) — у нас по умолчанию для `HybridRetriever` (см. `knowledge-base-roadmap.md` §7.3). Linear interpolation с α — `WeightedMax` или `Learned` fusion варианты в M2+.
 

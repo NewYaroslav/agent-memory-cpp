@@ -266,7 +266,7 @@ Non-goals:
 
 Эти архитектуры естественно ложатся на наш стек — capability flags уже предусмотрены ADR или близки к существующим `MemoryProfileSpec`.
 
-> **Proposed API sketch — not implemented.** `HybridRetriever` и `GraphRetriever` в этой таблице — illustrative orchestrator-имена для описания архитектурного паттерна. Реальный тип — `HybridRetrievalEngine` (`src/agent_memory/retrieval/HybridRetrievalEngine.hpp`). Capability-флаги (`Lexical + DenseVectors + GraphRelations`) — также proposed.
+> **Real** (есть в code): `HybridRetrievalEngine` (`src/agent_memory/retrieval/HybridRetrievalEngine.hpp`). **Proposed API sketch — not implemented.** `HybridRetriever` и `GraphRetriever` в этой таблице — illustrative orchestrator-имена для описания архитектурного паттерна; реальный тип — `HybridRetrievalEngine`. Capability-флаги (`Lexical + DenseVectors + GraphRelations`) — также proposed, не зафиксированы в ADR.
 
 | Архитектура | Что подходит | Capability соответствие |
 |---|---|---|

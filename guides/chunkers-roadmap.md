@@ -224,7 +224,6 @@ class LegalChunkMetadata:
 Преимущества:
 
 - **Citation в начале чанка** → LLM сразу видит, на какой пункт ссылается.
-- **UUID5 от source + chunk_index** → повторная индексация заменяет, а не добавляет.
 - **OCR fallback** для сканов: PyMuPDF + Tesseract (`min_text_chars_per_page=50` порог).
 - **recreate_collection flag** для bulk reindex.
 
@@ -453,12 +452,12 @@ Trade-offs:
 | `content` | ChunkPayload (body, code_blocks) | chunk text + extracted code |
 | `contextual_summary` | SearchProjection extension | Anthropic-style chunk enrichment (опционально, M2+) |
 | `chunk_index` | metadata_typed | позиция в исходном документе (для UUID5 дедупликации) |
-| `byte_offset` / `byte_length` | ChunkPayload | exact source range |
+| `byte_offset` / `byte_length` | ChunkPayload | Exact source range **where representable**; absent for chunks produced by transformation (e.g., after `$ref`-resolution in OpenAPI) or for non-contiguous chunks. |
 | `symbols` | ChunkPayload | extracted identifiers / class names |
 | `detected_language` | ChunkPayload | для morphology backend selection |
 | `used_ocr` | metadata_typed | для PDF/OCR provenance (Legal-RAG pattern) |
 
-Без `source`/`version`/`structure_path` chunk не может быть retrieved в hybrid search (BM25F по полям требует структурированной разметки). Без `contextual_summary` chunk не может участвовать в Anthropic-style enrichment (если такая enrichment будет применяться).
+Без `source`, `version` и `structure_path` retrieval технически возможен (lexical / dense / hybrid search по content), но provenance-affecting операции (corpus update propagation, field-aware scoring, citation generation, filtered search по source) будут неполными. `source`/`version`/`structure_path` — RECOMMENDED, не строго обязательны для retrieval. Без `contextual_summary` chunk не может участвовать в Anthropic-style enrichment (если такая enrichment будет применяться).
 
 ### 7.1. OpenAPI chunk metadata contract
 
@@ -476,27 +475,33 @@ Trade-offs:
 
 **НЕ используйте** `byte_offset` + `byte_length` для chunks, произведённых после `$ref`-resolution. Они будут ложно cite'ить другое место.
 
-### 7.2. Two chunk identity strategies
+### 7.2. Three identity models (do not mix without explicit note)
 
-Выберите **одну** per chunk kind; не смешивайте без явной пометки.
+Three distinct chunk-identity strategies exist. Pick one per chunk kind; mixing требует явной пометки в chunk contract.
 
-**Stable structural identity** (рекомендуется для legal, regulatory, codified documents):
+| Model | Formula | Stable against | Breaks on | Use case |
+|---|---|---|---|---|
+| **Position** (baseline, fragile) | `UUID5(source + chunk_index)` | Re-indexing of identical segmentation | Insert-points shift; segmentation changes | Stable-by-construction corpora only (rare) |
+| **Structural** | `UUID5(document_id + structural_path)` | Insert-points; intra-document restructuring | Content edits (handled by revision bump, not identity change) | Legal, regulatory, codified documents |
+| **Content** | `UUID5(document_id + structural_path + normalized_content_hash)` | Re-runs with identical content | Any content edit (intended) | Source code, transcripts, dynamic corpora |
+
+**Structural identity** (рекомендуется для legal, regulatory, codified documents):
 
 ```
 UUID5(document_id + structural_path)   // e.g., UUID5(doc_id, "/article/5/point/3")
 ```
 
-Insert в середине документа **НЕ** сдвигает существующие identities. Content edits получают новую identity by intent.
+Insert в середине документа **НЕ** сдвигает существующие identities. Content edits: identity stays, revision increments, content hash changes; treat content hash as separate field. Identity change зарезервирован для structural rewrites (section renumbering, re-anchoring), не для typo-fixes.
 
 **Content identity** (рекомендуется для source code, transcripts, dynamic corpora):
 
 ```
-UUID5(hash(structural_path + normalized_content))
+UUID5(document_id + structural_path + normalized_content_hash)
 ```
 
-Content edits создают новую identity. Стабилен при повторных run'ах с идентичным content.
+Content edits создают новую identity. Стабилен при повторных run'ах с идентичным content. `normalized_content_hash` — separate field в metadata, не часть UUID5 byte-representation.
 
-**Baseline (fragile)**: `UUID5(source + chunk_index)` подходит для stable-by-construction corpora, где segmentation никогда не сдвигается (редко). Это **НЕ** robust general strategy.
+**Position identity (baseline, fragile)**: `UUID5(source + chunk_index)` подходит для stable-by-construction corpora, где segmentation никогда не сдвигается (редко). Это **НЕ** robust general strategy: добавление новой статьи в начало документа сдвигает все downstream `chunk_index` → все downstream identities меняются → не годно для legal/regulatory, где требуется стабильность при insert-points.
 
 Выбирайте исходя из того, должны ли insert-points быть стабильны или должен ли content hash быть стабилен. Задокументируйте выбор per chunk kind в contract'е `knowledge-units-roadmap.md`.
 
@@ -516,7 +521,8 @@ Content edits создают новую identity. Стабилен при пов
 
 ### 8.2. M1 (Production)
 
-> **Proposed API sketch — not implemented.** Bullet'ы этой секции, ссылающиеся на `IResourceAdapter.preprocess` и `IResourceAdapter` контракт, — illustrative (см. §3.5 disclaimer).
+> **Planned API — not yet implemented.** `IResourceAdapter` контракт — фиксируется в `memory-stacks-roadmap.md` §13 как runtime-services interface. В этой секции упоминается как место подключения pre-indexing hook'ов.
+> **Proposed API sketch — not implemented.** `IResourceAdapter.preprocess` — placeholder имя hook'а в этом контракте (см. §3.5 disclaimer).
 
 Дополнительно:
 
