@@ -370,6 +370,8 @@ public:
 - `AntiLoopCooldown` — фильтр перед scoring, пропускает units с `cooldown_until_ms > now_ms`.
 - `IntentRouter` — pre-router, классифицирует query и выбирает retrievers.
 
+See [`retrieval-techniques-roadmap.md`](retrieval-techniques-roadmap.md) for advanced retrieval beyond Naive RAG: GraphRAG, Event-based RAG, multimodal VLM, deterministic RAG (LangGraph state machines), RLM as alternative to RAG.
+
 ### 7.3. RetrievalHit и Hybrid Fusion (RRF)
 
 ```cpp

@@ -766,6 +766,8 @@ unit.
 
 ## Future Search Layers
 
+See [`retrieval-techniques-roadmap.md`](retrieval-techniques-roadmap.md) for broader retrieval techniques beyond BM25: learned sparse (SPLADE), late-interaction (ColBERT), hybrid PRF interpolation timing, contextual retrieval, adaptive routing, graph-based retrieval, RLM.
+
 ### Boolean Search
 
 Support `AND`, `OR`, and `NOT` as an exact filtering layer. This is useful for
