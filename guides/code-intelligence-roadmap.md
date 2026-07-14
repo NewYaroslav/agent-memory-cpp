@@ -611,6 +611,8 @@ Each pattern introduces (or assumes) a small set of build dependencies:
 - **Pattern 9 (Adaptive-poll watcher):** nothing new; cross-platform
   errno mapping in `<errno.h>` / `<errno>` only.
 
+See also [`memory-routing-roadmap.md`](memory-routing-roadmap.md) for the broader memory-routing context (Adaptive RAG no-LLM, DLP-style profiling).
+
 ## 4. Implementation order
 
 This section uses three orthogonal priority axes:
