@@ -92,31 +92,22 @@ IDF(t) = log( (N - n(t) + 0.5) / (n(t) + 0.5) + 1 )
 
 ### 3.2. BM25F (multi-field)
 
-BM25F — multi-field extension BM25 (Robertson & Zaragoza 2009). В нашем стеке `SearchProjection` заполняет несколько полей (title/heading/body/code/tag/symbol/meta/qa_q/qa_a/summary), и BM25F применяет per-field weights. Формула скопирована из того же источника:
+BM25F — multi-field extension BM25 (Pérez-Iglesias et al. 2009; Zaragoza et al. 2009, "The BM25F"). В нашем стеке `SearchProjection` заполняет несколько полей (title/heading/body/code/tag/symbol/meta/qa_q/qa_a/summary), и BM25F применяет per-field weights.
 
-```text
-1. Per-field accumulated weight:
-   w_d(t) = Σ_{i ∈ fields} boost_i · ( f_i(t,d) · (k₁ + 1) ) / ( f_i(t,d) + k_i · (1 - b_i + b_i · |d_i|/avgdl_i) )
+**Канонический BM25F контракт и формула** — в `lexical-search-roadmap.md` §Projection-Weighted BM25F Scoring (там же `LexicalFieldWeights` struct). Наш pipeline не воспроизводит пользовательскую нестандартную BM25F-формулу здесь; см. также Thakur et al. BEIR (arXiv:2104.08663) для бенчмарк-номенклатуры.
 
-2. Non-linear saturation (формула 1):
-   final_weight(t) = w_d(t) / (1 + w_d(t))
+Per-field параметры `k_i`, `b_i`, boost определяются в `LexicalFieldWeights`.
 
-3. Final score:
-   score_BM25F(q, d) = Σ_{t ∈ q} IDF(t) · final_weight(t)
-```
+Контраст BM25 vs BM25F vs learned sparse приведён в источнике (`ai-agent-playbook/concepts/rag-knowledge/BM25 и BM25F — формулы и reference implementation.md`); точные численные показатели на BEIR сильно зависят от набора данных, версии модели, fine-tuning, retrieval depth и reranker'а — point estimates не приводятся:
 
-Per-field параметры `k_i`, `b_i`, boost. У `agent-memory-cpp` per-projection-kind weights задаются в `LexicalFieldWeights` struct (`lexical-search-roadmap.md` §Projection-Weighted BM25F Scoring).
+| Approach | BEIR nDCG@10 (variability) |
+|----------|---------------------------|
+| BM25 | Highly variable across datasets, often good baseline |
+| SPLADE | Often improves over BM25, particularly on technical text |
+| Dense (bi-encoder) | Strong on semantic similarity, weaker on exact term matching |
+| ColBERT (late interaction) | Often top-quality but ~100-1000× more expensive than BM25 |
 
-Контраст BM25 vs BM25F vs learned sparse приведён в источнике (`ai-agent-playbook/concepts/rag-knowledge/BM25 и BM25F — формулы и reference implementation.md`):
-
-```text
-| Класс       | Storage per doc | Quality (BEIR nDCG@10) | Speed      | Multi-field awareness |
-| BM25        | low             | 0.42                   | very fast  | no                    |
-| BM25F       | low             | varies                 | fast       | yes                   |
-| SPLADE      | low+weights     | 0.48–0.51              | fast       | medium (query-level)  |
-| Dense       | medium (vector) | 0.50–0.55              | medium     | no                    |
-| ColBERT     | high            | 0.52–0.56              | medium-slow| no                    |
-```
+Exact values depend on specific BEIR datasets, model versions, fine-tuning, retrieval depth, and reranking. See Thakur et al. arXiv:2104.08663 and the BEIR leaderboard for ranges, not point estimates.
 
 ### 3.3. Learned sparse (SPLADE family)
 
@@ -266,7 +257,7 @@ Storage estimate (illustrative, не из playbook): 1M units × 32 tokens × 12
 
 ### 5.4. Когда выбирать late-interaction
 
-Из `ai-agent-playbook/concepts/rag-knowledge/BM25 и BM25F — формулы и reference implementation.md` trade-off таблицы: ColBERT даёт quality 0.52-0.56 BEIR nDCG@10 при storage cost high.
+Из `ai-agent-playbook/concepts/rag-knowledge/BM25 и BM25F — формулы и reference implementation.md` trade-off таблицы: ColBERT даёт top-quality на BEIR (см. таблицу в §3.2 для variability) при storage cost high.
 
 У нас в стеке late-interaction — **M2+ optional backend**, не входит в M0/M1 budget. Если нужна late-interaction quality, она ставится через `IAdapter` контракт (`memory-stacks-roadmap.md` §13 Runtime Services).
 
