@@ -229,12 +229,29 @@ class LegalChunkMetadata:
 
 В нашем стеке:
 
-> **Proposed API sketch — not implemented.** `IResourceAdapter.preprocess` — illustrative; см. §3.5 disclaimer. `KnowledgeUnitKey = (kind, scope, ContentHash)` определён в `knowledge-units-roadmap.md` и реально существует.
+> **Proposed API sketch — not implemented.** `IResourceAdapter.preprocess` — illustrative; см. §3.5 disclaimer.
 
 - `LegalChunkMetadata.source` ↔ `envelope.sources[].uri` (SourceRef, см. `knowledge-units-roadmap.md` §3).
 - `LegalChunkMetadata.citation` ↔ chunk header text.
-- UUID5 ↔ `KnowledgeUnitKey = (kind, scope, ContentHash)` (`knowledge-units-roadmap.md` §4.2) для dedupe.
+- UUID5 ↔ `StructuralChunkKey = UUID5(document_id + structural_path)` (`knowledge-units-roadmap.md` §4.2) — stable identity across re-runs.
+- `ContentHash` ↔ `hash(normalized_content)` — отдельное indexable поле для dedupe и "did this section change?" check.
+- `KnowledgeUnitId` ↔ monotonic internal ID (per-document counter) — foreign-key для cross-table joins.
+- `revision` ↔ monotonic, bumped on content edit — optimistic concurrency при сохранении identity.
 - OCR ↔ `IResourceAdapter.preprocess` hook.
+
+Четыре ключа, четыре цели — не interchangeable:
+
+| Key                 | Formula                                       | When it changes                       | Use case                              |
+|---------------------|-----------------------------------------------|---------------------------------------|---------------------------------------|
+| `StructuralChunkKey`| `UUID5(document_id + structural_path)`        | structural path renumbering           | stable identity across re-runs        |
+| `ContentHash`       | `hash(normalized_content)`                    | any content change                    | deduplication, "did this change?"     |
+| `KnowledgeUnitId`   | monotonic internal ID                         | never (per-document counter)         | foreign-key for cross-table joins     |
+| `revision`          | monotonic, bumped on content edit             | content edit (with same identity)     | optimistic concurrency                |
+
+- `StructuralChunkKey` определяется pure-structural inputs (document_id + structural_path). Меняется **только** на structural rewrites (path renumbering, re-anchoring, semantic replacement), не на typo-fixes.
+- `ContentHash` — BOTH входной component `Content`-identity UUID5 AND отдельный indexable field для fast lookup без recompute (см. §7.2 «Content identity»).
+- `KnowledgeUnitId` — opaque monotonic ID; не используется как identity predicate (не меняется при контент-редакциях), но даёт cheap join target.
+- `revision` — per-chunk counter; bumps on any content-bearing change, инкрементируется параллельно с identity-preserving операциями (structural key остаётся стабильным).
 
 ### 4.2. Decompiled Code (Smart3D pattern)
 
@@ -482,7 +499,7 @@ Three distinct chunk-identity strategies exist. Pick one per chunk kind; mixing 
 | Model | Formula | Stable against | Breaks on | Use case |
 |---|---|---|---|---|
 | **Position** (baseline, fragile) | `UUID5(source + chunk_index)` | Re-indexing of identical segmentation | Insert-points shift; segmentation changes | Stable-by-construction corpora only (rare) |
-| **Structural** | `UUID5(document_id + structural_path)` | Insert-points; intra-document restructuring | Content edits (handled by revision bump, not identity change) | Legal, regulatory, codified documents |
+| **Structural** | `UUID5(document_id + structural_path)` | Insert-points; intra-document restructuring | **Stable against:**<br>• insertions in other parts of the document;<br>• content edits of the same logical section (revision bumps, identity stays).<br><br>**Identity changes on:**<br>• structural path renumbering (article removed/renumbered);<br>• re-anchoring (section moves);<br>• logical section replacement (semantic identity change). | Legal, regulatory, codified documents |
 | **Content** | `UUID5(document_id + structural_path + normalized_content_hash)` | Re-runs with identical content | Any content edit (intended) | Source code, transcripts, dynamic corpora |
 
 **Structural identity** (рекомендуется для legal, regulatory, codified documents):
@@ -499,7 +516,13 @@ Insert в середине документа **НЕ** сдвигает суще
 UUID5(document_id + structural_path + normalized_content_hash)
 ```
 
-Content edits создают новую identity. Стабилен при повторных run'ах с идентичным content. `normalized_content_hash` — separate field в metadata, не часть UUID5 byte-representation.
+Content edits создают новую identity. Стабилен при повторных run'ах с идентичным content. `normalized_content_hash` is BOTH part of the UUID5 input AND stored as a separate indexable field on the chunk (separate-lookup полезно для dedupe-without-recompute и "did this section change?" check).
+
+**Content edit semantics:**
+
+- content change → content_hash changes → UUID5 input changes → new identity;
+- structural_path or document_id change → UUID5 input changes → new identity;
+- insertion elsewhere in the document → none of the inputs change → identity stable.
 
 **Position identity (baseline, fragile)**: `UUID5(source + chunk_index)` подходит для stable-by-construction corpora, где segmentation никогда не сдвигается (редко). Это **НЕ** robust general strategy: добавление новой статьи в начало документа сдвигает все downstream `chunk_index` → все downstream identities меняются → не годно для legal/regulatory, где требуется стабильность при insert-points.
 

@@ -1,6 +1,6 @@
 # Retrieval Techniques Roadmap
 
-> C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо `std::span` и явные конструкторы вместо designated initializers. BM25 и BM25F-формулы скопированы **verbatim** из источника `ai-agent-playbook/concepts/rag-knowledge/BM25 и BM25F — формулы и reference implementation.md` для traceability; мы не «улучшаем» математику, а документируем контракт поверх нашего pipeline.
+> C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо `std::span` и явные конструкторы вместо designated initializers. BM25 formula cited verbatim из источника `ai-agent-playbook/concepts/rag-knowledge/BM25 и BM25F — формулы и reference implementation.md` для traceability. BM25F formula — see `lexical-search-roadmap.md` для canonical BM25F contract и cross-references; мы не «улучшаем» математику, а документируем контракт поверх нашего pipeline.
 
 ## Source attribution policy
 
