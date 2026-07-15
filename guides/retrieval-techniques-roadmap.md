@@ -39,6 +39,8 @@ Non-goals:
 - Не задавать `MemoryProfileSpec` defaults. Техники выбираются через `RetrievalPlan.retrievers[]` + `HybridRetrievalConfig`.
 - Не описывать infra (vector DB выбор, GPU/CPU trade-offs) — это в `optimization-roadmap.md`.
 
+See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadmap.md) for the conceptual framing of what good retrieval preserves (numbers, commands, constraints, exceptions, provenance) and [`vector-db-engineering-roadmap.md`](vector-db-engineering-roadmap.md) for the vector-store decision matrix.
+
 ## §2. Typology
 
 8 классов retrieval techniques по `ai-agent-playbook/concepts/rag-knowledge/11 RAG стратегий — спектр и комбинации.md` и `ai-agent-playbook/concepts/rag-knowledge/Типы RAG - от Naive до Agentic.md`:

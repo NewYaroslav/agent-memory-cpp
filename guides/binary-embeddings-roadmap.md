@@ -407,6 +407,8 @@ This guide treats M0 as the starting point of the roadmap.
 
 ## §10. Composite compression (MRL + PQ / INT8 / binary)
 
+See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadmap.md) for the conceptual framing (cross-entropy, prefix-free codes, "what good compression preserves") and the §10 Composite compression table for MRL+INT8 / MRL+PQ / MRL+binary multipliers.
+
 Одна техника сжатия (MRL truncate, INT8, PQ, binary) обычно **не** достигает жёстких storage / latency targets в одиночку. Composite compression (stacking multipliers) даёт 12-96× memory savings на production corpora при мониторинге quality. Этот раздел систематизирует совместимость и реалистичные multipliers.
 
 [Source: arXiv:2205.13147 — Kusupati et al. 2022, Matryoshka Representation Learning]
