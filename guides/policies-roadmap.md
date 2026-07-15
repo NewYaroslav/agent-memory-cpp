@@ -359,7 +359,7 @@ score(unit) = sum_r (weight_r / (k_constant + rank_r))
 - **Learned:** ML-модель учит веса на основе feedback (M2+).
 - **Planner:** RLM-style recursive planner — LLM-driven выбор retriever'ов (M2+ research).
 
-See [`memory-routing-roadmap.md`](memory-routing-roadmap.md) for three routing paradigms (RFF-density pre-filter, Adaptive RAG no-LLM, DLP-style profiling axes) and how they integrate with the MDBX layer.
+See [`memory-routing-roadmap.md`](memory-routing-roadmap.md) for two routing paradigms plus one routing-adjacent profiling layer (RFF-density pre-filter, Adaptive RAG no-LLM, DLP-style profiling axes) and how they integrate with the MDBX layer.
 
 ## 7. Defaults Summary Table
 
