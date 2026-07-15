@@ -222,7 +222,7 @@ Planned binary signatures vs planned binary embeddings — two sides of the same
 | **Storage** | `(scope_id, projection_kind, short_key)` bucket index | Optional embedding storage tier (binary only / binary + decoder) |
 | **Encoder** | `RandomHyperplaneLSH` baseline + `AutoencoderBinarizer` M2+ | Multiple encoders (sign, LSH, autoencoder, PQ, RotSQ) |
 | **Reconstruction** | None (fingerprint only) | Optional decoder for `ApproximateVector` mode |
-| **Quality target** | Coarse filter: Recall@10 ≥ 0.95 (binary + float rerank, hypothesis) | Standalone: Recall@10 ≥ 0.95 (256+ bits, hypothesis); binary-only: ≥ 0.85 (hypothesis) |
+| **Quality hypothesis** | Coarse filter: Recall@10 ≈ 0.95 (binary + float rerank, hypothesis) | Standalone: Recall@10 ≈ 0.95 (256+ bits, hypothesis); binary-only: ≈ 0.85 (hypothesis) |
 | **Use in `DenseIndexMode`** | `BinaryCandidateFilter` (planned default) | `BinaryCandidateFilter` / `BinaryOnly` / `ApproximateVector` |
 
 The binary-signatures roadmap is **the first slice** of the binary embeddings roadmap. It plans to establish the encoder registry, signature value types, and bucket index. Binary embeddings roadmap **extends** that into:
@@ -360,7 +360,7 @@ This guide treats M0 as the starting point of the roadmap.
 ### M2: Hybrid Binary + Dense Indexes
 
 - `DenseIndexMode::Hnsw` (`HnswVectorIndex`) — mainline M2+ backend, optionally combined with `BinaryCandidateFilter` for hybrid.
-- Hybrid retrieval: binary filter produces candidate set (Recall@10 ≥ 0.95 — hypothesis, see §6), HNSW ranks within candidate set, dense rerank on top.
+- Hybrid retrieval: binary filter produces candidate set (Recall@10 ≈ 0.95 — hypothesis, see §6), HNSW ranks within candidate set, dense rerank on top.
 - Adaptive per-query mode selection via `RetrievalPlan::dense_index_mode_override`.
 - Multi-encoder hybrid: binary embeddings + PQ codes for finer rerank (asymmetric ADC distance).
 
