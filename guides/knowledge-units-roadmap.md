@@ -270,6 +270,8 @@ Migration запускается отдельной утилитой (`agent-mem
 
 `KnowledgeUnitId` обязателен для map key, `envelope.id`, `projection.unit_id`, `RetrievalHit.unit_id` и любых cross-reference (anchor_unit_id, superseded_by, derived_from).
 
+See [`usage-llm-wiki.md`](usage-llm-wiki.md) for how KnowledgeUnit storage can back an LLM Wiki's `raw/` and `wiki/` partitions.
+
 ## 5. Per-Kind Specifications
 
 Детальная спецификация payload-компонентов для каждого kind с dedicated payload. Per-kind `primary_text` rules и projections.

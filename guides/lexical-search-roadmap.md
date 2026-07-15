@@ -337,6 +337,8 @@ If a query repeats a term, the first implementation may either de-duplicate
 query terms or count query term frequency explicitly. Pick one behavior and test
 it before exposing tuning options.
 
+See [`usage-memory-models.md`](usage-memory-models.md) for a comparison of memory-only architectures (block-of-facts vs RAG vs hybrid).
+
 ## Search Contracts
 
 Planned dependency-free contracts:
