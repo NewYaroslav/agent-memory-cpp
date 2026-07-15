@@ -390,6 +390,8 @@ Decay / Write / Speaker policies: см.
 Runtime services (PromptPrefixCache + ResponseCache / AsyncIndexer / WriteGate):
 см. [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md).
 
+See [`usage-memory-models.md`](usage-memory-models.md) for practitioner guidance on memory model choice; see [`memory-architectures-roadmap.md`](memory-architectures-roadmap.md) for the underlying comparison framework.
+
 ## Profile Migration Strategy
 
 In-place minor upgrade (additive capability) vs major migration (новая БД).

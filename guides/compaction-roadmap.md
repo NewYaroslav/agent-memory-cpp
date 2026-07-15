@@ -97,6 +97,8 @@ Lifecycle контракт:
 
 Worker может быть запущен явно через `worker.start()` если приложение хочет запустить предварительный decay sweep до первого write (например, для восстановления индексов после cold start).
 
+See [`usage-llm-wiki.md`](usage-llm-wiki.md) for using `CompactionWorker` as the daily-flush / synthesis engine in a Karpathy-style LLM Wiki on top of `agent-memory-cpp`.
+
 ### 2.4. CompactionStats
 
 ```cpp

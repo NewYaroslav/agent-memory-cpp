@@ -725,6 +725,8 @@ inline MemoryProfileSpec FullResearchMemory() {
 }
 ```
 
+See [`usage-memory-models.md`](usage-memory-models.md) for an operator decision guide on choosing between Karpathy 3-layer, A-MEM, lifemodel, NOUZ, Mem0/Letta/Zep, Блок фактов, and dual-layer patterns for your workload.
+
 ## 9. Capability Matrix
 
 | Capability | BasicRag | QAKB | AgentLTM | SpeakerChat | CompiledWiki | TemporalFact | FullResearch |
