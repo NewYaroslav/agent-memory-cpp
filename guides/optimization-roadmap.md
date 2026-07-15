@@ -1179,6 +1179,8 @@ Tradeoff vs BinaryCandidateFilter:
   - HNSW: лучше quality для high-recall (>0.97), random access slow.
   - BinaryCF: лучше для batch rerank + structured filtering.
 
+See [`binary-embeddings-roadmap.md`](binary-embeddings-roadmap.md) for binary embeddings (extending PR #29 binary signatures to general semantic-preserving quantizers; XOR + POPCNT SIMD distance; quality vs storage tradeoff at 64/128/256/512 bits per dim).
+
 ## RFF KDE Semantic Router (experimental, pre-retrieval)
 
 ### Source
