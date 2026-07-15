@@ -462,49 +462,6 @@ CLAUDE.md / AGENTS.md → not stored in MDBX; lives in repo or vault
 
 DBI shapes are detailed in [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §12.
 
-### §6.10. Audit log (separate from job queue)
-
-Job queues and audit logs are DIFFERENT substrates:
-
-- **compaction_jobs DBI**: per-job state (queued → running → done → failed). MAY be deleted after retention window. Mutable.
-- **compaction_handoffs DBI**: technical completion records (which worker, when, what version). Mutable.
-
-For human-reviewable LLM Wiki, **the audit log must be append-only** with:
-
-```
-run_id
-input unit IDs + revisions (the "derived_from" set)
-prompt/template version
-model ID
-generated_draft hash (content hash, not the full draft)
-validation result + comparison vs derived_from evidence
-reviewer decision (auto / human)
-activated article revision (or rejection)
-superseded source IDs (set, not just count)
-timestamp (RFC3339, monotonic)
-```
-
-Treat this audit as immutable. Do not retroactively edit; if changes are needed, append a corrective record.
-
-A separate table (e.g., `wiki_audit_log`) is the canonical source. Job DBI is operational; audit DBI is governance.
-
-### §6.11. Authorization before fusion
-
-Cross-scope retrieval ("scope A + scope B" queries) bypasses the implicit per-tenant isolation that single-scope queries preserve. Without explicit authorization, fusion can turn a namespace into a ranking hint instead of a security boundary.
-
-Rules:
-
-- Authorization determines the **allowed scope set** BEFORE retrieval begins.
-- Fusion operates ONLY inside the pre-authorized set. Out-of-scope fusion is a security failure, not a quality issue.
-- Metadata filters and ranking MUST NOT expand access. They can only narrow.
-- Mem0-style tags (`user_id`, `agent_id`, `run_id`, `app_id`) are access-control, NOT search relevance.
-
-When configuring a MemoryStack that fuses multiple scopes:
-
-- Default to empty scope set (refuse by default).
-- Authorization is required to add scopes.
-- Audit each cross-scope query (request_id → scope_set → result_ids).
-
 ### §6.4. Ingest workflow
 
 When a new raw resource arrives:
@@ -614,6 +571,49 @@ miss      = full system prompt; cache_key → response_prefix
 projects don't share each other's prompts (see open issue 17.7 in
 [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md)).
 
+### §6.10. Audit log (separate from job queue)
+
+Job queues and audit logs are DIFFERENT substrates:
+
+- **compaction_jobs DBI**: per-job state (queued → running → done → failed). MAY be deleted after retention window. Mutable.
+- **compaction_handoffs DBI**: technical completion records (which worker, when, what version). Mutable.
+
+For human-reviewable LLM Wiki, **the audit log must be append-only** with:
+
+```
+run_id
+input unit IDs + revisions (the "derived_from" set)
+prompt/template version
+model ID
+generated_draft hash (content hash, not the full draft)
+validation result + comparison vs derived_from evidence
+reviewer decision (auto / human)
+activated article revision (or rejection)
+superseded source IDs (set, not just count)
+timestamp (RFC3339, monotonic)
+```
+
+Treat this audit as immutable. Do not retroactively edit; if changes are needed, append a corrective record.
+
+A separate table (e.g., `wiki_audit_log`) is the canonical source. Job DBI is operational; audit DBI is governance.
+
+### §6.11. Authorization before fusion
+
+Cross-scope retrieval ("scope A + scope B" queries) bypasses the implicit per-tenant isolation that single-scope queries preserve. Without explicit authorization, fusion can turn a namespace into a ranking hint instead of a security boundary.
+
+Rules:
+
+- Authorization determines the **allowed scope set** BEFORE retrieval begins.
+- Fusion operates ONLY inside the pre-authorized set. Out-of-scope fusion is a security failure, not a quality issue.
+- Metadata filters and ranking MUST NOT expand access. They can only narrow.
+- Mem0-style tags (`user_id`, `agent_id`, `run_id`, `app_id`) are access-control, NOT search relevance.
+
+When configuring a MemoryStack that fuses multiple scopes:
+
+- Default to empty scope set (refuse by default).
+- Authorization is required to add scopes.
+- Audit each cross-scope query (request_id → scope_set → result_ids).
+
 ## §7. Failure modes and mitigations
 
 What goes wrong in production and how each variant handles it.
@@ -710,7 +710,7 @@ loop.
 **Mitigations.**
 
 - `MergeJob` (planned, M2+) records `merged_into` lineage.
-- `LifesycleState` is durable: a `Superseded` article cannot be
+- `LifecycleState` is durable: a `Superseded` article cannot be
   re-promoted without an explicit `Active` transition (see lifecycle
   FSM in [`knowledge-units-roadmap.md`](knowledge-units-roadmap.md) §6).
   Note: this durability rule applies to articles, not sources. Source
