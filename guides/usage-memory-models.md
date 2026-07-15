@@ -11,6 +11,29 @@
 > requirement X, which architecture fits?" decisions for practitioners who
 > already decided to use `agent-memory-cpp` as their substrate.
 
+## §1.5. Scope note: real vs planned
+
+These guides are practitioner-facing. Recommendations distinguish real code from documented-but-not-yet-implemented.
+
+**Real, in `src/agent_memory/`:**
+
+- `IRetriever` — single-retriever interface
+- `IRetrievalEngine` — multi-retriever engine interface
+- `HybridRetrievalEngine` — lexical pipeline + extension hooks (current implementation)
+- existing lexical components (BM25 / ExactLexicalIndex from PR #26-#28 + PR #X)
+
+**Documented but NOT yet in `src/agent_memory/`:**
+
+- All seven MemoryStack factories (`BasicRagStack`, `QAKnowledgeBaseStack`, `AgentLongTermMemoryStack`, `SpeakerAwareChatStack`, `CompiledWikiStack`, `TemporalFactStoreStack`, `FullResearchMemoryStack`)
+- `MemoryProfileSpec` (declarative spec — exists in roadmap, not in code)
+- `DenseIndexMode::*` including `Hnsw`, `BinaryCandidateFilter`, etc.
+- `FactPayload`, `QAPayload`, `CompiledArticlePayload`, `EventPayload`
+- `CompactionWorker` + compaction jobs (`SummaryPromotionJob`, `DecayJob`, etc.)
+- Graph capabilities (graph index, graph expansion, graph-scope spread)
+- Stable runtime MemoryStacks that compose these
+
+A "Target profile: X" recommendation means X is the planned shape; the **current implementation path** is to assemble available retrievers manually using the real interfaces above, or wait for the MemoryStack implementation milestone.
+
 ## §1. Purpose
 
 You read [`memory-architectures-roadmap.md`](memory-architectures-roadmap.md) and saw
@@ -28,8 +51,8 @@ This guide answers that question.
 
 It is organised around three asks:
 
-1. **Decision tree** — given your workload axes (scale, latency budget, data
-   type, privacy, update frequency), which stack is the default pick?
+1. **Capability checklist** — score required capabilities and combine a base
+   profile + overlays; decisions are not mutually exclusive.
 2. **Architecture-by-architecture guidance** — for each external memory
    architecture, when to reproduce its idea on top of `agent-memory-cpp`, when
    to leave it as an external alternative, and how each one maps to the 7
@@ -86,87 +109,45 @@ made explicit. Default convention: a bare "PR #N" without qualifier refers to
 the roadmap label, matching the surrounding guides. GitHub PRs are always
 written out fully.
 
-## §3. Decision tree
+## §3. Capability checklist
 
-Start at the root. Each question has exactly one answer in your context.
-Follow the arrow.
+Decisions are NOT mutually exclusive. For each workload, score required capabilities and combine a base profile + overlays.
 
-```text
-Start: I need a memory layer. Does it need persistence across sessions?
+Required capabilities (mark yes/no):
 
-├─ No, single-session chat / one-shot task
-│   → No memory stack at all. Use the bare chat context window.
-│     (Level 0 of the 7-tier hierarchy; level 1 if you want a saved transcript.)
-│     [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/ai-agents/Уровни памяти AI-агента — от контекста до fine-tuning.md]
-│
-├─ Yes, but ≤100 stable facts about a persona / user / agent
-│   → Блок фактов pattern.
-│     On agent-memory-cpp: keep facts as Fact units + FactPayload
-│     (enable_fact_payload=true) inside `BasicRagStack` (lexical-only) or
-│     `AgentLongTermMemoryStack` (lexical + dense + graph + decay).
-│     Inject into prompt as a `raw/` block; no retrieval needed.
-│     [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/ai-agents/Блок фактов vs RAG-память.md]
-│
-├─ Yes, KB-style Q&A over fixed corpus (FAQ, support tickets, doc lookup)
-│   → QAKnowledgeBaseStack.
-│     Write QAPair units with QAPayload (question + answer + category +
-│     last_verified_at_ms). Retrieval uses QALookup slot before BM25F.
-│     Add Temporal component if answers expire.
-│     [Source: internal note — no public source available. Path: ai-agent-playbook/knowledge-units-roadmap.md (QAPayload spec)]
-│
-├─ Yes, general long-term memory (mixed kinds, evolving, decay-aware)
-│   ├─ Mostly text chunks / facts / Q&A, no speaker or temporal focus
-│   │   → AgentLongTermMemoryStack (the production default).
-│   │     LexicalBm25F + DenseVectors + GraphRelations + Decay + UsageStats
-│   │     + Compaction, exponential decay (half-life ~7 days).
-│   │
-│   ├─ Chat / voice with multiple speakers, anti-loop critical
-│   │   → SpeakerAwareChatStack.
-│   │     SpeakerAttribution + ConversationMemory + Temporal + Decay.
-│   │     Cooldown / self_echo_suppression enforced in DecayAwareRetriever.
-│   │
-│   ├─ Bi-temporal facts (valid_from / valid_until, supersedence chains)
-│   │   → TemporalFactStoreStack.
-│   │     FactPayload + TemporalComponent + GraphRelations, no dense vectors.
-│   │     `enable_temporal_validity = true`.
-│   │
-│   └─ Wiki / compiled-article synthesis with periodic summarisation
-│       → CompiledWikiStack.
-│         CompiledArticles capability + SummaryPromotionJob inside CompactionWorker.
-│         See [`usage-llm-wiki.md`](usage-llm-wiki.md) for the full LLM Wiki
-│         operator guide.
-│
-├─ Yes, multi-agent cross-session memory with scope isolation
-│   → AgentLongTermMemoryStack, one stack per agent or per scope.
-│     Profile (capabilities) is orthogonal to scope (namespace); see ADR-003
-│     in [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §5.
-│     Use Mem0-style 4-scope (user_id, agent_id, run_id, app_id) pattern by
-│     mapping each scope to a ScopeId.
-│     [Source: github.com/mem0ai/mem0 — Mem0 open-source memory layer]
-│     <br>[Source: internal note — no public source available. Path: ai-agent-playbook/tools/ai-agents/Mem0 — open-source memory layer для LLM-приложений (документация).md]
-│
-└─ Yes, but very large corpus (1M+ units) or long-context tasks
-    ├─ 10K-200K tokens known structure → use long-context frontier model,
-    │   no retrieval needed (Level 5 of 7-tier hierarchy is overkill).
-    │   [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Сравнение подходов организации памяти и контекста LLM.md]
-    │
-    ├─ Completeness-critical, code-capable model → consider RLM pattern.
-    │   RLM runs a Python REPL with the corpus as a variable and uses
-    │   recursive LM calls; this is an **external execution model**,
-    │   not a retrieval layer. See [`memory-architectures-roadmap.md`](memory-architectures-roadmap.md) §3 row "RLM".
-    │   agent-memory-cpp has no RLM runtime service; pair with an external
-    │   Python REPL adapter that calls into the C++ stack.
-    │   [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Сравнение подходов организации памяти и контекста LLM.md]
-    │
-    └─ 1M+ units, multi-hop, ANN backend needed → AgentLongTermMemoryStack
-        with `DenseIndexMode::Hnsw` and `HnswConfig{m=32, ef_construction=200,
-        ef_search=100}`. See [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md)
-        §6.2 (DenseIndexConfig), §12.7 (mode-aware DBI creation).
-```
+- [ ] **Scope isolation** — multiple users / projects / agents need separate namespaces
+- [ ] **Temporal validity** — facts have TTL or decay; stale records should be filtered
+- [ ] **Speaker attribution** — multi-author records need per-speaker metadata
+- [ ] **Dense semantic search** — required for fuzzy/conceptual matching
+- [ ] **Compiled summaries** — required for repeated queries against same topic
+- [ ] **Graph expansion** — required for multi-hop reasoning over relational knowledge
+- [ ] **Decay** — non-append memory where stale facts should auto-expire
+- [ ] **Auditability** — every read must have provenance
 
-If you reach the bottom of the tree without an answer, the workload probably
-mixes two or three patterns. Skip ahead to §7 (Hybrid patterns) and §8
-(Migration patterns).
+Recommended combinations:
+
+- ≤4 capabilities, low traffic → flat facts (Блок фактов pattern, see `memory-architectures-roadmap.md`)
+- 1-2 capabilities, append-only → file wiki (Karpathy 3-layer)
+- Dense + Compiled summaries → A-MEM / Self-Evolving Memory
+- Dense + Graph expansion → dual-layer (LanceDB + graph + spreading activation)
+- Scope isolation + Temporal validity + Auditability → NOUZ / Session-scoped append-only
+- Streaming + Anti-loop + Russian morphology → СВИНОПАС
+- SaaS / multi-tenant → Mem0 / Letta / Zep with hosted backend
+- Multi-scope with overlap of capabilities → compose base + overlays (planned MemoryStack system)
+
+Notes: each base pattern composes with overlays. Caching/dedup is mostly orthogonal to architecture choice; treat as overlay.
+
+### §3.1. Context-window vs retrieval
+
+A model with a 200K context window does NOT guarantee full-context prompting beats retrieval. Trade-offs:
+
+- Input latency and cost scale with context size.
+- Long contexts dilute relevant signal (lost-in-the-middle degrades 15-47% at 60-75% fill).
+- Privacy: full-context includes sections this request must not see.
+- Repeated queries re-pay the full context cost each time.
+- Citations, staleness filtering, version control still need retrieval semantics.
+
+**Benchmark full-context against retrieval for the target model on the target corpus**. Use full-context only when quality, latency, cost, and access-control requirements are satisfied simultaneously.
 
 ## §4. The 7-tier memory hierarchy (where each architecture fits)
 
@@ -462,8 +443,7 @@ model (transactional, no-personality workloads).
 ### §5.7. Блок фактов (lightweight flat facts)
 
 **What it is.** Plain text or YAML in the system prompt; no retrieval,
-just injected. ≤100 facts about a persona or user. Predicted behaviour
-encoding.
+just injected. Predicted behaviour encoding for a persona or user.
 
 [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/ai-agents/Блок фактов vs RAG-память.md]
 
@@ -473,11 +453,25 @@ encoding.
 graph. Inject top-N facts as a `raw/` block into the prompt before each
 agent turn.
 
-**Use it when:** fact count is bounded (~100), facts are stable (don't
-decay), retrieval latency must be near-zero (just prompt injection).
+**Use it when:** the complete fact block satisfies the prompt-injection
+criteria below — bytes budget, access-control, no unresolved temporal or
+conflict semantics, and lower cost than filtering.
 
-**Don't use it when:** fact count grows past 100, or facts change faster
-than the prompt cycle. RAG becomes necessary at that point.
+**Don't use it when:** any of the prompt-injection criteria fail. RAG
+becomes necessary when bytes budget is exceeded, per-request access
+control is required, or facts have temporal/conflict semantics that
+injection alone cannot enforce.
+
+#### §5.7.1. Prompt-injection criteria (no retrieval)
+
+Full prompt injection (no retrieval) is reasonable ONLY when the complete block:
+
+- fits the reserved prompt budget (typically 4K-8K tokens for stable facts);
+- is safe to expose for this specific request (no per-user filtering bypassed);
+- has no unresolved temporal or conflict semantics;
+- remains cheaper than filtering (else use retrieval).
+
+Pure count thresholds (e.g., "≤100 facts") are misleading. The right thresholds are bytes, risk characteristics, and update velocity — not object count.
 
 ### §5.8. СВИНОПАС (live-agent memory with anti-loop)
 

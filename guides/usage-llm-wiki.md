@@ -273,7 +273,7 @@ the source tree, it is tagged as planned.
 | **Raw notes** | §4.1 `raw/`, §4.2 `daily-logs/` | `Note` / `Fact` / `Chunk` units (see `KnowledgeUnitKind` enum in [`knowledge-units-roadmap.md`](knowledge-units-roadmap.md) §2) |
 | **Synthesized wiki** | §4.1 `wiki/`, §4.2 `concepts/`, §4.3 `shared/` + `agent-name/` | `CompiledArticle` kind + `CompiledArticlePayload` |
 | **Index** | All variants | `HybridRetrievalEngine` query; `index.md` is computed from `CompiledArticlePayload.title` + `keywords` projection |
-| **Log + audit** | §4.1 `log.md`, §4.3 `COMPACT-LOG.md` | `compaction_handoffs` DBI + `compaction_jobs` DBI (see [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §12.4 and [`compaction-roadmap.md`](compaction-roadmap.md) §5.3) |
+| **Log + audit** | §4.1 `log.md`, §4.3 `COMPACT-LOG.md` | `wiki_audit_log` DBI (append-only, see §6.10) + `compaction_jobs` DBI (operational state, separate) |
 | **Maintainer cron** | §4.2 daily flush, §4.3 6h cron, §4.4 GitHub Actions | `CompactionWorker` running `SummaryPromotionJob` |
 | **Anti-mусор mechanics** | §4.3 `injection_count` + 60-day archive, weekly compact | `CompiledArticlePayload.injection_count` + `LifecycleState::Deprecated` transition via `ArchiveColdJob` |
 | **Frontmatter `keywords`** | §4.3 | `CompiledArticlePayload.keywords` + `SearchProjection::tags` (see [`lexical-search-roadmap.md`](lexical-search-roadmap.md) §"Projection Build Rules Per ProjectionKind" — `Original.tags`, `Summary.tag`) |
@@ -283,9 +283,10 @@ the source tree, it is tagged as planned.
 **§4.1 Obsidian playbook variant.** `BasicRagStack` for the raw side
 (`Chunk` units with `ChunkPayload`); `CompiledWikiStack` for the wiki side
 (`CompiledArticle` units with `CompiledArticlePayload`). One stack per
-project. `HybridRetrievalEngine` (real) fuses lexical + dense + graph
-across the two scopes. `SummaryPromotionJob` (planned) runs daily at the
-operator's chosen cron.
+project. `HybridRetrievalEngine` (real) currently provides lexical
+passthrough + extension hooks; dense + graph + cross-scope fusion are
+planned but not wired in (see §5.6). `SummaryPromotionJob` (planned) runs
+daily at the operator's chosen cron.
 
 **§4.2 Self-Evolving Memory variant.** `SpeakerAwareChatStack` or
 `AgentLongTermMemoryStack` for session log ingest (ConversationEpisode +
@@ -330,8 +331,10 @@ is a `CompactionWorker` (planned) running jobs:
                title = cluster centroid keywords
                body = generated summary
                derived_from = source unit_ids
-           - Mark source units: LifecycleState::Superseded,
-             superseded_by = article unit_id.
+               status = Draft  (sources remain Active — see §5.7)
+       - Validation + policy gate (see §5.7) determines whether the
+         article is Approved and sources flip to Superseded, or the
+         article is Rejected and sources stay Active.
   3. DecayJob updates retrieval scores (planned; canonical formula in
      policies-roadmap.md §2.3):
        apply_decay_and_boost(base_score, usage, policy, now_ms,
@@ -347,6 +350,54 @@ The agent loop above mirrors the Cole Medin "Compiler" + the Karpathy
 "wiki-maintainer" + the playbook's daily flush. On `agent-memory-cpp` the
 heavy lifting is inside `CompactionWorker`; the agent (or scheduler) only
 enqueues.
+
+### §5.6. HybridRetrievalEngine: real-vs-planned capability split
+
+**Implemented today (real code):**
+
+- `HybridRetrievalEngine` provides a facade over the retrieval pipeline.
+- Current default implementation composes the underlying `ILexicalIndex`, an `IQueryAnalyzer` (default `PassthroughQueryAnalyzer`), and an `IReranker` (default `IdentityReranker`).
+- Initial behavior is a pure lexical passthrough — analyze-then-rerank is identity, so the engine is observably equivalent to calling `ILexicalIndex::search()` directly.
+
+**Planned (NOT yet implemented):**
+
+- Dense candidate injection alongside lexical candidates.
+- Graph expansion (BFS-with-depth-bounded, spreading activation, etc.).
+- Cross-scope fusion (RRF or another multi-retriever scheme).
+- MemoryStack-driven stacking of retrievers.
+
+Until the planned items ship, "HybridRetrievalEngine" is a façade with lexical passthrough + extension hooks. Do not assume graph or dense behavior is wired in automatically — verify by reading the current `HybridRetrievalEngine::retrieve` implementation before relying on it.
+
+### §5.7. CompiledArticle lifecycle (human-review-aware)
+
+**Current flow (DO NOT USE in production):**
+
+```
+source units remain Active
+→ generate article → create CompiledArticle
+→ mark source units Superseded
+```
+
+**Required staged flow:**
+
+```
+source units remain Active
+→ generate article → create CompiledArticle { status: Draft }
+→ validation: cross-check generated_draft against derived_from evidence
+→ policy gate (auto-approve confidence ≥ threshold OR human review required)
+→ on approval: CompiledArticle { status: Active }, source units → Superseded
+→ otherwise: CompiledArticle { status: Rejected }, source units stay Active
+```
+
+**Critical:** sources must remain Active and retrievable as evidence until the article is Approved, NOT Superseded at generation time. Compound-hallucination failure mode:
+
+1. LLM generates a faulty summary
+2. Faulty article becomes authoritative immediately
+3. Sources marked Superseded → no longer retrievable as evidence
+4. Next generation references the faulty article as ground truth
+5. Errors compound across iterations
+
+`Superseded` should mean "no longer primary result for the topic", NOT "unavailable for evidence retrieval". A Superseded source should still be returnable when an audit / contradiction check is needed.
 
 ## §6. Practical setup checklist
 
@@ -376,7 +427,7 @@ enable_embedding_meta      = true   // track embedding provenance
 enable_compaction          = true   // SummaryPromotionJob requires Compaction
 context_budget             = total_tokens=6000, qa=0, chunk=2000,
                             graph=0, summary=2000, evidence=512
-dense_index_config.mode    = BinaryCandidateFilter (default production)
+dense_index_config.mode    = BinaryCandidateFilter  # planned candidate mode
                             or Hnsw for >100k units
 ```
 
@@ -384,6 +435,8 @@ dense_index_config.mode    = BinaryCandidateFilter (default production)
 "CompiledArticles requires Compaction" (see
 [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §10 row 7) blocks
 `enable_compiled_article = true` if compaction is off.
+
+**Note:** `BinaryCandidateFilter`, `BinarySignature`, `IBinarySignatureEncoder`, `RandomHyperplaneLSH`, and `binary_bucket_index` (MDBX) are NOT yet implemented. This block is forward-looking configuration; running it today will fail. Subject to implementation gates per `binary-embeddings-roadmap.md`.
 
 ### §6.3. Folder / DBI layout
 
@@ -401,12 +454,56 @@ wiki/               → compiled_article_payloads DBI
 index.md (computed) → generated from CompiledArticlePayload.title + keywords
                      + metadata_filters DBI reverse index on title/keywords
 
-log.md (audit)      → compaction_jobs DBI + compaction_handoffs DBI
+log.md (audit)      → wiki_audit_log DBI (append-only, see §6.10)
+                     + compaction_jobs DBI (operational state, separate)
 
 CLAUDE.md / AGENTS.md → not stored in MDBX; lives in repo or vault
 ```
 
 DBI shapes are detailed in [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §12.
+
+### §6.10. Audit log (separate from job queue)
+
+Job queues and audit logs are DIFFERENT substrates:
+
+- **compaction_jobs DBI**: per-job state (queued → running → done → failed). MAY be deleted after retention window. Mutable.
+- **compaction_handoffs DBI**: technical completion records (which worker, when, what version). Mutable.
+
+For human-reviewable LLM Wiki, **the audit log must be append-only** with:
+
+```
+run_id
+input unit IDs + revisions (the "derived_from" set)
+prompt/template version
+model ID
+generated_draft hash (content hash, not the full draft)
+validation result + comparison vs derived_from evidence
+reviewer decision (auto / human)
+activated article revision (or rejection)
+superseded source IDs (set, not just count)
+timestamp (RFC3339, monotonic)
+```
+
+Treat this audit as immutable. Do not retroactively edit; if changes are needed, append a corrective record.
+
+A separate table (e.g., `wiki_audit_log`) is the canonical source. Job DBI is operational; audit DBI is governance.
+
+### §6.11. Authorization before fusion
+
+Cross-scope retrieval ("scope A + scope B" queries) bypasses the implicit per-tenant isolation that single-scope queries preserve. Without explicit authorization, fusion can turn a namespace into a ranking hint instead of a security boundary.
+
+Rules:
+
+- Authorization determines the **allowed scope set** BEFORE retrieval begins.
+- Fusion operates ONLY inside the pre-authorized set. Out-of-scope fusion is a security failure, not a quality issue.
+- Metadata filters and ranking MUST NOT expand access. They can only narrow.
+- Mem0-style tags (`user_id`, `agent_id`, `run_id`, `app_id`) are access-control, NOT search relevance.
+
+When configuring a MemoryStack that fuses multiple scopes:
+
+- Default to empty scope set (refuse by default).
+- Authorization is required to add scopes.
+- Audit each cross-scope query (request_id → scope_set → result_ids).
 
 ### §6.4. Ingest workflow
 
@@ -456,11 +553,11 @@ trigger SummaryPromotion` for ad-hoc synthesis (planned CLI).
      - mode = Hybrid
 2. IQueryTransformer expands (optional, M2+; planned:
    HydeQueryTransformer, RewriteQueryTransformer).
-3. HybridRetrievalEngine (real) fuses:
-     - lexical: BM25F over Original + Summary projections
-     - dense: BinaryCandidateFilter / Hnsw over DenseContextual projection
-     - graph (if enabled): GraphRetriever over graph_edges_by_src
-4. RRF combines ranks.
+3. HybridRetrievalEngine (real) currently runs:
+     - lexical: BM25F over Original + Summary projections (via ILexicalIndex)
+     - dense: NOT wired in (planned, see §5.6)
+     - graph: NOT wired in (planned, see §5.6)
+4. RRF / cross-scope fusion NOT wired in today (planned, see §5.6).
 5. IContextBuilder assembles context within ContextBudget (planned):
      - chunk_tokens = 2000, summary_tokens = 2000, evidence_tokens = 512
      - trim order: evidence → summary → chunk
@@ -616,6 +713,9 @@ loop.
 - `LifesycleState` is durable: a `Superseded` article cannot be
   re-promoted without an explicit `Active` transition (see lifecycle
   FSM in [`knowledge-units-roadmap.md`](knowledge-units-roadmap.md) §6).
+  Note: this durability rule applies to articles, not sources. Source
+  units remain `Active` until the article is Approved — see §5.7 for the
+  staged lifecycle that protects source-as-evidence.
 - `DecayJob` is idempotent: repeated runs give the same result (see
   [`compaction-roadmap.md`](compaction-roadmap.md) §4.1).
 
