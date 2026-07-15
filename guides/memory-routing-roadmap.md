@@ -25,7 +25,7 @@ Related roadmaps:
 
 Этот гайд существует для трёх целей:
 
-1. **Comparison framework.** Свести в одну карту три routing paradigms — RFF-density pre-filter (Sivertsen & Eidheim 2026), LLM-independent adaptive RAG (Marina et al., 2025; Jeong et al., 2024), DLP-style profiling axes — по единому набору осей: needs labels?, compute cost, cold-cache suitability, latency, accuracy tradeoff.
+1. **Comparison framework.** Свести в одну карту routing approaches — RFF-density pre-filter (Sivertsen & Eidheim 2026), LLM-independent adaptive RAG (Marina et al., 2025; Jeong et al., 2024), плюс DLP-style profiling (user-modeling layer, не routing в строгом смысле: требует explicit policy layer; см. §6) — по единому набору осей: needs labels?, compute cost, cold-cache suitability, latency, accuracy tradeoff.
 2. **Adoption guidance.** Для каждого подхода пометить, что из него `agent-memory-cpp` может воспроизвести через наши MDBX primitives (envelope/components/projections, posting DBI, embedding DBI) и какие требуют нового контракта (`IMemoryRouter`).
 3. **Decision tree.** Дать читателю короткое дерево «когда какой подход», чтобы не канонизировать одну технику.
 
@@ -37,9 +37,9 @@ Non-goals:
 
 Routing **не заменяет** retrieval. Это первый дешёвый слой поверх полного BM25 + dense ANN + reranker пайплайна; цель — сократить search space с N единиц до N/K по разделам памяти (по проекту, по типу, по домену, по временному диапазону).
 
-## §2. Three Routing Paradigms
+## §2. Two routing paradigms plus one routing-adjacent profiling layer
 
-Три подхода, различающиеся по тому, **где** маршрутизация принимает решение:
+Три подхода (RFF-density, Adaptive RAG, и DLP-style profiling), различающиеся по тому, **где** маршрутизация принимает решение. DLP-style axes — это profiling layer, НЕ routing в строгом смысле: для превращения профиля в routing decision требуется explicit policy layer (см. §6).
 
 | Paradigm | Где решение | Метки | Cold-cache | Пример |
 |---|---|---|---|---|
@@ -424,7 +424,7 @@ When `enable_memory_router = false`, `IRetrievalEngine::retrieve` operates over 
 
 ## §8. Cross-Paradigm Implementation Synergies
 
-The three paradigms are NOT built on a common arithmetic base. RFF is a specific implementation choice for the RFF-density paradigm only; Adaptive RAG (feature-based classifier) and DLP-axes (axis scoring) use different primitives. Honest breakdown:
+These approaches are NOT built on a common arithmetic base. RFF is a specific implementation choice for the RFF-density paradigm only; Adaptive RAG (feature-based classifier) and DLP-axes (axis scoring) use different primitives. Honest breakdown:
 
 ```text
 RFF-specific primitives (only for RFF-density paradigm):
@@ -448,12 +448,12 @@ DLP-profile-specific primitives:
 
 Potentially reusable across paradigms (M2+):
   - labeled online accumulator (RFF-density class sums, DLP-axis sums; same arithmetic, different semantics)
-  - calibration layer (all three, with different inputs)
+  - calibration layer (applies across these approaches, with different inputs)
   - confidence/fallback policy (route uncertainty → broader retrieval)
   - storage interface (MDBX Layer 1 primitives; not routing-specific)
 ```
 
-A unified `CompactClassifier` library could back RFF-density and DLP-axes (sharing only the accumulator arithmetic, NOT the feature map), with paradigm-specific adapters for output semantics. Adaptive RAG is the least reusable of the three: its features are tied to English corpora, Wikidata, and an LLM-side knowledgability signal that does not generalize to agent-internal routing. This is M2+ architecture; M1 ships RFF-density only.
+A unified `CompactClassifier` library could back RFF-density and DLP-axes (sharing only the accumulator arithmetic, NOT the feature map), with paradigm-specific adapters for output semantics. Adaptive RAG is the least reusable across these approaches: its features are tied to English corpora, Wikidata, and an LLM-side knowledgability signal that does not generalize to agent-internal routing. This is M2+ architecture; M1 ships RFF-density only.
 
 ## §9. Implementation Ladder
 

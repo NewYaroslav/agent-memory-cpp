@@ -41,7 +41,7 @@ Binary embeddings — **не замена** full vectors. Это tradeoff меж
 
 ## §2. Binarization Landscape
 
-| Метод | Размер на вектор | Compression vs float32 | Качество | Когда применять |
+| Метод | Размер на вектор | Compression vs float32 | Качество (illustrative hypothesis) | Когда применять |
 |---|---|---|---|---|
 | **Float32 (baseline)** | d × 4 bytes | 1× | 100% | Ground truth, quality-sensitive rerank |
 | **Float16** | d × 2 bytes | 2× | ~99.5% | GPU inference, mixed precision |
@@ -49,11 +49,32 @@ Binary embeddings — **не замена** full vectors. Это tradeoff меж
 | **Matryoshka truncation (MRL)** | N × 4 bytes (N < d) | d/N× | varies | Adaptive serving, two-stage retrieval |
 | **Product Quantization (PQ)** | m bytes (typ. 8) | 96× (768-dim) | ~95% | FAISS, Milvus, billion-scale ANN |
 | **Binary (1 bit/dim)** | d / 8 bytes | 32× (768-dim) | ~85% | Coarse filter, edge, in-memory cache |
-| **Binary learned (Tissier 2018)** | 64-512 bits total | 6-48× | ~98% (256 bit) | Coarse-to-fine retrieval, dense storage tier |
-| **LSH (random hyperplanes)** | 64-512 bits total | 6-48× | ~85% (256 bit) | Cache-friendly candidate filter (planned; `RandomHyperplaneLSH` not yet implemented) |
+| **Binary learned (Tissier 2018)** | 8-64 B (per dimension; see table below) | ~19-384× (per-dim; see table below) | ~98% (256 bit) | Coarse-to-fine retrieval, dense storage tier |
+| **LSH (random hyperplanes)** | 8-64 B (per dimension; see table below) | ~19-384× (per-dim; see table below) | ~85% (256 bit) | Cache-friendly candidate filter (planned; `RandomHyperplaneLSH` not yet implemented) |
 | **RotSQ** | ~6 bytes/dim + 12 B metadata | ~6× | ~95% | Sibling codec alongside Matryoshka, PQ |
 
-Binary embeddings занимают **наименьший размер на вектор** при сохранении семантики; tradeoff — потеря ~2% на retrieval при 256+ битах для learned encoders. На 64 бит compression выше (150×) но потери до 16% на больших датасетах.
+> All values above are **illustrative starting hypotheses, not validated cross-codec quality targets**. Recall@10 numbers depend on:
+> - embedding model (BERT vs E5 vs BGE behave differently under quantization);
+> - corpus (technical text, conversational, structured vs unstructured);
+> - retrieval metric (Recall@10 vs nDCG@10 vs MRR);
+> - quantization training data (or lack thereof).
+>
+> Tissier et al. 2018 reported near-float results for some 256–512-bit word-embedding tasks; **transfer to sentence-transformer retrieval is unvalidated**. Do NOT quote these numbers as production acceptance contracts.
+
+Tissier reported near-float results for some word-embedding tasks at 256–512 bits. For sentence-transformer retrieval (E5/BGE), transfer is unvalidated; pilot measurements required.
+
+Binary embeddings занимают **наименьший размер на вектор** при сохранении семантики. Compression ratio strongly depends on dimensionality; см. per-dimension table ниже. Quality retention при увеличении bit budget — illustrative hypothesis, см. caveats.
+
+Compression ratios for `Binary learned` and `LSH` не универсальны — они зависят от embedding dimensionality:
+
+| Dimensionality | float32 size | Compression at 64 bits | Compression at 512 bits |
+|---------------|--------------|------------------------|--------------------------|
+| 300-dim (e.g., GloVe) | 1,200 B  | ~150× (≈8 B vs 1,200 B) | ~18.75× (≈64 B vs 1,200 B) |
+| 768-dim (e.g., BERT/E5/BGE) | 3,072 B | ~384× (≈8 B vs 3,072 B) | ~48×  (≈64 B vs 3,072 B) |
+
+Note: actual ratios depend on dimension. Numbers above are upper and lower bounds; intermediate bit counts (128, 256 bits) yield intermediate ratios.
+
+> Note: these compression ratios assume the embedding dimensionality is preserved as the bit budget increases (i.e., each component still maps to a fixed-width field). Total memory = `dim_bits / 8` bytes regardless of bit width.
 
 ## §3. Binarization Methods
 
