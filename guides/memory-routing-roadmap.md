@@ -37,6 +37,8 @@ Non-goals:
 
 Routing **не заменяет** retrieval. Это первый дешёвый слой поверх полного BM25 + dense ANN + reranker пайплайна; цель — сократить search space с N единиц до N/K по разделам памяти (по проекту, по типу, по домену, по временному диапазону).
 
+See [`advanced-binary-techniques-roadmap.md`](advanced-binary-techniques-roadmap.md) for Semantic Anchor Hamming Index and Accumulative Semantic Membership Sketch as future routing-pipeline candidates beyond RFF-density and Adaptive RAG.
+
 ## §2. Two routing paradigms plus one routing-adjacent profiling layer
 
 Три подхода (RFF-density, Adaptive RAG, и DLP-style profiling), различающиеся по тому, **где** маршрутизация принимает решение. DLP-style axes — это profiling layer, НЕ routing в строгом смысле: для превращения профиля в routing decision требуется explicit policy layer (см. §6).

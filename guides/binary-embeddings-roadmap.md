@@ -39,6 +39,8 @@ Non-goals:
 
 Binary embeddings — **не замена** full vectors. Это tradeoff между accuracy и storage/query cost. Quality-sensitive rerank остаётся обязательным; binary embeddings могут быть **only candidate filter** (planned `DenseIndexMode::BinaryCandidateFilter`) или **primary** storage tier (experimental modes `BinaryOnly`, `ApproximateVector`).
 
+See [`advanced-binary-techniques-roadmap.md`](advanced-binary-techniques-roadmap.md) for research-level techniques extending beyond PR #29 binary signatures: Semantic Anchor Hamming Index, Accumulative Semantic Membership Sketch, and multi-slot binary semantic document signature.
+
 ## §2. Binarization Landscape
 
 | Метод | Размер на вектор | Compression vs float32 | Качество (illustrative hypothesis) | Когда применять |
