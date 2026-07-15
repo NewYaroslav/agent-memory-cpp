@@ -49,8 +49,8 @@ Binary embeddings — **не замена** full vectors. Это tradeoff меж
 | **Matryoshka truncation (MRL)** | N × 4 bytes (N < d) | d/N× | varies | Adaptive serving, two-stage retrieval |
 | **Product Quantization (PQ)** | m bytes (typ. 8) | 96× (768-dim) | ~95% | FAISS, Milvus, billion-scale ANN |
 | **Binary (1 bit/dim)** | d / 8 bytes | 32× (768-dim) | ~85% | Coarse filter, edge, in-memory cache |
-| **Binary learned (Tissier 2018)** | 8-64 B (per dimension; see table below) | ~19-384× (per-dim; see table below) | ~98% (256 bit) | Coarse-to-fine retrieval, dense storage tier |
-| **LSH (random hyperplanes)** | 8-64 B (per dimension; see table below) | ~19-384× (per-dim; see table below) | ~85% (256 bit) | Cache-friendly candidate filter (planned; `RandomHyperplaneLSH` not yet implemented) |
+| **Binary learned (Tissier 2018)** | 8-64 B per vector (see table below) | 300d: 18.75-150×; 768d: 48-384× (see table below) | ~98% (256 bit) | Coarse-to-fine retrieval, dense storage tier |
+| **LSH (random hyperplanes)** | 8-64 B per vector (see table below) | 300d: 18.75-150×; 768d: 48-384× (see table below) | ~85% (256 bit) | Cache-friendly candidate filter (planned; `RandomHyperplaneLSH` not yet implemented) |
 | **RotSQ** | ~6 bytes/dim + 12 B metadata | ~6× | ~95% | Sibling codec alongside Matryoshka, PQ |
 
 > All values above are **illustrative starting hypotheses, not validated cross-codec quality targets**. Recall@10 numbers depend on:
@@ -72,7 +72,16 @@ Compression ratios for `Binary learned` and `LSH` не универсальны 
 
 Note: actual ratios depend on dimension. Numbers above are upper and lower bounds; intermediate bit counts (128, 256 bits) yield intermediate ratios.
 
-> Note: these compression ratios assume the embedding dimensionality is preserved as the bit budget increases (i.e., each component still maps to a fixed-width field). Total memory = `dim_bits / 8` bytes regardless of bit width.
+> Note: compression ratio for a `bit_count`-bit code on a `dim`-dimensional float32 embedding:
+> 
+> ```text
+> compression_ratio = (dim × 4) / (bit_count / 8)
+> 
+> Example for 768d float32 with 256-bit code:
+>   compression_ratio = (768 × 4) / (256 / 8) = 3072 / 32 = 96×
+> ```
+> 
+> The code is a single `bit_count`-bit value stored once per vector, NOT `bit_count / dim` bits per dimension.
 
 ## §3. Binarization Methods
 
