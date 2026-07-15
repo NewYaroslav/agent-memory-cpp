@@ -18,10 +18,10 @@ These guides are practitioner-facing. Recommendations distinguish real code from
 **Real, in `src/agent_memory/`:**
 
 - `IRetriever` — single-retriever interface
-- `IRetrievalEngine` — multi-retriever engine interface
+- `IRetrievalEngine` — retrieval-pipeline facade interface
 - `HybridRetrievalEngine` — lexical pipeline + extension hooks (current implementation)
 - existing lexical components:
-  - BM25 lexical baseline retriever (roadmap-label PR #X / GitHub PR #29+ squash `99d6052c`)
+  - BM25 lexical baseline retriever (roadmap-label PR #X squash `99d6052c`)
   - ExactLexicalIndex (GitHub PR #23)
 
 **Documented but NOT yet in `src/agent_memory/`:**
@@ -126,11 +126,30 @@ Required capabilities (mark yes/no):
 - [ ] **Decay** — non-append memory where stale facts should auto-expire
 - [ ] **Auditability** — every read must have provenance
 
-Recommended combinations:
+Capability counts alone do not determine architecture. Three axes govern the choice:
+
+**Mandatory constraints** (hard requirements — exclude an architecture if violated):
+- Multi-tenant authorization → flat facts is unsafe; need scope isolation
+- Bi-temporal validity → require temporal-aware architecture
+- Legal auditability → require append-only audit log + immutable records
+
+**Optional capabilities** (additive — combine if present):
+- Decay, dense semantic search, graph expansion, compiled summaries
+
+**Scale / performance characteristics:**
+- Traffic level (low / medium / high)
+- Corpus size (KB / MB / GB / TB)
+- Latency budget (sub-100ms / sub-second / seconds / minutes)
+- Cost ceiling (per-query dollars)
+
+A correct architecture selection is a conjunction of one mandatory-constraint profile, zero or more optional capabilities, and a scale profile. The "recommended combinations" below address the common-case conjunctions but each real deployment must verify against the full three-axis matrix.
+
+Recommended combinations (read with the three-axis framing above):
 
 - ≤4 capabilities, low traffic → flat facts (Блок фактов pattern, see `memory-architectures-roadmap.md`)
 - 1-2 capabilities, append-only → file wiki (Karpathy 3-layer)
-- Dense + Compiled summaries → A-MEM / Self-Evolving Memory
+- Dense + autonomous note linking / atomic-note evolution → A-MEM-inspired pattern (atomic notes, LLM-driven linking, schema-less)
+- Dense + periodic compiled summaries → CompiledWiki / Self-Evolving Wiki pattern (file-based wiki with periodic LLM-synthesized summaries)
 - Dense + Graph expansion → dual-layer (LanceDB + graph + spreading activation)
 - Scope isolation + Temporal validity + Auditability → NOUZ / Session-scoped append-only
 - Streaming + Anti-loop + Russian morphology → СВИНОПАС
