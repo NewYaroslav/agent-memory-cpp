@@ -21,7 +21,9 @@ These guides are practitioner-facing. Recommendations distinguish real code from
 - `IRetrievalEngine` — retrieval-pipeline facade interface
 - `HybridRetrievalEngine` — lexical pipeline + extension hooks (current implementation)
 - existing lexical components:
-  - BM25 lexical baseline retriever (roadmap-label PR #X squash `99d6052c`)
+  - ExactLexicalRetriever — deterministic BM25 lexical baseline
+    (src/agent_memory/retrieval/ExactLexicalRetriever.hpp,
+    introduced by commit `99d6052c`)
   - ExactLexicalIndex (GitHub PR #23)
 
 **Documented but NOT yet in `src/agent_memory/`:**
