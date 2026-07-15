@@ -61,8 +61,6 @@ Binary embeddings — **не замена** full vectors. Это tradeoff меж
 >
 > Tissier et al. 2018 reported near-float results for some 256–512-bit word-embedding tasks; **transfer to sentence-transformer retrieval is unvalidated**. Do NOT quote these numbers as production acceptance contracts.
 
-Tissier reported near-float results for some word-embedding tasks at 256–512 bits. For sentence-transformer retrieval (E5/BGE), transfer is unvalidated; pilot measurements required.
-
 Binary embeddings занимают **наименьший размер на вектор** при сохранении семантики. Compression ratio strongly depends on dimensionality; см. per-dimension table ниже. Quality retention при увеличении bit budget — illustrative hypothesis, см. caveats.
 
 Compression ratios for `Binary learned` and `LSH` не универсальны — они зависят от embedding dimensionality:
