@@ -409,7 +409,7 @@ This guide treats M0 as the starting point of the roadmap.
 
 See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadmap.md) for the conceptual framing (cross-entropy, prefix-free codes, "what good compression preserves") and the §10 Composite compression table for MRL+INT8 / MRL+PQ / MRL+binary multipliers.
 
-Одна техника сжатия (MRL truncate, INT8, PQ, binary) обычно **не** достигает жёстких storage / latency targets в одиночку. Composite compression (stacking multipliers) даёт 12-96× memory savings на production corpora при мониторинге quality. Этот раздел систематизирует совместимость и реалистичные multipliers.
+Одна техника сжатия (MRL truncate, INT8, PQ, binary) обычно **не** достигает жёстких storage / latency targets в одиночку. Memory savings are configuration-dependent; the examples in this section range from 12× to 384× depending on embedding dimension, code width, and composition. Этот раздел систематизирует совместимость и реалистичные multipliers.
 
 [Source: arXiv:2205.13147 — Kusupati et al. 2022, Matryoshka Representation Learning]
 <br>[Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Адаптивные embeddings - variable-length representations и Matryoshka.md]
@@ -466,13 +466,16 @@ Baseline — 768-dim float32 embedding (3,072 bytes per vector).
 
 ### §10.4. Open question: MRL + binary composition
 
-Из §9 question 9: «2048-dim embedding → MRL-truncate to 256 → binarize to 256 bits → ~96× additional compression. Does this nested compression retain usable semantic quality?»
+Из §9 question 9: «2048-dim embedding → MRL-truncate to 256 → binarize to 256 bits → ~256× additional compression. Does this nested compression retain usable semantic quality?»
 
 Промоутируем в dedicated section, потому что эта комбинация наиболее перспективна для million-vector corpora с жёсткими memory budget'ами:
 
 - Tissier 2018 binarisation тестировалась на word-embedding scale (GloVe 300-dim); sentence-transformer transfer невалидирован.
 - MRL truncate 2048→256 — coarse-to-fine semantic; первые 256 dims обычно несут основную семантику (per Kusupati et al. 2022 ImageNet results, 14× speedup с 14× reduction при comparable accuracy).
-- Combined 96× compression → 1M vectors × 256-dim float32 ≈ 1 GB → composite 96× → ~10 MB. Это влезает в single-process memory budget.
+- **Composite arithmetic (MRL 256 + 256-bit binary), per code:**
+  - 768-dim float32 + MRL 256 + 256-bit code: 3072 B → 1024 B → 32 B → ~96× compression (1M vectors: ~3 GB → ~32 MB).
+  - 2048-dim float32 + MRL 256 + 256-bit code: 8192 B → 1024 B → 32 B → ~256× compression (1M vectors: ~8 GB → ~32 MB).
+  Оба варианта влезают в single-process memory budget на million-vector corpora.
 - **Открытый вопрос:** сохраняет ли nested MRL+binary качество на современных sentence-transformer embeddings (BGE, E5, M3-Embedding), или теряет tail of semantic distribution?
 
 Рекомендация: **treat as experimental until benchmarked on target corpus.** Использовать как `DenseIndexMode::BinaryCandidateFilter` (planned) — coarse filter перед float rerank, не standalone storage.
