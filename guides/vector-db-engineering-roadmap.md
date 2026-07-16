@@ -57,10 +57,12 @@ Non-goals:
 | **Qdrant** | Собственная HNSW-реализация с диском | OSS (Apache 2.0) | Full metadata (nested structures, lists) | Sharding + replication | Scalar (int8) + Product (PQ) | Self-host Rust binary, moderate DevOps | Production-ready, 1M-50M vectors, frequent updates, complex filtering |
 | **Milvus** | HNSW + IVF + others (multi-algo) | OSS (Apache 2.0) | Расширенная (больше операторов by default) | Microservices (read/write split, отдельные узлы) | Scalar + Product | Microservices, high DevOps | HighLoad production, 50M+ vectors, read-write split needed |
 | **Pinecone** | Не раскрыт (предположительно HNSW-based) | Proprietary (managed) | Гибкая managed | Managed horizontal scaling | Managed | API-only (zero DevOps) | Когда не хочется париться; готовы платить managed premium |
-| **Weaviate** | HNSW + others | OSS (BSD-3-Clause) | Very flexible + graph queries (GraphQL-like) | Sharding + replication | Через плагины | Self-host Go binary, moderate DevOps | Knowledge graph, semantic relations between chunks |
+| **Weaviate** | HNSW + others | OSS (BSD-3-Clause) | Object references + cross-reference queries via GraphQL (NOT a property-graph system like Neo4j/Graphiti; data model is object-oriented) | Sharding + replication | Через плагины | Self-host Go binary, moderate DevOps | Object store + hybrid search; cross-reference queries via GraphQL API, not a property graph |
 
 [Source: https://www.youtube.com/watch?v=v-EX_AYdolE — Феоктистов Станислав (AIRnD)]
 <br>[Source: internal note — no public source available. Path: ai-agent-playbook/resources/rag-knowledge/Инженерный взгляд на RAG - сравнение векторных баз и алгоритмов - расшифровка.md]
+
+> **Algorithm vs implementation note.** Ячейки в колонках "Algorithm" и "Filtering" описывают базовый ANN-алгоритм + capability конкретной реализации Vector Store. Pure-ANN (HNSW / IVF / ANNOY) не имеет встроенного attribute index; production-системы добавляют payload/attribute filters отдельным слоем (см. §4.1). Reindex/re-cluster cadence — workload-dependent, не фиксированная константа.
 
 > **3-tier API reminder.** Символьный статус в этом гайде:
 > - **Real (no tag)** — публичные продукты с открытыми сайтами / GitHub, существуют независимо от нашего проекта (Chroma, Qdrant, Milvus, Pinecone, Weaviate).
@@ -71,11 +73,11 @@ Non-goals:
 
 ### §4.1. HNSW vs IVF vs ANNOY — quick recall
 
-Не дублируя подробного описания алгоритмов (это в [`optimization-roadmap.md`](optimization-roadmap.md) и в playbook):
+Не дублируя подробного описания алгоритмов (это в [`optimization-roadmap.md`](optimization-roadmap.md) и в playbook). **Важно:** ANN-алгоритм (HNSW / IVF / ANNOY) и стратегия metadata filtering — это *раздельные слои*. Pure-алгоритм не имеет встроенного attribute index; конкретные реализации могут комбинировать graph/tree traversal с payload/attribute filters (hnswlib с attribute filters, Qdrant HNSW с payload filters, Milvus HNSW/IVF с scalar field filters, Weaviate HNSW с property filters). Re-index / re-cluster / re-build cadence — workload-dependent (drift rate, corpus size, SLA), не фиксированная константа.
 
-- **HNSW.** Multi-layer navigable small world graph. Log-scale search time, fast insert, NO native metadata filtering (только post-filter), NO batch optimisation, NO native quantisation, NO sharding на уровне алгоритма. Default для ~80% medium-size RAG.
-- **IVF.** K-means clusters + per-cluster scanning. Полная metadata filtering (отбрасываем clusters целиком), optimal batch, supports PQ, supports sharding. Минус: occasional reclustering (на каждые ~1000 новых embeddings).
-- **ANNOY.** Tree structure, low memory, можно не держать в RAM. Только static data, нет filtering, нет batch, нет quantisation, нет sharding. Часто вытесняется HNSW/IVF.
+- **HNSW.** Multi-layer navigable small world graph. Log-scale search time, fast insert. Pure HNSW не имеет встроенного attribute index; production-системы (Qdrant, Milvus, Weaviate, hnswlib с фильтрами) обычно добавляют pre-filter, post-filter или hybrid traversal. Reindex cadence зависит от workload.
+- **IVF.** K-means clusters + per-cluster scanning. Pure IVF позволяет отбрасывать clusters целиком как coarse pre-filter, но production-системы могут добавлять finer-grained attribute filtering внутри shard. Re-clustering cadence — workload-dependent: на static corpora может быть «никогда»; на streaming-данных — чаще (зависит от drift rate и целевого recall SLA).
+- **ANNOY.** Tree structure, low memory, можно не держать в RAM. Static-data-friendly; filtering и quantisation — отдельные layers, не встроены в core ANN. Часто вытесняется HNSW/IVF.
 
 [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/ANN-алгоритмы для векторного поиска — HNSW, FAISS, DiskANN, ScaNN, фильтрация.md]
 
@@ -197,7 +199,7 @@ Binary (256-bit, autoencoder):
 | Workload | Рекомендованный алгоритм | Почему |
 |---|---|---|
 | Medium RAG (~1M-10M vectors, mixed queries) | **HNSW** (~80% дефолт) | Log-scale latency, fast insert, no reclustering overhead. Post-filter на metadata допустим, если selectivity высокая. |
-| Full metadata filtering на больших коллекциях | **IVF + PQ** | IVF позволяет отбросить clusters целиком до сканирования; PQ экономит память. Reclustering приемлем, если данные растут batch'ами. |
+| Full metadata filtering на больших коллекциях | **IVF + PQ** | IVF позволяет отбросить clusters целиком до сканирования; PQ экономит память. Re-clustering cadence — workload-dependent: на static corpora может быть «никогда»; на streaming-данных — чаще. |
 | Billion-scale с жёстким memory budget | **IVF + PQ (m=8-16)** | Только PQ с ADC даёт нужную память; HNSW на 1B+ vectors экономически нецелесообразен без PQ. |
 | Edge / mobile coarse filter | **Binary (LSH или autoencoder)** | Binary codes — single-instruction XOR+POPCNT distance, минимальная RAM footprint. См. [`binary-embeddings-roadmap.md`](binary-embeddings-roadmap.md). |
 | Historical / read-only | **ANNOY** | Tree можно не держать в RAM, подгружать с диска по требованию. Но часто вытесняется HNSW/IVF. |
