@@ -432,13 +432,13 @@ Baseline — 768-dim float32 embedding (3,072 bytes per vector).
 | float32 baseline (768-dim) | 3,072 B | 1× | 1× |
 | MRL truncate 768→256 | 1,024 B | 3× | 3× |
 | MRL 256 + INT8 | 256 B | 4× vs float32, 12× cumulative | 12× |
-| MRL 256 + PQ m=8 | ~8 B per 256-dim (per segment basis) | ~128× vs float32, ~128× vs 256-float | ~384× cumulative on baseline 768-dim |
-| MRL 256 + binary (256-bit) | 32 B | 32× vs float32 | ~96× cumulative on baseline 768-dim |
+| MRL 256 + PQ m=8 | 8 B | 128× vs 256-float, 384× vs 768-float baseline | 384× |
+| MRL 256 + binary (256-bit) | 32 B | 32× vs float32 | 96× |
 
 Примеры комбинаций (rough — для оценки storage budget):
 
 - **MRL 256 + INT8** ≈ 12× compression (3× truncation × 4× INT8). Quality loss minimal; default для moderate-budget workloads.
-- **MRL 256 + PQ m=8** ≈ 36× compression (3× truncation × ~12× PQ per 256-dim segment basis). Quality loss noticeable, требует calibration set.
+- **MRL 256 + PQ m=8** ≈ 384× compression (3× truncation × 128× PQ per 256-dim segment basis, 1024 B → 8 B). Quality loss noticeable, требует calibration set.
 - **MRL 256 + binary** ≈ 96× compression (3× truncation × 32× binarisation). Самый агрессивный; biggest quality risk; используется как candidate filter, не standalone retrieval.
 
 > **All multipliers above are illustrative starting hypotheses, not validated cross-codec quality targets.** Actual ratios depend on:
@@ -453,14 +453,14 @@ Baseline — 768-dim float32 embedding (3,072 bytes per vector).
 
 Что stack'уется с чем, и где нужна осторожность:
 
-| Комбинация | Поведение | Замечания |
+| Combination | Status | Notes |
 |---|---|---|
-| MRL + INT8 | Хорошо: MRL truncation bit-level independent от INT8; INT8 quantises each retained dimension. | Compounded compression без конфликтов. |
-| MRL + PQ | Хорошо: MRL truncate до 256 → PQ на 256-dim; K-means clusters per segment. | Требует K-means calibration set на MRL-truncated embeddings. |
-| MRL + binary | Хорошо: MRL truncate → binarise. Tissier 2018 binarisation MRL-compatible per concept note. | См. §10.4 — open question о transfer to sentence-transformers. |
-| PQ + INT8 | Хорошо: PQ as residual, INT8 as code stage. | Используется в FAISS для additional memory savings. |
-| INT8 + binary | Хорошо: разные stages (per-dim scaling vs binarisation). | Composite compression допустим. |
-| MRL + sparse expansion (SPLADE) | Плохо: sparse expansion работает на полной размерности; MRL truncation теряет семантику. | Конфликт dimension semantics. |
+| MRL + INT8 | clearly composable | MRL truncation is bit-independent of INT8; INT8 quantises each retained dimension. |
+| MRL + PQ | clearly composable | Standard pipeline: MRL truncate to 256, then PQ m=8 on 256-dim sub-vectors; K-means clusters per segment. Requires K-means calibration set on MRL-truncated embeddings. |
+| MRL + separately-trained binary encoder | clearly composable | Tissier 2018-style: MRL truncate, then learn a binary encoder on the MRL-truncated embedding. См. §10.4 — open question о transfer to sentence-transformers. |
+| PQ + quantized centroids / residuals | requires defined codec | PQ code + INT8/quantised-centroid residuals is a defined codec schema (FAISS PQ+rz), not a simple per-stage multiplier; specify residual scheme explicitly. |
+| INT8 → binary | requires defined codec | binary is typically derived from float / from a learned encoder, not from INT8→binarize pipeline. INT8-then-binarize loses the per-dim scaling that INT8 preserved. |
+| MRL + SPLADE | NOT a codec — orthogonal retrieval channels | MRL dense + SPLADE sparse are orthogonal retrieval channels. They do not compose into one codec, but can coexist in hybrid fusion (different heads, different representations). |
 
 [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Адаптивные embeddings - variable-length representations и Matryoshka.md]
 
