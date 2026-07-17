@@ -649,6 +649,66 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 
 Все таблицы используют префикс payload versioning (`agent_memory.knowledge_unit.v1`, `agent_memory.qa.v1`, и т.п.), `Config::max_dbs` увеличивается с 16 до 64.
 
+### 5.6. Sync subsystem mapping (informational)
+
+Этот подраздел фиксирует соответствие между таблицами секций 5.1–5.5 и sync v0.1 coverage из §1.6.4. На момент написания ТЗ sync subsystem **не активирован** (см. §1.6 и §11.7), поэтому mapping носит **прогнозный / informational** характер: формальный статус каждого DBI будет пересмотрен при adoption.
+
+#### 5.6.1 Per-DBI sync coverage
+
+Для каждой DBI из §5.5 (а также §5.1, §5.2, §5.3) приводим предполагаемый underlying table type и соответствующий статус sync v0.1:
+
+| DBI | Underlying mdbx-containers type | Sync v0.1 status | Замечание |
+|---|---|---|---|
+| `knowledge_units` | `KeyValueTable<UnitId, KnowledgeUnitEnvelope>` (§5.5 Layer A) | Supported | Базовый KV путь; sync v0.1 покрывает |
+| `knowledge_units_by_kind` | `KeyMultiValueTable<KnowledgeUnitKind, UnitId>` DUPSORT (§5.5) | **NOT supported** | DUPSORT не покрыт в v0.1; reverse index layer не синхронизируется |
+| `unit_components` | `TypeDiscriminatedTable<ComponentKind, UnitId, ValueVariant<…>>` через `AnyValueTable` (§3.4) | **NOT supported** | `AnyValueTable` не покрыт в v0.1 |
+| `qa_payloads`, `fact_payloads`, `conversation_episode_payloads`, `compiled_article_payloads`, `chunk_payloads` | `KeyValueTable<UnitId, PerKindPayload>` (§5.5 Layer B) | Supported | Per-kind payloads — обычные KV |
+| `unit_projections` | `KeyValueTable<CompositeKey<...>, SearchProjection>` (§5.5 Layer C) | Supported | Composite key — opaque bytes на wire (см. §1.6.5) |
+| `embedding_meta`, `embedding_vectors` | `KeyValueTable<CompositeKey<...>, …>` (§5.5) | Supported | KV; vector store дополнительно через indirect path (§1.6.4) |
+| `inverted_token_to_unit` | `ReverseIndexTable<CompositeKey<ScopeId, TokenId, ProjectionKind, FieldId>, UnitId>` поверх `KeyMultiValueTable` (§3.2) | **NOT supported** | См. §5.6.2 — critical gap для lexical inverted index |
+| `field_to_postings` | `ReverseIndexTable<CompositeKey<…>, PostingStats>` поверх `KeyMultiValueTable` | **NOT supported** | Та же DUPSORT-проблема, что и у `inverted_token_to_unit` |
+| `metadata_filters` | `ReverseIndexTable<CompositeKey<ScopeId, MetadataKey, MetadataValue>, UnitId>` поверх `KeyMultiValueTable` | **NOT supported** | Pre-filter indexes не синхронизируются в v0.1 |
+| `graph_edges_by_src`, `graph_edges_by_dst` | `ReverseIndexTable` поверх `KeyMultiValueTable` | **NOT supported** | Graph edges — DUPSORT-семантика, см. §3.2 + §5.5 |
+| `temporal_event_index`, `temporal_unit_index` | `RangeIndexTable<uint64_timestamp, …>` поверх `KeyValueTable` или `KeyMultiValueTable` (§3.3) | Supported *или* **NOT supported** в зависимости от impl-а | Требует решения: если `RangeIndexTable` реализуется поверх `KeyMultiValueTable` (multi-payload per key), статус NOT supported; если поверх `KeyValueTable` (single payload), Supported |
+| `speaker_to_units`, `session_to_units` | `ReverseIndexTable` поверх `KeyMultiValueTable` | **NOT supported** | DUPSORT |
+| `usage_stats_index` | `ReverseIndexTable<CompositeKey<ScopeId, UnitId>, UsageStatsComponent>` (§5.5) | **NOT supported** | DUPSORT |
+| `schema_info` | `KeyValueTable<string, SchemaInfo>` (§5.5) | Supported | KV |
+| `lexical_token_by_text`, `lexical_token_by_id`, `lexical_chunk_stats`, `lexical_token_stats` | `KeyValueTable<...>` (§5.1) | Supported | KV |
+| `lexical_postings`, `lexical_field_postings` | `KeyMultiValueTable<...>` / `ReverseIndexTable` (§5.1, §3.2) | **NOT supported** | DUPSORT postings — критический gap для BM25 sync |
+| `binary_bucket_index`, `embedding_store`, `chunk_store` | `RangeIndexTable` / `KeyValueTable` (§5.2) | Supported (KV) *или* **NOT supported** (если `RangeIndexTable` через `KeyMultiValueTable`) | Зависит от impl-а, см. temporal_event_index выше |
+| `qa_knowledge`, `fact_store`, `event_store`, `graph_nodes` | `KeyValueTable<...>` (§5.3) | Supported | KV |
+| `qa_inverted`, `fact_inverted`, `resource_metadata_filters`, `graph_edges_by_src/dst` | `ReverseIndexTable` поверх `KeyMultiValueTable` | **NOT supported** | DUPSORT reverse indexes |
+| `resource_kinds` | `TypeDiscriminatedTable<DerivedRecordKind, ResourceId, payload>` через `AnyValueTable` (§5.3) | **NOT supported** | `AnyValueTable` |
+| `agent_memory_documents`, `agent_memory_chunks`, `agent_memory_document_chunks`, `agent_memory_resource_manifests` | `KeyValueTable<...>` (§5.4) | Supported | KV infrastructure |
+
+Эта таблица — **best-effort projection на момент написания TZ**. Статус для каждого DBI может измениться после `RangeIndexTable` upstream-уточнения (`KeyValueTable` vs `KeyMultiValueTable` основа) и после `KeyMultiValueTable` sync coverage, который формально запланирован на v0.2 (см. §11.7).
+
+#### 5.6.2 Critical gaps (явные)
+
+Из таблицы §5.6.1 вытекают два **критических gap-а** для agent-memory-cpp:
+
+1. **`inverted_token_to_unit` (DBI из §3.3 / §5.5 Layer C secondary indexes).**
+   Underlying `KeyMultiValueTable` через `ReverseIndexTable` (см. §3.2) — DUPSORT-семантика. Sync v0.1 не покрывает `KeyMultiValueTable`, поэтому lexical inverted index **не синхронизируется между узлами в v0.1**.
+
+2. **`unit_components` (DBI из §3.4 / §5.5 Layer B).**
+   Underlying `AnyValueTable` через `TypeDiscriminatedTable` (см. §3.4). Sync v0.1 не покрывает `AnyValueTable`, поэтому operational + per-kind components **не синхронизируются между узлами в v0.1**.
+
+Та же проблема распространяется на остальные DUPSORT-производные DBI (`field_to_postings`, `metadata_filters`, `graph_edges_by_src/dst`, `speaker_to_units`, `session_to_units`, `usage_stats_index`, BM25 `lexical_postings`).
+
+Цитата из upstream `DESIGN.md` (по указанному в §1.6.3 файлу):
+
+> "Do not add `record_op()` paths for unsupported table types without first updating this design document and adding round-trip replication tests for the new wire-format semantics."
+
+Это означает, что **любая попытка «форсировать» sync для `KeyMultiValueTable` / `AnyValueTable` без обновления `DESIGN.md` + новых round-trip тестов считается нарушением upstream-контракта**. Adoption для указанных путей в v0.1 заблокирован upstream policy-ей.
+
+#### 5.6.3 Implication для agent-memory-cpp
+
+До тех пор, пока upstream не выпустит v0.2 с `KeyMultiValueTable` и `AnyValueTable` wire-format-ом, **lexical inverted index и scope-aware secondary indexes, а также `unit_components` storage, не могут быть синхронизированы между узлами**. Это напрямую влияет на multi-host scenario в `guides/memory-stacks-roadmap.md` §13.2/13.3 (Distributed scope routing).
+
+**Промежуточное решение** для проекта: defer sync adoption для путей `KeyMultiValueTable` / `AnyValueTable` до v0.2. KV-derived пути (`knowledge_units`, `unit_projections`, `embedding_*`, `schema_info`, per-kind payloads) технически покрыты, но включать их в v0.1 single-host конфигурации смысла нет (single-writer per env остаётся правилом M0/M1/M2, см. §1 non-goals).
+
+Конкретное решение о formal adoption (включая budget reallocation для 5 sync system DBIs) фиксируется в §11.7.
+
 ## 6. Порядок реализации (приоритеты)
 
 **P0 (блокер для knowledge units):**
