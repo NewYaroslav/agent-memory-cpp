@@ -50,6 +50,8 @@ Non-goals:
 - Not an LLM Wiki CLI tool. The CLI is part of the planned
   `agent-memory-cli` target (`memory-stacks-roadmap.md` §16 step 16).
 
+See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadmap.md) for the conceptual framing of LLM Wiki content (operational details > general patterns; "7 check-questions for compression quality") and [`vector-db-engineering-roadmap.md`](vector-db-engineering-roadmap.md) for backing-vector-store selection.
+
 ## §2. Source attribution policy
 
 This guide synthesises material from several sources. Citations follow the

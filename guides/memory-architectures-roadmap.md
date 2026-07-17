@@ -36,6 +36,8 @@ Non-goals:
 - Не описывать внутренние классы `agent-memory-cpp`. Это ADR'ы и stack-спецификации, они в `memory-stacks-roadmap.md`.
 - Не каталогизировать vector DB или graph DB. ANN-выбор — в [`optimization-roadmap.md`](optimization-roadmap.md).
 
+See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadmap.md) for the conceptual backbone (prediction ↔ compression, "what good compression preserves") and [`vector-db-engineering-roadmap.md`](vector-db-engineering-roadmap.md) for backing-vector-store operational matrix.
+
 ## §2. Architecture Comparison
 
 Таблица сравнения построена по материалам из следующих источников:

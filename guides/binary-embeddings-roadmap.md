@@ -402,12 +402,91 @@ This guide treats M0 as the starting point of the roadmap.
 6. **Adversarial robustness.** Small text edit (paraphrase, synonym swap) can radically change binary code. How robust is binary coarse-filter for production RAG with paraphrased queries?
 7. **PQ on LLM hidden states.** Joulin 2016 PQ for text classification is on Word2Vec; does it transfer to 4096-dim LLM hidden states with residual compensation?
 8. **Adaptive dimension selection per query.** Can we dynamically select embedding dimension by query complexity, so simple queries don't pay for full D dimensions?
-9. **MRL + binary composition.** 2048-dim embedding → MRL-truncate to 256 → binarize to 256 bits → 16× additional compression. Does this nested compression retain usable semantic quality?
+9. **MRL + binary composition.** 2048-dim embedding → MRL-truncate to 256 → binarize to 256 bits → 32× additional compression (1024 B → 32 B), 256× cumulative (8192 B → 32 B). Does this nested compression retain usable semantic quality?
 10. **Decoder training cost.** Autoencoder training requires labelled corpus (10k-1M embeddings). What is the minimum viable training set size for our specific AgentLTM workload? Workload-specific, requires empirical measurement.
 
-## §10. References
+## §10. Composite compression (MRL + PQ / INT8 / binary)
 
-### 10.1. Public sources
+See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadmap.md) for the conceptual framing (cross-entropy, prefix-free codes, "what good compression preserves") and the §10 Composite compression table for MRL+INT8 / MRL+PQ / MRL+binary multipliers.
+
+Одна техника сжатия (MRL truncate, INT8, PQ, binary) обычно **не** достигает жёстких storage / latency targets в одиночку. Memory savings are configuration-dependent; the examples in this section range from 12× to 384× depending on embedding dimension, code width, and composition. Этот раздел систематизирует совместимость и реалистичные multipliers.
+
+[Source: arXiv:2205.13147 — Kusupati et al. 2022, Matryoshka Representation Learning]
+<br>[Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Адаптивные embeddings - variable-length representations и Matryoshka.md]
+
+### §10.1. Why composite compression
+
+- **MRL truncate** уменьшает размерность, но каждое измерение остаётся float32 → по умолчанию 3× compression для 768→256.
+- **INT8 scalar quantization** уменьшает bytes-per-dim (4 → 1) без зависимости от размерности → 4× compression.
+- **PQ (m=8, K=256)** заменяет sub-vector на 1 байт индекс кластера → ~96× на 768-dim, ~128× на 256-dim (per-segment basis).
+- **Binary binarisation** (Tissier 2018 autoencoder или RH-LSH) — 1 bit per dim или фиксированный bit_count → 32× для 768-dim, 8× для 256-dim.
+
+Если storage budget жёстче, чем даёт одна техника, композиция stack'ов даёт multiplicative effect.
+
+### §10.2. Composite multiplier table
+
+Baseline — 768-dim float32 embedding (3,072 bytes per vector).
+
+| Stage | Output size per vector | Stage multiplier | Cumulative |
+|---|---|---|---|
+| float32 baseline (768-dim) | 3,072 B | 1× | 1× |
+| MRL truncate 768→256 | 1,024 B | 3× | 3× |
+| MRL 256 + INT8 | 256 B | 4× vs float32, 12× cumulative | 12× |
+| MRL 256 + PQ m=8 | 8 B | 128× vs 256-float, 384× vs 768-float baseline | 384× |
+| MRL 256 + binary (256-bit) | 32 B | 32× vs float32 | 96× |
+
+Примеры комбинаций (rough — для оценки storage budget):
+
+- **MRL 256 + INT8** ≈ 12× compression (3× truncation × 4× INT8). Quality loss minimal; default для moderate-budget workloads.
+- **MRL 256 + PQ m=8** ≈ 384× compression (3× truncation × 128× PQ per 256-dim segment basis, 1024 B → 8 B). Quality loss noticeable, требует calibration set.
+- **MRL 256 + binary** ≈ 96× compression (3× truncation × 32× binarisation). Самый агрессивный; biggest quality risk; используется как candidate filter, не standalone retrieval.
+
+> **All multipliers above are illustrative starting hypotheses, not validated cross-codec quality targets.** Actual ratios depend on:
+> - embedding model (BERT vs E5 vs BGE behave differently under quantisation);
+> - corpus (technical text, conversational, structured vs unstructured);
+> - retrieval metric (Recall@10 vs nDCG@10 vs MRR);
+> - quantisation training data (or lack thereof).
+>
+> Эти числа полезны для sizing storage budget, не как acceptance contracts.
+
+### §10.3. Compatibility matrix
+
+Что stack'уется с чем, и где нужна осторожность:
+
+| Combination | Status | Notes |
+|---|---|---|
+| MRL + INT8 | clearly composable | MRL truncation is bit-independent of INT8; INT8 quantises each retained dimension. |
+| MRL + PQ | clearly composable | Standard pipeline: MRL truncate to 256, then PQ m=8 on 256-dim sub-vectors; K-means clusters per segment. Requires K-means calibration set on MRL-truncated embeddings. |
+| MRL + separately-trained binary encoder | clearly composable | Tissier 2018-style: MRL truncate, then learn a binary encoder on the MRL-truncated embedding. См. §10.4 — open question о transfer to sentence-transformers. |
+| PQ + quantized centroids / residuals | requires defined codec | PQ code + INT8/quantised-centroid residuals is a defined codec schema (FAISS PQ+rz), not a simple per-stage multiplier; specify residual scheme explicitly. |
+| INT8 → binary | requires defined codec | binary is typically derived from float / from a learned encoder, not from INT8→binarize pipeline. INT8-then-binarize loses the per-dim scaling that INT8 preserved. |
+| MRL + SPLADE | NOT a codec — orthogonal retrieval channels | MRL dense + SPLADE sparse are orthogonal retrieval channels. They do not compose into one codec, but can coexist in hybrid fusion (different heads, different representations). |
+
+[Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Адаптивные embeddings - variable-length representations и Matryoshka.md]
+
+### §10.4. Open question: MRL + binary composition
+
+Из §9 question 9: «2048-dim embedding → MRL-truncate to 256 → binarize to 256 bits → 32× additional compression (1024 B → 32 B), 256× cumulative (8192 B → 32 B). Does this nested compression retain usable semantic quality?»
+
+Промоутируем в dedicated section, потому что эта комбинация наиболее перспективна для million-vector corpora с жёсткими memory budget'ами:
+
+- Tissier 2018 binarisation тестировалась на word-embedding scale (GloVe 300-dim); sentence-transformer transfer невалидирован.
+- MRL truncate 2048→256 — coarse-to-fine semantic; первые 256 dims обычно несут основную семантику (per Kusupati et al. 2022 ImageNet results, 14× speedup с 14× reduction при comparable accuracy).
+- **Composite arithmetic (MRL 256 + 256-bit binary), per code:**
+  - 768-dim float32 + MRL 256 + 256-bit code: 3072 B → 1024 B → 32 B → ~96× compression (1M vectors: ~3 GB → ~32 MB).
+  - 2048-dim float32 + MRL 256 + 256-bit code: 8192 B → 1024 B → 32 B → ~256× compression (1M vectors: ~8 GB → ~32 MB).
+  Оба варианта влезают в single-process memory budget на million-vector corpora.
+- **Открытый вопрос:** сохраняет ли nested MRL+binary качество на современных sentence-transformer embeddings (BGE, E5, M3-Embedding), или теряет tail of semantic distribution?
+
+Рекомендация: **treat as experimental until benchmarked on target corpus.** Использовать как `DenseIndexMode::BinaryCandidateFilter` (planned) — coarse filter перед float rerank, не standalone storage.
+
+[Source: arXiv:2205.13147 — Kusupati et al. 2022]
+<br>[Source: arXiv:1803.09065 — Tissier, Gravier, Habrard 2018]
+<br>[Source: internal note — no public source available. Path: ai-agent-playbook/concepts/llm-research/Адаптивные embeddings - variable-length representations и Matryoshka.md]
+
+## §11. References
+
+### 11.1. Public sources
 
 - **Tissier, Julien; Gravier, Christophe; Habrard, Amaury (2018). "Near-lossless Binarization of Word Embeddings."** AAAI 2019 (arXiv:1803.09065). URL: <https://arxiv.org/abs/1803.09065>. Code: <https://github.com/tca19/near-lossless-binarization>.
 - **Chen, Jianlv; Xiao, Shitao; Zhang, Peitian; Luo, Kun; Lian, Defu; Liu, Zheng (2024). "M3-Embedding: Multi-Linguality, Multi-Functionality, Multi-Granularity Text Embeddings Through Self-Knowledge Distillation."** arXiv:2402.03216, BAAI (BGE-M3 in open-source release). URL: <https://arxiv.org/abs/2402.03216>.
@@ -416,12 +495,12 @@ This guide treats M0 as the starting point of the roadmap.
 - **Kusupati, Aditya; et al. (2022). "Matryoshka Representation Learning."** arXiv:2205.13147. URL: <https://arxiv.org/abs/2205.13147>.
 - **He, et al. (2025). "A Survey on Deep Text Hashing."** arXiv:2510.27232. URL: <https://arxiv.org/abs/2510.27232>.
 
-### 10.2. Internal notes (ai-agent-playbook)
+### 11.2. Internal notes (ai-agent-playbook)
 
 - `ai-agent-playbook/concepts/llm-research/Бинаризация эмбеддингов для экономии памяти и ускорения retrieval.md` (internal note) — comprehensive concept summary: Tissier 2018 autoencoder approach, deep text hashing survey, PQ, MRL, regularising effect of binarisation.
 - `ai-agent-playbook/resources/llm-research/M3-Embedding BGE-M3 - Multi-Linguality Multi-Functionality Multi-Granularity - arXiv 2402.03216 - разбор статьи.md` (internal note) — BGE-M3 paper analysis: 3M properties (multi-linguality, multi-functionality, multi-granularity), self-knowledge distillation.
 
-### 10.3. In-house (agent-memory-cpp/guides/)
+### 11.3. In-house (agent-memory-cpp/guides/)
 
 - [`optimization-roadmap.md`](optimization-roadmap.md) — primary technical anchor:
   - §"Eigen и SIMD стратегия" — SIMD abstraction layer, `popcount64`, `HammingTopK` kernel design.

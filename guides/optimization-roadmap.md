@@ -24,6 +24,8 @@ Non-goals of this document:
   [`compaction-roadmap.md`](compaction-roadmap.md), future).
 - CLI and tooling (see [`cli-roadmap.md`](cli-roadmap.md), future).
 
+See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadmap.md) for the conceptual backbone (prediction ↔ compression, "7 check-questions for compression quality", why operational details > general patterns) and [`vector-db-engineering-roadmap.md`](vector-db-engineering-roadmap.md) for the operational decision matrix (Chroma / Qdrant / Milvus / Pinecone / Weaviate across 8 attributes).
+
 ## Core Rules
 
 - Keep `Embedding` as `std::vector<float>` in the public contract.

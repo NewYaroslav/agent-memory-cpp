@@ -73,6 +73,8 @@ Non-goals:
 - Not a tutorial on `MemoryStack::open()` API. See [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md)
   §7 for the runtime contract and `examples/` for compiled examples (planned).
 
+See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadmap.md) for the conceptual framing of what good memory compression preserves ("user was setting up TTS" vs operational details like "Qwen3-TTS with compile ≈ 9.5 GB VRAM").
+
 ## §2. Source attribution policy
 
 This guide synthesises material from several sources. Citations follow the
@@ -283,6 +285,37 @@ reasoning, 85-93% token reduction vs MemGPT.
 
 [Source: arXiv:2502.12110 — A-MEM paper (NeurIPS 2025)]
 <br>[Source: internal note — no public source available. Path: ai-agent-playbook/concepts/ai-agents/Zettelkasten-based agentic memory — A-MEM pattern.md]
+<br>[Source: internal note — no public source available. Path: ai-agent-playbook/resources/llm-research/A-MEM - Agentic Memory for LLM Agents (arXiv 2502.12110) - разбор статьи.md]
+
+**Datasets evaluated.** Two benchmarks, оба long-term conversational:
+
+- **LoCoMo** (Maharana et al., 2024) — long-term conversational memory benchmark; диалоги в среднем 9K токенов, до 35 сессий; 7,512 question-answer пар; 5 категорий вопросов (single-hop, multi-hop, temporal reasoning, open-domain, adversarial).
+- **DialSim** (Kim et al., 2024) — long-term multi-party диалоги из TV-shows (Friends, TBBT, The Office); 1,300 сессий, ~350K токенов, 1000+ вопросов на сессию.
+
+**Models evaluated.** Шесть foundation models в основном эксперименте: GPT-4o-mini, GPT-4o, Qwen2.5 1.5B, Qwen2.5 3B, Llama 3.2 1B, Llama 3.2 3B. Local deployment через Ollama + LiteLLM для structured outputs. Appendix дополнительно покрывает DeepSeek-R1-32B, Claude 3.0 Haiku, Claude 3.5 Haiku.
+
+**Latency.** GPT-4o-mini на memory operation — **5.4 секунды**; Llama 3.2 1B локально — **1.1 секунды** на ту же операцию. Это ~5× разница, плюс разница в стоимости (commercial API vs self-hosted).
+
+**Ablation study (GPT-4o-mini, LoCoMo benchmark).** Multi-Hop F1:
+
+| Variant | Multi-Hop F1 | Temporal F1 |
+|---|---|---|
+| w/o Link Generation + Memory Evolution | 9.65 | 24.55 |
+| w/o Memory Evolution only | 21.35 | 31.24 |
+| **Full A-MEM** | **27.02** | **45.85** |
+
+Без Link Generation и Memory Evolution — почти в 3 раза хуже на multi-hop. Memory Evolution даёт дополнительные ~6 пунктов F1 поверх Link Generation. Это эмпирическое подтверждение того, что **оба** механизма — LG и ME — критичны; нельзя оставить только один.
+
+**Prompt templates.** Paper содержит prompt templates в Appendix B:
+
+- **B.1 Note Construction** — LLM получает interaction и генерирует `keywords`, `tags`, `contextual_description`.
+- **B.2 Link Generation** — LLM получает новую note и candidate links → решает, какие установить.
+- **B.3 Memory Evolution** — LLM получает existing memory + new memory → решает, какие поля existing memory обновить.
+- **B.4 Examples** — Q/A примеры с трассировкой.
+
+Наша интеграция через `IQueryTransformer` adapter — см. §5.2.4 ниже.
+
+**Zettelkasten historical context.** Метод картотеки, разработанный немецким социологом Никласом Луманом (1927-1998). Каждая карточка содержит одну идею и связывается с другими через явные ссылки. Луман использовал Zettelkasten для написания **70+ книг и 400+ академических статей**. Источник: Ahrens S. "How to Take Smart Notes" (2017). Авторы A-MEM прямо ссылаются на этот метод как на источник вдохновения. Key insight для нашего проекта: **atomic notes + linking** как технология для управления знанием, переносимая из бумажной картотеки в LLM-driven memory.
 
 **On `agent-memory-cpp` mapping.** A-MEM's atomic notes → `Note` kind with
 generic payload (no dedicated payload; primary_text holds the note body).
