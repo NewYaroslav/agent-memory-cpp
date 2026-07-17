@@ -466,7 +466,7 @@ Baseline — 768-dim float32 embedding (3,072 bytes per vector).
 
 ### §10.4. Open question: MRL + binary composition
 
-Из §9 question 9: «2048-dim embedding → MRL-truncate to 256 → binarize to 256 bits → ~256× additional compression. Does this nested compression retain usable semantic quality?»
+Из §9 question 9: «2048-dim embedding → MRL-truncate to 256 → binarize to 256 bits → 32× additional compression (1024 B → 32 B), 256× cumulative (8192 B → 32 B). Does this nested compression retain usable semantic quality?»
 
 Промоутируем в dedicated section, потому что эта комбинация наиболее перспективна для million-vector corpora с жёсткими memory budget'ами:
 
