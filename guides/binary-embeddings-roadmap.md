@@ -402,7 +402,7 @@ This guide treats M0 as the starting point of the roadmap.
 6. **Adversarial robustness.** Small text edit (paraphrase, synonym swap) can radically change binary code. How robust is binary coarse-filter for production RAG with paraphrased queries?
 7. **PQ on LLM hidden states.** Joulin 2016 PQ for text classification is on Word2Vec; does it transfer to 4096-dim LLM hidden states with residual compensation?
 8. **Adaptive dimension selection per query.** Can we dynamically select embedding dimension by query complexity, so simple queries don't pay for full D dimensions?
-9. **MRL + binary composition.** 2048-dim embedding → MRL-truncate to 256 → binarize to 256 bits → 16× additional compression. Does this nested compression retain usable semantic quality?
+9. **MRL + binary composition.** 2048-dim embedding → MRL-truncate to 256 → binarize to 256 bits → 32× additional compression (1024 B → 32 B), 256× cumulative (8192 B → 32 B). Does this nested compression retain usable semantic quality?
 10. **Decoder training cost.** Autoencoder training requires labelled corpus (10k-1M embeddings). What is the minimum viable training set size for our specific AgentLTM workload? Workload-specific, requires empirical measurement.
 
 ## §10. Composite compression (MRL + PQ / INT8 / binary)
@@ -418,7 +418,7 @@ See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadm
 
 - **MRL truncate** уменьшает размерность, но каждое измерение остаётся float32 → по умолчанию 3× compression для 768→256.
 - **INT8 scalar quantization** уменьшает bytes-per-dim (4 → 1) без зависимости от размерности → 4× compression.
-- **PQ (m=8, K=256)** заменяет sub-vector на 1 байт индекс кластера → ~96× на 768-dim, ~12× на 256-dim (per-segment basis).
+- **PQ (m=8, K=256)** заменяет sub-vector на 1 байт индекс кластера → ~96× на 768-dim, ~128× на 256-dim (per-segment basis).
 - **Binary binarisation** (Tissier 2018 autoencoder или RH-LSH) — 1 bit per dim или фиксированный bit_count → 32× для 768-dim, 8× для 256-dim.
 
 Если storage budget жёстче, чем даёт одна техника, композиция stack'ов даёт multiplicative effect.
