@@ -238,23 +238,40 @@ p* = (1/b)^(1/r)
 - **Random-hyperplane (cosine):** `c*` такое, что `1 - arccos(c*) / π = p*` (нелинейная трансформация; `c* > p*`, потому что arccos-трансформация отображает cosine в `[0.5, 1]`, не `[0, 1]`).
 - **p-stable LSH (L2):** `||q - x*||` — decreasing function от `p*`, конкретная форма зависит от distribution.
 
-Для примера из §3.6.4b (b=8, r=16): `p* ≈ 0.911`. При этом:
-- MinHash: `J* ≈ 0.911` (высокий Jaccard).
-- Random-hyperplane: `c* ≈ 0.961` (высокий cosine, потому что `arccos(0.961) ≈ 0.279`, и `1 - 0.279/π ≈ 0.911`).
+Для примера из §3.6.4b (b=8, r=16): `p* = (1/b)^(1/r) = (1/8)^(1/16) ≈ 0.8781`. При этом:
+
+Transition points (P(candidate) ≈ 63.8%):
+- MinHash J* ≈ 0.878 (J directly maps to p)
+- Random-hyperplane c* ≈ 0.928 (because p_bit(c) = 1 - arccos(c)/π maps
+  cosine from [0.5, 1] into [1, 0.5], and c < 0.928 still gives p_bit > 0.911)
+
+Derivation for random-hyperplane cosine threshold: setting `p_bit(c) = p* = 0.878`,
+`arccos(c)/π = 1 - 0.878 = 0.122`, hence `arccos(c) = π × 0.122 ≈ 0.3830` и `c = cos(0.3830) ≈ 0.9276`.
 
 Таким образом, при одинаковых `b, r` random-hyperplane LSH имеет **более резкий transition** (выше threshold similarity): даже ортогональные векторы дают `p_bit = 0.5`, и для пробоя 63%-threshold нужен более высокий cosine, чем при MinHash с тем же `b × r`.
 
 Trade-off (при фиксированном `b × r`):
 
-- **Увеличить `b`, уменьшить `r`** → ниже `s*` → больше кандидатов, шумнее (высокий recall, низкая precision в bucket collision).
-- **Уменьшить `b`, увеличить `r`** → выше `s*` → меньше кандидатов, точнее (низкий recall, высокая precision).
-- **Bucket cardinality** ≠ `N / b`. `b` — число independent band tables, **не** число buckets. Каждый объект хешируется в exactly `b` band tables (по одной на band). Число объектов в одной band bucket зависит от:
-  - hash space (`b × r` возможных значений на band);
+- **Увеличить `b`, уменьшить `r`** → LOWER `p*` (transition collision probability drops) → больше кандидатов, шумнее (высокий recall, низкая precision в bucket collision).
+- **Уменьшить `b`, увеличить `r`** → HIGHER `p*` (transition collision probability rises) → меньше кандидатов, точнее (низкий recall, высокая precision).
+- **Bucket cardinality** ≠ `N / b`. `b` — число independent band TABLES, **не** divisor of bucket occupancy. Каждый объект хешируется в exactly one bucket in EACH of the `b` tables (по одной bucket per band table). Число объектов в одной band bucket зависит от:
+  - hash space (число distinct keys в band table);
   - распределения данных (clustering);
   - per-bit collision probability;
   - размера корпуса.
 
-  Для uniform random hash и N объектов в b bands expected number of objects per hash-bucket = `N / (b × hash_space_size)`. Для typical LSH (например, 64-bit band hash) — `N / (b × 2^64)` — vanishingly small. Buckets обычно sparse.
+  `b` is the number of independent band TABLES, not a divisor of bucket occupancy. Each object hashes into exactly one bucket in EACH of the `b` tables, so:
+
+  ```
+  expected objects per bucket in one table = N / hash_space_size
+  ```
+
+  For random-hyperplane LSH with `r`-bit band keys, the band key has exactly `2^r` possible values. Hashing the `2^r`-bit pattern into a wider integer (e.g., uint64) does NOT increase the number of meaningfully distinct keys — only the `2^r` patterns are distinct.
+
+  For b=8, r=16, hash_space_size = `2^16` = 65,536:
+  - mean per-bucket in one table = `N / 65,536` = 1,000,000 / 65,536 ≈ 15.3
+  - for 1M objects, b=8 tables, r=16, average ~15.3 objects per bucket per table
+  - this gives a coarse filter that reduces candidates before final Hamming/dot-product check
 
 #### 3.6.4a. Worked example (MinHash / Jaccard): b=32, r=2
 
@@ -283,15 +300,17 @@ Random-hyperplane LSH: b=8, r=16 (for 128-bit code: 8 bands × 16 bits per band)
 p_bit(c) = 1 - arccos(c) / π
 P(candidate | c) = 1 - (1 - p_bit(c)^r)^b = 1 - (1 - p_bit(c)^16)^8
 
-At c=0: p_bit = 0.5; P ≈ 0.000122 (≈122 false positives per 1M)
-At c=0.5: p_bit ≈ 0.667; P ≈ 0.020 (≈20K)
-At c=0.9: p_bit ≈ 0.866; P ≈ 0.572
-At c=0.95: p_bit ≈ 0.899; P ≈ 0.74
-At c=0.99: p_bit ≈ 0.954; P ≈ 0.993
+| c | p_bit(c) | P(candidate) |
+|---|----------|---------------|
+| 0.00 | 0.5000 | 0.000122 |
+| 0.50 | 0.6667 | 0.0121 |
+| 0.90 | 0.8565 | 0.503 |
+| 0.95 | 0.8989 | 0.799 |
+| 0.99 | 0.9550 | 0.9945 |
 
-Note: the transition point (P ≈ 63%) is at p* ≈ 0.911, which corresponds to:
-- MinHash: J ≈ 0.911 (high Jaccard)
-- Random-hyperplane: c ≈ 0.961 (cosine similarity)
+Note: the transition point (P ≈ 63%) is at p* ≈ 0.878 (per §3.6.3), which corresponds to:
+- MinHash: J ≈ 0.878 (high Jaccard)
+- Random-hyperplane: c ≈ 0.928 (cosine similarity)
 
 This means random-hyperplane LSH has a much sharper transition than
 MinHash. The transition shifts to higher similarity because the
@@ -343,11 +362,11 @@ candidate set per query at b=8, r=16 (128-bit raw code):
   where ALL N objects have the same similarity c to the query. Real
   corpora have a distribution of similarities, so for high c (e.g.,
   0.95) very few objects have such high similarity — expected candidates
-  is typically a small fraction of N, not N × ~0.74 ≈ N.
+  is typically a small fraction of N, not N × ~0.799 ≈ N.
 
   For sanity-check: with 1M 768-dim embeddings, even if 1000 objects
-  have cosine 0.95 to the query, expected candidates ≈ 1000 × ~0.74 ≈ 740
-  (not 1M × ~0.74 = 740K).
+  have cosine 0.95 to the query, expected candidates ≈ 1000 × ~0.799 ≈ 799
+  (not 1M × ~0.799 = 799K).
   At low similarity (c ≈ 0): E[candidates] ≈ 1M × ~0.000122 ≈ 122
   false positives per query — small enough for efficient rerank
   (b=64, r=2 в этом диапазоне давал бы ≈N false positives, что делает
