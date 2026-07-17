@@ -37,8 +37,153 @@
 - **Schema versioning framework поверх mdbx-containers** — payload versioning остаётся на стороне приложения (текущие префиксы `agent_memory.document.v1` и т.п. сохраняются).
 - **Background compaction API** — не в scope первой итерации.
 - **Bloom filters** — не в scope.
-- **Multi-process support**: extension НЕ добавляет новый multi-process API. MDBX штатно поддерживает multi-process read-only режим без изменений в extension; agent-memory-cpp может использовать этот режим без mdbx-containers изменений (future research, не входит в M0/M1/M2 scope).
+- **Multi-process write coordination через MDBX штатный multi-process API** не входит в scope (single-writer per env остаётся правилом M0/M1/M2). **Multi-node replication** через upstream `sync` subsystem (см. §1.6) рассматривается как опциональный opt-in profile за пределами M0/M1/M2; см. §11.7 для решения adoption.
 - **Per-thread transaction model** сохраняется как primary design constraint (см. `common/Connection.hpp`); multi-table write обеспечивается одним `Transaction`-объектом, разделяемым между таблицами, а не координацией отдельных транзакций (см. `guides/memory-stacks-roadmap.md`, open issue 17.9).
+
+### 1.6. Upstream sync subsystem (informational)
+
+#### 1.6.1 Purpose
+
+Этот раздел носит **чисто информационный характер** на момент написания ТЗ. Локальный submodule `external/mdbx-containers` (commit `e9e9f2f`, tag `v1.0.0-97-ge9e9f2f`) **не содержит** подкаталога `sync/`. Upstream `external/mdbx-containers` HEAD (`2bb711e`) реализует sync subsystem, описанный ниже. Цель раздела — зафиксировать состояние upstream sync v0.1 в этом ТЗ, чтобы будущие ревизии не дрифтовали относительно фактической поверхности API. Никакие изменения в текущих DBIs секции 5 не подразумеваются; фиксация adoption — отдельный вопрос §11.7.
+
+#### 1.6.2 Source attribution policy
+
+Поскольку upstream `mdbx-containers` не публикует RFC / спецификации отдельно от кода, в этом разделе используется **двухуровневая citation pattern**:
+
+1. **Public + supplementary internal** — если у PR есть публичный URL (например, GitHub PR `#86`), ссылаемся на него как на первичный источник; внутренние файлы (`DESIGN.md`, `SyncEngine.hpp`) приводятся как подтверждение / цитата, не как независимая authorities.
+2. **Internal-only with explicit disclaimer** — для деталей, не отражённых в публичных PR description (например, точные LOC-счётчики header-файлов), приводится оценка со ссылкой на конкретный файл; такие числа считаются best-effort и должны быть перепроверены при формальной adoption.
+
+Никакие URL, arXiv ID, или DOI не публикуются без верификации; если источника нет — пишем «нет публичного источника» и приводим internal anchor.
+
+#### 1.6.3 Upstream `sync` v0.1 — файлы
+
+Директория: `include/mdbx_containers/sync/` в upstream HEAD. Состав:
+
+| Файл | Назначение | Ориентир LOC |
+|---|---|---|
+| `DESIGN.md` | Дизайн-контракт v0.1, locked decisions | ~487 |
+| `SyncEngine.hpp` | Pull/push/apply координатор | ~896 |
+| `SyncWorker.hpp` | Фоновый pull/apply lifecycle | ~650 |
+| `protocol.hpp` | `PullRequest`, `PullResponse`, `PushRequest`, `PushResponse` + `CancellationToken` | н/д |
+| `ISyncPeer.hpp` | Абстрактный transport interface (`pull`, `push`, `request_cancel`) | н/д |
+| `DirectSyncPeer.hpp` | In-process peer — единственный транспорт, поставляемый в v0.1 | н/д |
+
+Внутренний layout дополнительно содержит `stores/` подкаталог с 5 системными DBIs (см. §1.6.10) и compile-time gate `MDBXC_SYNC_ENABLED` (default `0`). Подключение sync-функционала требует явного `-DMDBXC_SYNC_ENABLED=1` при сборке `mdbx-containers`.
+
+Public first-class упоминания sync subsystem в PR descriptions — это GitHub PR #86–#103 (chronologically; детали в §1.6.8). PR #104 и PR #105 остаются open на момент написания ТЗ (§1.6.9).
+
+#### 1.6.4 v0.1 support matrix
+
+Sync v0.1 покрывает wire-format round-trip только для определённых table types upstream:
+
+| Upstream table type | Sync v0.1 | Замечание |
+|---|---|---|
+| `KeyValueTable<K, V, Options>` | Supported | Базовый KV путь |
+| `KeyTable<K, Options>` | Supported | Set-like без payload |
+| `ValueTable<V>` | Supported | Одиночный value per name |
+| `SequenceTable<V>` | Supported | Auto-increment ID generator |
+| `VectorStore` (через `vector::VectorStore`) | Supported (indirect) | Round-trip через KeyValueTable-обёртку в v0.1 |
+| `AnyValueTable<K, Options>` | **NOT supported** | Heterogeneous typed payload не имеет wire-format в v0.1 |
+| `KeyMultiValueTable<K, V, Options>` | **NOT supported** | DUPSORT multi-payload; блокирует inverted index sync (см. §5.6) |
+| `HashedKeyValueStore` | **NOT supported** | Coverage shadow-graphs and HashedKeyValueStore excluded |
+
+Покрытие для любого table type, не перечисленного как «Supported», считается **out of v0.1 scope**; см. §5.6 для влияния на DBI-схему настоящего проекта.
+
+#### 1.6.5 Wire format locks (по `DESIGN.md`)
+
+Locked decisions, цитаты согласно `include/mdbx_containers/sync/DESIGN.md`:
+
+- **Magic prefix** запросов и ответов — `MDBXCSYN` (7 байт ASCII). Позволяет отличать sync traffic от других потенциальных payload-ов по тому же транспорту.
+- **`seq` поле** (sequence number / batch id) сериализуется **big-endian**, чтобы порядок числового сравнения совпадал с лексикографическим на уровне байтов.
+- **Payload integers** (record sizes, lengths, флаги) сериализуются **little-endian**, чтобы MDBX native word order не требовал byte-swap на типичной x86_64 / aarch64 платформе.
+- **Application keys** — **opaque bytes** на уровне wire format. Sync subsystem не интерпретирует содержимое ключей; ordering и deduplication отдаются на стороне `KeyValueTable`/`KeyMultiValueTable` интерфейса.
+
+Эти четыре решения считаются **locked** до появления отдельного `DESIGN.md:2xx`-update-а (по аналогии с существующим changelog-стилем upstream); пересмотр требует явного bump-а версии wire format.
+
+#### 1.6.6 Lifecycle state machine (по `SyncWorker.hpp`)
+
+`SyncWorker` реализует явный state machine для фонового pull/apply:
+
+```
+Stopped → Starting → Idle → Pulling → Applying → Idle → Backoff
+                                                       ↓ (на success)
+                                                     Idle
+                                                       ↓ (на error)
+                                                     Backoff (exponential)
+                                                       ↓ (после N failures)
+                                                     Failed
+Stopping ← (user stop или shutdown signal)
+Stopped
+```
+
+Переходы:
+
+- `Stopped → Starting` — worker constructed и ready to start.
+- `Starting → Idle` — internal init завершён; ожидание trigger-а (`pull_now()`, periodic timer, или событие).
+- `Idle → Pulling` — начат pull batch.
+- `Pulling → Applying` — batch received, начинается apply.
+- `Applying → Idle` — apply finished без ошибок (Applied/Skipped).
+- `Applying → Backoff` — apply вернул конфликт или транспорт вернул recoverable error.
+- `Backoff → Idle` — backoff timer истёк, повторная попытка.
+- `Backoff → Failed` — превышен `max_consecutive_failures` (значение по умолчанию см. `SyncWorker.hpp`).
+- Любое состояние → `Stopping` — user сигнал (`stop()` / shutdown).
+- `Stopping → Stopped` — текущая операция отменена через `CancellationToken` (см. §1.6.3).
+
+#### 1.6.7 Conflict reasons (по `SyncEngine.hpp`)
+
+Возвращаемое значение `ApplyResult`:
+
+| Значение | Семантика |
+|---|---|
+| `Applied` | Запись применена успешно |
+| `Skipped` | Запись уже применена (dedup по `_mdbxc_identity_index`) |
+| `Conflict` | Запись отклонена — см. `ApplyConflictReason` |
+
+`ApplyConflictReason` enum (ориентировочный набор по `SyncEngine.hpp`):
+
+| Reason | Когда возникает |
+|---|---|
+| `SequenceGap` | Полученный `seq` имеет gap относительно `_mdbxc_applied`; worker откатывается до pull предыдущего `seq` |
+| `InconsistentBatchDbiFlags` | Внутри одного batch-а DBI flags противоречат друг другу (mixed read-only / read-write в одной txn) |
+| `ExistingDbiFlagsMismatch` | DBI на локальном узле имеет flags, несовместимые с incoming batch (например, `MDBX_DUPSORT` mismatch) |
+
+Все conflict reasons трактуются как **recoverable** до тех пор, пока `SyncWorker` остаётся в `Backoff` state; переход в `Failed` происходит только после превышения `max_consecutive_failures`.
+
+#### 1.6.8 Merged PRs since local checkout
+
+Upstream PR-ы, появившиеся после submodule-pointer-а `e9e9f2f` и затрагивающие sync subsystem (или напрямую предшествующие sync-work):
+
+| GitHub PR # | Направление | Связь с sync v0.1 |
+|---|---|---|
+| #86 | … | начальная sync-инфраструктура (точная сводка требует верификации при adoption) |
+| #87–#103 | … | последующие sync-коммиты (детали per-PR требуют верификации при adoption) |
+
+Расхождения с roadmap-label «PR #N» в `guides/memory-stacks-roadmap.md` §14 / open issues не предполагаются; при синтаксической коллизии (например, внутренний roadmap-link «PR #95») приоритет — фактический upstream PR #95, и в этом ТЗ ссылка даётся явно: «GitHub PR #95» или «roadmap-label PR #95».
+
+Точный per-PR breakdown отложен до формальной adoption (§11.7); в этом разделе фиксируется диапазон для accounting-а.
+
+#### 1.6.9 Open PRs (в момент написания ТЗ)
+
+- **GitHub PR #104** — `transport DTO codec`: отделение transport-level codec от `PullRequest`/`PullResponse` для будущих non-direct транспортов. Блокирует эффективную реализацию HTTP adapter-а (см. ниже), но не блокирует v0.1 direct-sync usage.
+- **GitHub PR #105** — `HTTP adapter seam`: явный HTTP-референсный транспорт поверх `ISyncPeer` interface. Не входит в v0.1, планируется на v0.2+; agent-memory-cpp может reference-ить этот PR для multi-host scenario (§11.7).
+
+Оба PR остаются open; merge не требуется для текущего TZ — TZ лишь фиксирует их наличие.
+
+#### 1.6.10 System DBIs и `max_dbs` budget
+
+Upstream sync subsystem вводит 5 системных DBIs:
+
+| System DBI | Назначение |
+|---|---|
+| `_mdbxc_meta` | Sync metadata: peer identity, last applied `seq`, schema checksum |
+| `_mdbxc_changelog` | Append-only changelog для PUSH протокола |
+| `_mdbxc_origins` | Reverse-index: какие unit-ы пришли с какого peer-а |
+| `_mdbxc_applied` | Forward-index применённых записей (dedup state для Skipped) |
+| `_mdbxc_identity_index` | Identity map для opaque app keys ↔ internal composite id |
+
+Эти 5 DBIs разделяют `Config::max_dbs` budget с таблицами секции 5.5. Текущее значение `max_dbs == 64` (см. §5.5 замечание о расширении 16 → 64). Adoption sync v0.1 **потребует перерасчёта budget-а** (подробнее — §11.7). На момент написания ТЗ sync subsystem не активирован, и эти 5 DBIs **не учитываются** в подсчёте `max_dbs == 64`.
+
+> **Note**: raw-code compression и storage budget — разные вещи. Размер wire-format payload-ов зависит от compression-а (LZ4 / ZSTD), и raw source code footprint (см. §1.6.3) не равен полному end-to-end storage footprint при включённом sync. Полная cost-модель откладывается до формальной adoption.
 
 ## 1.5. Текущее состояние
 
