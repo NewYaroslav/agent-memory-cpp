@@ -14,6 +14,8 @@ guide). All structural destinations in this guide are existing or planned
 sections inside our existing guide set; cross-links at the end of each
 pattern point to where the work lands.
 
+See [`advanced-binary-techniques-roadmap.md`](advanced-binary-techniques-roadmap.md) for Semantic Anchor Hamming Index as a future code-intelligence candidate extending beyond codebase-memory-mcp's MinHash+LSH pattern (PR #1 in that guide).
+
 ## 2. Pattern catalogue
 
 The nine patterns are grouped by priority. Each section gives a one-line
