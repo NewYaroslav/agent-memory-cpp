@@ -843,6 +843,31 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 
 6. **`max_dbs` увеличение.** Текущее значение 16 недостаточно для всех таблиц секции 5. План: 64 (16 существующих + 48 новых). Verify, что MDBX env flags поддерживают это без `MDBX_NOTLS` reconfiguration.
 
+7. **Sync subsystem adoption** (см. §1.6 и §5.6). Принимать ли upstream `sync` v0.1, отложить adoption полностью, или форкать custom решение?
+
+   **Контекст.** v0.1 покрывает только KV-derived table types (`KeyValueTable`, `KeyTable`, `ValueTable`, `SequenceTable`, `VectorStore` indirect). Это **исключает** наши критические paths: lexical inverted index через `inverted_token_to_unit` (`KeyMultiValueTable` underlying) и `unit_components` storage (`AnyValueTable` underlying через `TypeDiscriminatedTable`). Тот же gap покрывает BM25 postings, scope-aware secondary indexes (`field_to_postings`, `metadata_filters`, `graph_edges_by_*`, `speaker_to_units`, `session_to_units`, `usage_stats_index`), а также все DUPSORT-производные пути из §5.3.
+
+   **Trade-offs.**
+
+   - **Принять v0.1 сейчас.** Получаем baseline для KV-путей (`knowledge_units`, `unit_projections`, `embedding_*`, `schema_info`, per-kind payloads) — но inverted index и components по-прежнему остаются локальными. Mixed replication state (часть DBIs synced, часть — нет) увеличивает operational complexity без видимого выигрыша для M0/M1/M2.
+   - **Игнорировать sync полностью.** Минимальный cognitive load на этом этапе; остаёмся strict single-host. Стоимость: позже придётся догонять upstream API drift-ы, если когда-нибудь понадобится multi-host.
+   - **Форкнуть custom решение** (поверх существующих `KeyValueTable`/`KeyMultiValueTable`). Полный контроль над wire format и table coverage, включая `KeyMultiValueTable` и `AnyValueTable`. Стоимость: собственный DESIGN.md, свои round-trip тесты, своя on-call ответственность за конфликт-резолюцию. По сути повторяет upstream работу.
+
+   Дополнительные соображения:
+
+   - **Budget impact.** Активация sync v0.1 добавляет 5 системных DBIs (`_mdbxc_meta`, `_mdbxc_changelog`, `_mdbxc_origins`, `_mdbxc_applied`, `_mdbxc_identity_index`, см. §1.6.10) в `max_dbs` budget. Текущий план — 64 (см. §5.5 замечание). Adoption потребует перерасчёта: либо bump до ~80+, либо группировка некоторых из текущих 23 DBIs секции 5.5 в `TypeDiscriminatedTable`-агрегаты.
+   - **`IdentityIndexStore` write path deferred upstream.** Не все identity-mapping writes покрыты в v0.1; конкретные edges помечены в upstream `SyncEngine.hpp` TODO-комментариями. Это влияет на dedup state, но не блокирует базовый pull/push.
+   - **HTTP transport (GitHub PR #105).** Не входит в v0.1; agent-memory-cpp вряд ли нуждается в HTTP-sync для своего target deployment-а (prefetch-oriented pipe), но это формальный blocker, если когда-либо потребуется multi-host через WAN.
+   - **Wire-format byte cost.** 5 sync DBIs суммарно хранят metadata/changelog/origins/applied/identity. Полная on-disk cost-модель (включая compression overhead) — отдельная задача, не решается в этом TZ; ссылка на общий принцип raw-code vs end-to-end storage footprint — §1.6.10 note.
+
+   **Decision deadline** привязан к трём внешним триггерам:
+
+   - (a) **Upstream v0.2** ship-ит `KeyMultiValueTable` wire format. Без этого блокируется lexical inverted index sync; см. §5.6.2.
+   - (b) **agent-memory-cpp** достигает multi-host scope routing (см. `guides/memory-stacks-roadmap.md` §13.2 строка 1006 «Distributed scope routing» и §13.3 строка 1028 «Distributed scope routing (multi-process / multi-host scope namespaces)»). До этого момента single-host остаётся правилом M0/M1/M2.
+   - (c) **GitHub PR #105** (HTTP adapter) merged upstream, открывая multi-host через WAN. Без него adoption ограничен in-process или unix-socket transports.
+
+   **Recommendation.** **DEFER** formal adoption sync v0.1 как минимум до выполнения **(a) + (b) + (c)**. До этих трёх trigger-ов: sync subsystem не активируется, текущий TZ остаётся informational (§1.6, §5.6.1), а future revision этого документа будет обязана пересмотреть §11.7 при срабатывании любого из (a)/(b)/(c). v0.1 **не блокирует** M0/M1/M2 deliverables; это явное исключение из «everything upstream-goes» policy-и данного TZ.
+
 ## 12. Дополнительные требования к API (из обзора существующих roadmap-документов upstream)
 
 Данный раздел фиксирует самостоятельный набор требований к публичному API `mdbx-containers`, выявленных при обзоре существующих roadmap-документов `external/mdbx-containers/` и смежных направлений `agent-memory-cpp`. Требования сформулированы как независимые и не привязаны к каким-либо внешним системам учёта.
