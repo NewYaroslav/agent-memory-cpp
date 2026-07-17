@@ -243,7 +243,9 @@ p* = (1/b)^(1/r)
 Transition points (P(candidate) ≈ 63.8%):
 - MinHash J* ≈ 0.878 (J directly maps to p)
 - Random-hyperplane c* ≈ 0.928 (because p_bit(c) = 1 - arccos(c)/π maps
-  cosine from [0.5, 1] into [1, 0.5], and c < 0.928 still gives p_bit > 0.911)
+  cosine c ∈ [-1, 1] to p_bit ∈ [0, 1]; for c ∈ [0, 1], p_bit ∈ [0.5, 1];
+  c < 0.928: p_bit(c) < p* ≈ 0.878, so P(candidate) < 63.8%;
+  c > 0.928: p_bit(c) > p*, so P(candidate) > 63.8%)
 
 Derivation for random-hyperplane cosine threshold: setting `p_bit(c) = p* = 0.878`,
 `arccos(c)/π = 1 - 0.878 = 0.122`, hence `arccos(c) = π × 0.122 ≈ 0.3830` и `c = cos(0.3830) ≈ 0.9276`.
@@ -266,7 +268,7 @@ Trade-off (при фиксированном `b × r`):
   expected objects per bucket in one table = N / hash_space_size
   ```
 
-  For random-hyperplane LSH with `r`-bit band keys, the band key has exactly `2^r` possible values. Hashing the `2^r`-bit pattern into a wider integer (e.g., uint64) does NOT increase the number of meaningfully distinct keys — only the `2^r` patterns are distinct.
+  For random-hyperplane LSH with `r`-bit band keys, the band key has exactly `2^r` possible values. Hashing the `r`-bit band pattern into a wider integer (e.g., uint64) does NOT increase the number of meaningfully distinct keys — only the `2^r` patterns are distinct.
 
   For b=8, r=16, hash_space_size = `2^16` = 65,536:
   - mean per-bucket in one table = `N / 65,536` = 1,000,000 / 65,536 ≈ 15.3
