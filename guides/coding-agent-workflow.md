@@ -29,6 +29,12 @@ asks for a direct push.
 - Prefer draft PRs while work is incomplete.
 - Make PRs independently buildable.
 - Do not merge a PR before checks and requested review steps are complete.
+- For stacked PRs, do not delete the base PR branch while later PRs still use
+  it as their base. Merge the base PR without branch deletion, retarget the
+  next stacked PR to `main` after `main` contains the base change, verify it is
+  still mergeable, and only then delete obsolete stacked branches. GitHub may
+  close a stacked PR when its base branch is deleted, and closed PRs cannot
+  always be retargeted or reopened cleanly.
 
 ## Task Discipline
 
