@@ -132,6 +132,130 @@ def run_benchmark(
     return json.loads(output_path.read_text(encoding="utf-8"))
 
 
+def require_mapping(value: Any, context: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise TypeError(f"{context} must be a JSON object")
+    return value
+
+
+def require_list(value: Any, context: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise TypeError(f"{context} must be a JSON array")
+    return value
+
+
+def require_field(mapping: dict[str, Any], field: str, context: str) -> Any:
+    if field not in mapping:
+        raise KeyError(f"{context} is missing required field '{field}'")
+    return mapping[field]
+
+
+def require_string_field(mapping: dict[str, Any], field: str, context: str) -> str:
+    value = require_field(mapping, field, context)
+    if not isinstance(value, str):
+        raise TypeError(f"{context}.{field} must be a string")
+    return value
+
+
+def require_numeric_field(mapping: dict[str, Any], field: str, context: str) -> float:
+    value = require_field(mapping, field, context)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{context}.{field} must be numeric")
+    return float(value)
+
+
+def validate_sweep_report(
+    report: dict[str, Any],
+    case: StaircaseCase,
+    baselines: list[str],
+    report_path: Path,
+) -> None:
+    context = f"report {report_path}"
+    if require_numeric_field(report, "schema_version", context) != 1:
+        raise ValueError(f"{context}.schema_version must be 1")
+    if int(require_numeric_field(report, "corpus_size", context)) != case.documents:
+        raise ValueError(
+            f"{context}.corpus_size does not match expected {case.documents}"
+        )
+    if int(require_numeric_field(report, "query_count", context)) != case.queries:
+        raise ValueError(
+            f"{context}.query_count does not match expected {case.queries}"
+        )
+
+    report_rows = require_list(
+        require_field(report, "reports", context),
+        f"{context}.reports",
+    )
+    if len(report_rows) != len(baselines):
+        raise ValueError(
+            f"{context}.reports count {len(report_rows)} does not match "
+            f"requested baselines count {len(baselines)}"
+        )
+
+    actual_baselines: list[str] = []
+    for index, raw_baseline_report in enumerate(report_rows):
+        row_context = f"{context}.reports[{index}]"
+        baseline_report = require_mapping(raw_baseline_report, row_context)
+        actual_baselines.append(
+            require_string_field(baseline_report, "baseline_name", row_context)
+        )
+        quality = require_mapping(
+            require_field(baseline_report, "quality", row_context),
+            f"{row_context}.quality",
+        )
+        speed = require_mapping(
+            require_field(baseline_report, "speed", row_context),
+            f"{row_context}.speed",
+        )
+        index_metrics = require_mapping(
+            require_field(baseline_report, "index", row_context),
+            f"{row_context}.index",
+        )
+        for field in ("recall_at_10", "ndcg_at_10", "mrr"):
+            require_numeric_field(quality, field, f"{row_context}.quality")
+        for field in ("p95_latency_ms", "queries_per_second"):
+            require_numeric_field(speed, field, f"{row_context}.speed")
+        for field in ("index_build_time_ms", "vocabulary_size"):
+            require_numeric_field(index_metrics, field, f"{row_context}.index")
+
+    if actual_baselines != baselines:
+        raise ValueError(
+            f"{context}.reports baseline order {actual_baselines} does not "
+            f"match requested order {baselines}"
+        )
+
+    if len(baselines) >= 2:
+        comparison = require_mapping(
+            require_field(report, "comparison", context),
+            f"{context}.comparison",
+        )
+        first = require_string_field(
+            comparison,
+            "first_baseline",
+            f"{context}.comparison",
+        )
+        second = require_string_field(
+            comparison,
+            "second_baseline",
+            f"{context}.comparison",
+        )
+        if [first, second] != baselines[:2]:
+            raise ValueError(
+                f"{context}.comparison baseline pair {[first, second]} does "
+                f"not match requested first baselines {baselines[:2]}"
+            )
+        require_numeric_field(
+            comparison,
+            "recall_at_10_delta_second_minus_first",
+            f"{context}.comparison",
+        )
+        require_numeric_field(
+            comparison,
+            "p95_latency_ms_delta_second_minus_first",
+            f"{context}.comparison",
+        )
+
+
 def number(value: Any) -> float:
     if isinstance(value, (int, float)):
         return float(value)
@@ -197,28 +321,33 @@ def make_summary(
                 f"{int(number(index['vocabulary_size']))} |"
             )
 
-    lines.extend(
-        [
-            "",
-            "## Baseline deltas",
-            "",
-            "Deltas use the order recorded in each sweep report:",
-            "`second_baseline - first_baseline`.",
-            "",
-            "| Documents | First baseline | Second baseline | Recall@10 delta | p95 latency delta ms |",
-            "| ---: | --- | --- | ---: | ---: |",
-        ]
-    )
-    for report in reports:
-        comparison = report.get("comparison", {})
-        lines.append(
-            "| "
-            f"{report['corpus_size']} | "
-            f"`{comparison.get('first_baseline', '')}` | "
-            f"`{comparison.get('second_baseline', '')}` | "
-            f"{fmt(comparison.get('recall_at_10_delta_second_minus_first', 0.0))} | "
-            f"{fmt(comparison.get('p95_latency_ms_delta_second_minus_first', 0.0))} |"
+    comparisons = [
+        (report, comparison)
+        for report in reports
+        if isinstance((comparison := report.get("comparison")), dict)
+    ]
+    if comparisons:
+        lines.extend(
+            [
+                "",
+                "## Baseline deltas",
+                "",
+                "Deltas use the order recorded in each sweep report:",
+                "`second_baseline - first_baseline`.",
+                "",
+                "| Documents | First baseline | Second baseline | Recall@10 delta | p95 latency delta ms |",
+                "| ---: | --- | --- | ---: | ---: |",
+            ]
         )
+        for report, comparison in comparisons:
+            lines.append(
+                "| "
+                f"{report['corpus_size']} | "
+                f"`{comparison['first_baseline']}` | "
+                f"`{comparison['second_baseline']}` | "
+                f"{fmt(comparison['recall_at_10_delta_second_minus_first'])} | "
+                f"{fmt(comparison['p95_latency_ms_delta_second_minus_first'])} |"
+            )
 
     lines.extend(
         [
@@ -227,6 +356,8 @@ def make_summary(
             "",
             "- This is a synthetic lexical sanity sweep, not a production-quality",
             "  benchmark or acceptance threshold.",
+            "- Timing values come from one local run and are directional, not",
+            "  statistically stable benchmark results.",
             "- `bow_vector` uses dense bag-of-words vectors with brute-force exact",
             "  top-K search, so growth in corpus size also increases vector",
             "  dimensionality for this generator.",
@@ -310,13 +441,15 @@ def main() -> int:
             {
                 "mode": "synthetic_sweep",
                 "benchmark_name": f"synthetic_staircase_v1_docs{case.documents}",
-                "dataset_path": str(dataset_path.relative_to(root)),
+                "dataset_path": str(dataset_path),
                 "result_limit": args.limit,
                 "baselines": baselines,
-                "output_path": str(report_path.relative_to(root)),
+                "output_path": str(report_path),
             },
         )
-        reports.append(run_benchmark(bench_exe, config_path, report_path, root))
+        report = run_benchmark(bench_exe, config_path, report_path, root)
+        validate_sweep_report(report, case, baselines, report_path)
+        reports.append(report)
 
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(
