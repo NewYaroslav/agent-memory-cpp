@@ -164,6 +164,15 @@ def require_numeric_field(mapping: dict[str, Any], field: str, context: str) -> 
     return float(value)
 
 
+def require_integer_field(mapping: dict[str, Any], field: str, context: str) -> int:
+    value = require_field(mapping, field, context)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{context}.{field} must be an integer")
+    if isinstance(value, float) and not value.is_integer():
+        raise TypeError(f"{context}.{field} must be an integer")
+    return int(value)
+
+
 def validate_sweep_report(
     report: dict[str, Any],
     case: StaircaseCase,
@@ -171,13 +180,13 @@ def validate_sweep_report(
     report_path: Path,
 ) -> None:
     context = f"report {report_path}"
-    if require_numeric_field(report, "schema_version", context) != 1:
+    if require_integer_field(report, "schema_version", context) != 1:
         raise ValueError(f"{context}.schema_version must be 1")
-    if int(require_numeric_field(report, "corpus_size", context)) != case.documents:
+    if require_integer_field(report, "corpus_size", context) != case.documents:
         raise ValueError(
             f"{context}.corpus_size does not match expected {case.documents}"
         )
-    if int(require_numeric_field(report, "query_count", context)) != case.queries:
+    if require_integer_field(report, "query_count", context) != case.queries:
         raise ValueError(
             f"{context}.query_count does not match expected {case.queries}"
         )
