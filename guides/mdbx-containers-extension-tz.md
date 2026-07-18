@@ -86,7 +86,7 @@ Sync v0.1 покрывает wire-format round-trip только для опре
 | `KeyTable<K, Options>` | Supported | Set-like без payload |
 | `ValueTable<V>` | Supported | Одиночный value per name |
 | `SequenceTable<V>` | Supported | Auto-increment ID generator |
-| `VectorStore` (через `vector::VectorStore`) | Supported (indirect) | Round-trip через KeyValueTable-обёртку в v0.1 |
+| `VectorStore` (через `vector::VectorStore`) | Supported (indirect) | Persistent path использует `SequenceTable` + `KeyValueTable` в v0.1 |
 | `AnyValueTable<K, Options>` | **NOT supported** | Heterogeneous typed payload не имеет wire-format в v0.1 |
 | `KeyMultiValueTable<K, V, Options>` | **NOT supported** | DUPSORT multi-payload; блокирует inverted index sync (см. §5.6) |
 | `HashedKeyValueStore` | **NOT supported** | Coverage shadow-graphs and HashedKeyValueStore excluded |
@@ -767,15 +767,17 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 - **C++11 baseline:** все новые C++17 фичи (`std::byte`, `std::optional`, structured bindings, `if constexpr`) guarded через `MDBXC_HAS_CPP17` или `__cplusplus >= 201703L`. `_compat` псевдонимы для C++11 fallback (`optional_compat` → `std::optional` на C++17, boost::optional на C++11).
 - **Include guards:** новые файлы используют `MDBX_CONTAINERS_HEADER_<PATH>_<FILE>_HPP_INCLUDED`.
 - **Doxygen:** все новые публичные API документированы на английском (см. `external/mdbx-containers/guides/coding-style.md`).
-- **Application schema versioning:** версии payload-ов остаются на стороне `agent-memory-cpp` через `schema_info` (`envelope_schema_version`, `component_schema_versions[]`, `profile_signature`). `mdbx-containers` не мигрирует и не интерпретирует application payload schema.
-- **Sync schema versioning (opt-in):** если §11.7 когда-либо разрешит включить upstream sync subsystem из §1.6, sync layer должен сверять не только wire-format/system-DBI версию upstream, но и application-level `profile_signature` / schema checksum до применения user DBI записей.
+- **Application schema versioning:** версии payload-ов остаются на стороне `agent-memory-cpp` через `schema_info` (`envelope_schema_version`, `component_schema_versions[]`, `profile_signature`, `migration_phase`). `mdbx-containers` не мигрирует и не интерпретирует application payload schema.
+- **Canonical `profile_signature`:** детерминированный hash от application-level profile manifest-а: `envelope_schema_version`, отсортированный список `component_schema_versions`, DBI manifest (`dbi_name`, table type, MDBX flags, key/value layout ids), index layout versions, capability set и `migration_phase`. Термин `schema checksum` в этом ТЗ не используется как отдельное поле; если он появится позже, он должен быть явно mapped к `profile_signature` или заменён им.
+- **Sync schema compatibility (opt-in):** если §11.7 когда-либо разрешит включить upstream sync subsystem из §1.6, `agent-memory-cpp` предоставляет application-level compatibility guard до запуска upstream sync / до передачи user DBI batches в `SyncEngine`. `mdbx-containers` не читает `schema_info`, не знает `profile_signature` и не выполняет application schema validation.
 
 Минимальный контракт для будущего sync adoption:
 
-1. Peer с несовместимым `profile_signature` не применяет batch и возвращает диагностируемый conflict до записи в user DBI.
+1. `agent-memory-cpp` compatibility guard выполняет handshake и сравнивает `profile_signature` + `migration_phase` до передачи user batches в upstream `SyncEngine`. Несовместимые peers получают диагностируемый application-level отказ без записи в user DBI.
 2. Payload migrations выполняются application-level процедурой: dual-read/backfill/switch/drop-old, а не автоматической трансляцией внутри `mdbx-containers`.
 3. During migration sync либо выключен, либо разрешён только между peers с одинаковым migration phase marker в `schema_info`.
-4. Частичная репликация KV-derived DBI без DUPSORT/`AnyValueTable`-derived DBI не считается schema-compatible profile для `agent-memory-cpp`; это ровно причина defer-решения в §11.7.
+4. Application profile validator проверяет полный DBI manifest до включения sync и запрещает запуск, если профиль содержит table types без upstream round-trip coverage (`KeyMultiValueTable`, `AnyValueTable`, `HashedKeyValueStore` в snapshot §1.6.4).
+5. Частичная репликация KV-derived DBI без DUPSORT/`AnyValueTable`-derived DBI не считается schema-compatible profile для `agent-memory-cpp`; это ровно причина defer-решения в §11.7.
 
 ## 8. Тестирование
 
@@ -811,11 +813,12 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 
 Contract tests для будущей adoption-ветки:
 
-1. **Support matrix lock.** Тест фиксирует матрицу §1.6.4: `KeyValueTable`, `KeyTable`, `ValueTable`, `SequenceTable` и indirect `VectorStore` проходят round-trip; `KeyMultiValueTable`, `AnyValueTable` и `HashedKeyValueStore` явно rejected / unsupported, а не silently skipped.
-2. **Schema identity guard.** Два peers с разными `profile_signature` / schema checksum не применяют user DBI batch. Проверка должна доказывать, что конфликт возникает до записи в `knowledge_units`, `unit_projections` или `embedding_*`.
-3. **Partial coverage guard.** Fixture с KV-derived таблицей и DUPSORT-derived inverted index не должен объявляться fully synced profile: успешный KV round-trip не маскирует отсутствие `KeyMultiValueTable` coverage.
-4. **System DBI budget.** При включённом sync проверяется, что 5 системных DBI из §1.6.10 учитываются в `max_dbs` budget и отражены в diagnostics.
-5. **Direct peer lifecycle.** Для `DirectSyncPeer` проверяется happy path pull/apply, idempotent re-apply (`Skipped`) и recoverable conflict path (`Backoff`/diagnostic), без требований к HTTP transport из PR #105.
+1. **Support matrix lock.** Тест фиксирует матрицу §1.6.4: `KeyValueTable`, `KeyTable`, `ValueTable`, `SequenceTable` и indirect `VectorStore` проходят round-trip. Отсутствие upstream round-trip support для `KeyMultiValueTable`, `AnyValueTable` и `HashedKeyValueStore` проверяется через application profile validator, а не через предположение о generic runtime `UnsupportedTableType` в `mdbx-containers`.
+2. **Application schema identity guard.** Два peers с разными `profile_signature` / `migration_phase` не передают user DBI batches в upstream `SyncEngine`. Проверка должна доказывать, что application-level отказ возникает до записи в `knowledge_units`, `unit_projections` или `embedding_*`.
+3. **Partial coverage guard.** Fixture с KV-derived таблицей и DUPSORT-derived inverted index не должен объявляться fully synced profile: успешный KV round-trip не маскирует отсутствие `KeyMultiValueTable` coverage. Этот guard принадлежит `agent-memory-cpp` profile validator-у.
+4. **DirectSyncPeer / SyncEngine contract.** Для `DirectSyncPeer` и `SyncEngine` отдельно проверяются pull/push, `ApplyResult::{Applied,Skipped,Conflict}`, conflict diagnostic и idempotent replay (`Skipped`).
+5. **SyncWorker over DirectSyncPeer contract.** Для `SyncWorker` поверх `DirectSyncPeer` отдельно проверяются round failure, переход в `Backoff`, retry и возврат в `Idle` после успешного round-а.
+6. **System DBI budget.** Для зафиксированного upstream snapshot `d4d219c` проверяется, что 5 системных DBI из §1.6.10 учитываются в `max_dbs` budget и отражены в diagnostics. При обновлении pinned upstream snapshot ожидание пересматривается по system-DBI manifest.
 
 Текущий TZ не требует создавать эти тесты до формальной adoption. Их назначение — зафиксировать future acceptance criteria, чтобы sync v0.1 не был случайно включён как «почти готовый» distributed mode.
 
@@ -879,9 +882,9 @@ Opt-in sync metrics применяются только в сборках с `MD
 | Приоритет | Deliverable | Метрика успеха | Целевое значение |
 |---|---|---|---|
 | Sync opt-in | KV sync round-trip через `DirectSyncPeer` | applied records, p50/p95/p99 apply latency, bytes in/out | report-only baseline на reference hardware |
-| Sync opt-in | Schema mismatch guard | rejected incompatible profile batches | `100%` rejection before user DBI mutation |
-| Sync opt-in | Unsupported table guard | `KeyMultiValueTable` / `AnyValueTable` handling | `100%` explicit unsupported diagnostic; no silent partial-success |
-| Sync opt-in | System DBI budget | counted sync DBIs | exactly 5 additional DBIs from §1.6.10 |
+| Sync opt-in | Application schema mismatch guard | incompatible `profile_signature` / `migration_phase` | `100%` application-level rejection before user DBI mutation |
+| Sync opt-in | Unsupported table profile validator | DBI manifest with `KeyMultiValueTable` / `AnyValueTable` / `HashedKeyValueStore` | `100%` startup rejection before sync begins; no silent partial-success |
+| Sync opt-in | System DBI budget | counted sync DBIs | 5 additional DBIs for pinned snapshot `d4d219c`; revise expectation when pinned upstream snapshot changes |
 | Sync opt-in | Idempotent re-apply | duplicate batch handling | `100%` duplicate records reported as `Skipped`, no duplicate user records |
 
 Измерительный протокол: не менее `30` независимых benchmark rounds, каждый round — `10 000` операций на freshly-constructed state; для каждого round-а вычисляются p50/p95/p99 по его `10 000` операциям; затем для каждого percentile (p50/p95/p99) вычисляется median (и dispersion: std-dev или IQR) по `30` rounds — это и есть финальная reported metric; дополнительно per-round p50/p95/p99 фиксируются; warm-up period документируется (минимум `3` предварительных round-а отбрасываются); эффекты GC/памяти измеряются и комментируются; hardware doc фиксируется в `external/mdbx-containers/bench/results/<YYYY-MM>/`. Альтернативный упрощённый вариант: не менее `1 000 000` operation-level samples; p50/p95/p99 по полной выборке; median ± stddev между независимыми rounds.
