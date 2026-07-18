@@ -3,15 +3,14 @@
 #define AGENT_MEMORY_HEADER_EVAL_I_RETRIEVER_ADAPTER_HPP_INCLUDED
 
 /// \file IRetrieverAdapter.hpp
-/// \brief Adapter that drives `IRetriever` queries and emits a `RetrievalRun`.
+/// \brief Adapters that drive retriever/engine queries and emit a `RetrievalRun`.
 
 #include <agent_memory/eval/Evaluation.hpp>
+#include <agent_memory/retrieval/IRetrievalEngine.hpp>
 #include <agent_memory/retrieval/IRetriever.hpp>
 
-#include <chrono>
 #include <string>
 #include <string_view>
-#include <utility>
 
 namespace agent_memory {
 
@@ -23,55 +22,24 @@ namespace agent_memory {
     /// Queries whose `answer_mode` is `EvalQueryAnswerMode::Ignore` are
     /// skipped before any retrieval call so they contribute neither hits nor
     /// latency samples to the run.
-    inline RetrievalRun run_retriever(
+    [[nodiscard]] RetrievalRun run_retriever(
         const IRetriever& retriever,
         const RetrievalEvalDataset& dataset,
         std::string_view baseline_name
-    ) {
-        const std::string baseline{baseline_name};
+    );
 
-        RetrievalRun run;
-        run.name = baseline;
-        run.queries.reserve(dataset.queries.size());
-
-        for(const auto& query : dataset.queries) {
-            if(query.answer_mode == EvalQueryAnswerMode::Ignore) {
-                continue;
-            }
-
-            RetrievalQueryRun query_run;
-            query_run.query_id = query.id;
-
-            RetrievalQuery retrieval_query;
-            retrieval_query.text = query.text;
-            retrieval_query.limit = query.limit;
-            retrieval_query.metadata_filters = query.metadata_filters;
-
-            const auto start = std::chrono::steady_clock::now();
-            const RetrievalResult result = retriever.retrieve(retrieval_query);
-            const auto end = std::chrono::steady_clock::now();
-
-            const auto elapsed_ms = std::chrono::duration<double, std::milli>(
-                end - start
-            ).count();
-            query_run.latency_ms = elapsed_ms;
-
-            query_run.hits.reserve(result.chunks.size());
-            for(const auto& chunk : result.chunks) {
-                RetrievalRunHit hit;
-                hit.item_id = chunk.chunk.id.value();
-                hit.score = chunk.score;
-                // Implicit rank (0) lets evaluate_retrieval() use vector position.
-                hit.rank = 0;
-                hit.retriever_name = baseline;
-                query_run.hits.push_back(std::move(hit));
-            }
-
-            run.queries.push_back(std::move(query_run));
-        }
-
-        return run;
-    }
+    /// \brief Drives `IRetrievalEngine::retrieve()` for every non-ignored query.
+    ///
+    /// Request construction mirrors `run_retriever()`. Result identity comes
+    /// from `RetrievalResponseItem::lexical.chunk_id`, with `object.id` as the
+    /// fallback for non-chunk engines. Latency is measured strictly around the
+    /// engine call, excluding request/result conversion.
+    /// \throws std::invalid_argument when an engine result has no usable id.
+    [[nodiscard]] RetrievalRun run_retrieval_engine(
+        const IRetrievalEngine& engine,
+        const RetrievalEvalDataset& dataset,
+        std::string_view baseline_name
+    );
 
 } // namespace agent_memory
 

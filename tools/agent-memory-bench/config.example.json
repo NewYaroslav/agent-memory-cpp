@@ -1,0 +1,11 @@
+{
+  "benchmark_name": "synthetic_random_exact",
+  "baseline_name": "synthetic_exact_vector",
+  "dataset_name": "synthetic_random_vectors_1k",
+  "document_count": 1000,
+  "query_count": 1000,
+  "embedding_dimensions": 64,
+  "result_limit": 10,
+  "seed": 12648430,
+  "output_path": "tmp/benchmark-report.json"
+}

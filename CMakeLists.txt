@@ -18,6 +18,11 @@ include(cmake/AgentMemoryOptions.cmake)
 include(cmake/AgentMemoryDependencies.cmake)
 include(cmake/AgentMemoryJson.cmake)
 
+if(AGENT_MEMORY_BUILD_BENCHMARKS AND NOT AGENT_MEMORY_ENABLE_JSON)
+    message(FATAL_ERROR
+        "AGENT_MEMORY_BUILD_BENCHMARKS requires AGENT_MEMORY_ENABLE_JSON=ON")
+endif()
+
 add_library(agent_memory STATIC
     src/agent_memory/chat/Message.cpp
     src/agent_memory/core/LibraryInfo.cpp
@@ -30,7 +35,9 @@ add_library(agent_memory STATIC
     src/agent_memory/embedding/embedding_types.cpp
     src/agent_memory/embedding/enums.cpp
     src/agent_memory/embedding/IEmbedder.cpp
+    src/agent_memory/eval/BenchmarkReport.cpp
     src/agent_memory/eval/Evaluation.cpp
+    src/agent_memory/eval/IRetrieverAdapter.cpp
     src/agent_memory/eval/RetrievalEvalRunner.cpp
     src/agent_memory/eval/StubRetriever.cpp
     src/agent_memory/facts/Fact.cpp
@@ -117,6 +124,10 @@ endif()
 
 if(AGENT_MEMORY_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if(AGENT_MEMORY_BUILD_BENCHMARKS)
+    add_subdirectory(tools/agent-memory-bench)
 endif()
 
 if(AGENT_MEMORY_BUILD_TESTS)
