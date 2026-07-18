@@ -32,8 +32,12 @@ namespace agent_memory {
     ///
     /// Request construction mirrors `run_retriever()`. Result identity comes
     /// from `RetrievalResponseItem::lexical.chunk_id`, with `object.id` as the
-    /// fallback for non-chunk engines. Latency is measured strictly around the
-    /// engine call, excluding request/result conversion.
+    /// fallback for non-chunk engines. The `response.items` order is treated
+    /// as the final ranking order. `RetrievalResponseItem::lexical.score` is
+    /// copied as diagnostic payload only; evaluation metrics use item order
+    /// unless explicit ranks are introduced by a future adapter.
+    /// Latency is measured strictly around the engine call, excluding
+    /// request/result conversion.
     /// \throws std::invalid_argument when an engine result has no usable id.
     [[nodiscard]] RetrievalRun run_retrieval_engine(
         const IRetrievalEngine& engine,

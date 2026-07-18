@@ -33,6 +33,7 @@ namespace agent_memory {
 
     /// \brief Query-loop timing and throughput metrics.
     struct SpeedMetrics final {
+        /// \brief Evaluated non-ignored query count with complete latency samples.
         std::size_t measured_query_count = 0;
         double mean_latency_ms = 0.0;
         double p50_latency_ms = 0.0;
@@ -93,8 +94,8 @@ namespace agent_memory {
 
     /// \brief Builds a benchmark report from the existing evaluation report.
     ///
-    /// Recall, nDCG, MRR, no-answer accuracy, latency percentiles, and the
-    /// empty-result fraction are copied or derived from `eval_report`.
+    /// Recall, nDCG, MRR, no-answer accuracy, empty-result fraction, and
+    /// latency percentiles are copied from `eval_report`.
     /// Measurements that require knowledge of the concrete tokenizer, index,
     /// or process are supplied separately.
     /// \throws std::invalid_argument when the resulting report is invalid.

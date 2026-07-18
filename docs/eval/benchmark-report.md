@@ -7,8 +7,8 @@ does not compute.
 
 ## Sections
 
-- `quality` — Recall@1/5/10/50, nDCG@10, unbounded MRR, no-answer accuracy,
-  OOV fraction, and empty-result fraction.
+- `quality` — required Recall@1/5/10/50, required nDCG@10, unbounded MRR,
+  no-answer accuracy, OOV fraction, and empty-result fraction.
 - `speed` — measured query count, mean/p50/p95/p99 latency, throughput, and
   total retrieval-loop wall time.
 - `index` — document count, vocabulary size, mean document length, ingest time,
@@ -19,17 +19,34 @@ does not compute.
 
 The schema is versioned by `BenchmarkReport::kSchemaVersion`. JSON output uses
 `schema_version: 1` and preserves the four sections above as top-level objects.
+Missing required cutoffs are rejected instead of serialized as `0.0`, because
+`0.0` is a real measurement and must not also mean "not computed".
 
 ## Construction path
 
 Use `make_benchmark_report(eval_report, benchmark_name, measurements)` after a
 runner has produced a `RetrievalEvalReport`. The helper copies quality and
-latency metrics from the eval report, derives the empty-result fraction, and
-copies driver-provided measurements for index/build/process data.
+latency metrics from the eval report and copies driver-provided measurements
+for index/build/process data.
+
+The v1 report is strict about query coverage:
+
+- `measured_query_count` is `judged_query_count + no_answer_query_count`.
+- `run.queries.size()` must equal `measured_query_count`.
+- `latency_ms.sample_count` must equal `measured_query_count`.
+- `queries_per_second` is derived from `measured_query_count` and
+  `total_benchmark_time_ms`.
+
+`empty_result_fraction` is computed by `evaluate_retrieval()` over evaluated
+non-ignored query ids only. Ignore queries never contribute to the numerator or
+denominator, even if a caller supplies a run entry for them.
 
 `validate_benchmark_report()` rejects empty names, unsupported schema versions,
 NaN/infinite values, negative timings, fraction fields outside `[0, 1]`, and
-non-monotonic p50/p95/p99 latency.
+non-monotonic p50/p95/p99 latency. It also rejects inconsistent throughput and
+inconsistent PR29 hook counters: `candidate_count_after_filter` must not exceed
+`candidate_count_before_filter`, and `candidate_reduction_ratio` must match the
+counts.
 
 ## CLI smoke benchmark
 

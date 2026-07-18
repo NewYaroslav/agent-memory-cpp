@@ -23,6 +23,16 @@ namespace {
         return std::fabs(lhs - rhs) <= epsilon;
     }
 
+    template <typename Function>
+    [[nodiscard]] bool throws_invalid_argument(Function&& function) {
+        try {
+            function();
+        } catch(const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    }
+
     [[nodiscard]] agent_memory::RetrievalEvalReport make_eval_report() {
         agent_memory::RetrievalEvalReport report;
         report.baseline_name = "exact_test";
@@ -42,6 +52,8 @@ namespace {
         report.metrics.ndcg_at = {{10, 0.625}};
         report.metrics.mrr = 0.375;
         report.metrics.no_answer_accuracy = 1.0;
+        report.metrics.empty_result_count = 1;
+        report.metrics.empty_result_fraction = 1.0 / 3.0;
         report.metrics.latency_ms.sample_count = 3;
         report.metrics.latency_ms.mean = 2.0;
         report.metrics.latency_ms.min = 1.0;
@@ -103,7 +115,7 @@ int main() {
         return fail("one empty result among three evaluated queries must equal 1/3");
     }
     if(report.speed.measured_query_count != 3) {
-        return fail("measured query count must map from latency sample count");
+        return fail("measured query count must map from evaluated query count");
     }
     if(!almost_equal(report.speed.queries_per_second, 150.0)) {
         return fail("3 queries over 20ms must equal 150 queries/second");
@@ -180,6 +192,82 @@ int main() {
         }
         if(!threw) {
             return fail("validation must reject non-monotonic latency percentiles");
+        }
+    }
+
+    {
+        auto eval_report = make_eval_report();
+        eval_report.metrics.recall_at.pop_back();
+        if(!throws_invalid_argument([&] {
+               (void)agent_memory::make_benchmark_report(
+                   eval_report,
+                   "benchmark_fixture",
+                   make_measurements()
+               );
+           })) {
+            return fail("missing required Recall cutoffs must be rejected");
+        }
+    }
+
+    {
+        auto eval_report = make_eval_report();
+        eval_report.run.queries.pop_back();
+        if(!throws_invalid_argument([&] {
+               (void)agent_memory::make_benchmark_report(
+                   eval_report,
+                   "benchmark_fixture",
+                   make_measurements()
+               );
+           })) {
+            return fail("benchmark reports require one run per evaluated query");
+        }
+    }
+
+    {
+        auto eval_report = make_eval_report();
+        eval_report.metrics.latency_ms.sample_count = 2;
+        if(!throws_invalid_argument([&] {
+               (void)agent_memory::make_benchmark_report(
+                   eval_report,
+                   "benchmark_fixture",
+                   make_measurements()
+               );
+           })) {
+            return fail("benchmark reports require latency for every evaluated query");
+        }
+    }
+
+    {
+        auto invalid = report;
+        invalid.speed.queries_per_second += 1.0;
+        if(!throws_invalid_argument([&] {
+               agent_memory::validate_benchmark_report(invalid);
+           })) {
+            return fail("validation must reject inconsistent throughput");
+        }
+    }
+
+    {
+        auto invalid = report;
+        invalid.pr29_hooks.candidate_count_before_filter = 10.0;
+        invalid.pr29_hooks.candidate_count_after_filter = 20.0;
+        invalid.pr29_hooks.candidate_reduction_ratio = 0.0;
+        if(!throws_invalid_argument([&] {
+               agent_memory::validate_benchmark_report(invalid);
+           })) {
+            return fail("PR29 hooks must reject after-count above before-count");
+        }
+    }
+
+    {
+        auto invalid = report;
+        invalid.pr29_hooks.candidate_count_before_filter = 10.0;
+        invalid.pr29_hooks.candidate_count_after_filter = 4.0;
+        invalid.pr29_hooks.candidate_reduction_ratio = 0.9;
+        if(!throws_invalid_argument([&] {
+               agent_memory::validate_benchmark_report(invalid);
+           })) {
+            return fail("PR29 hooks must reject inconsistent reduction ratio");
         }
     }
 

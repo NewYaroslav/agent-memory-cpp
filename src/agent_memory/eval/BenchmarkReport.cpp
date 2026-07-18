@@ -4,7 +4,6 @@
 #include <nlohmann/json.hpp>
 #endif
 
-#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <ostream>
@@ -16,11 +15,19 @@ namespace agent_memory {
 
     namespace {
 
-        [[nodiscard]] double metric_or_zero(
+        [[nodiscard]] double required_metric(
             const std::vector<MetricAtK>& metrics,
-            std::size_t k
-        ) noexcept {
-            return metric_value_at(metrics, k).value_or(0.0);
+            std::size_t k,
+            const char* metric_name
+        ) {
+            const auto value = metric_value_at(metrics, k);
+            if(!value) {
+                throw std::invalid_argument(
+                    std::string{"benchmark report requires "} + metric_name
+                    + '@' + std::to_string(k)
+                );
+            }
+            return *value;
         }
 
         [[nodiscard]] std::string format_double(double value) {
@@ -48,27 +55,24 @@ namespace agent_memory {
             }
         }
 
-        [[nodiscard]] double empty_result_fraction(
-            const RetrievalEvalReport& report
+        [[nodiscard]] std::size_t evaluated_query_count(
+            const RetrievalMetrics& metrics
         ) noexcept {
-            const std::size_t evaluated_query_count =
-                report.metrics.judged_query_count
-                + report.metrics.no_answer_query_count;
-            if(evaluated_query_count == 0) {
-                return 0.0;
-            }
+            return metrics.judged_query_count + metrics.no_answer_query_count;
+        }
 
-            const auto non_empty_count = static_cast<std::size_t>(std::count_if(
-                report.run.queries.begin(),
-                report.run.queries.end(),
-                [](const RetrievalQueryRun& query_run) {
-                    return !query_run.hits.empty();
-                }
-            ));
-            const std::size_t bounded_non_empty_count =
-                std::min(non_empty_count, evaluated_query_count);
-            return static_cast<double>(evaluated_query_count - bounded_non_empty_count)
-                / static_cast<double>(evaluated_query_count);
+        void require_complete_query_run_coverage(const RetrievalEvalReport& report) {
+            const std::size_t evaluated_count = evaluated_query_count(report.metrics);
+            if(report.run.queries.size() != evaluated_count) {
+                throw std::invalid_argument(
+                    "benchmark report requires one run entry per evaluated query"
+                );
+            }
+            if(report.metrics.latency_ms.sample_count != evaluated_count) {
+                throw std::invalid_argument(
+                    "benchmark report requires latency for every evaluated query"
+                );
+            }
         }
 
     } // namespace
@@ -83,21 +87,44 @@ namespace agent_memory {
         report.baseline_name = eval_report.baseline_name;
         report.dataset_name = eval_report.dataset_name;
 
-        report.quality.recall_at_1 = metric_or_zero(eval_report.metrics.recall_at, 1);
-        report.quality.recall_at_5 = metric_or_zero(eval_report.metrics.recall_at, 5);
-        report.quality.recall_at_10 = metric_or_zero(eval_report.metrics.recall_at, 10);
-        report.quality.recall_at_50 = metric_or_zero(eval_report.metrics.recall_at, 50);
-        report.quality.ndcg_at_10 = metric_or_zero(eval_report.metrics.ndcg_at, 10);
+        require_complete_query_run_coverage(eval_report);
+
+        report.quality.recall_at_1 = required_metric(
+            eval_report.metrics.recall_at,
+            1,
+            "Recall"
+        );
+        report.quality.recall_at_5 = required_metric(
+            eval_report.metrics.recall_at,
+            5,
+            "Recall"
+        );
+        report.quality.recall_at_10 = required_metric(
+            eval_report.metrics.recall_at,
+            10,
+            "Recall"
+        );
+        report.quality.recall_at_50 = required_metric(
+            eval_report.metrics.recall_at,
+            50,
+            "Recall"
+        );
+        report.quality.ndcg_at_10 = required_metric(
+            eval_report.metrics.ndcg_at,
+            10,
+            "nDCG"
+        );
         report.quality.mrr = eval_report.metrics.mrr;
         report.quality.no_answer_accuracy = eval_report.metrics.no_answer_accuracy;
         report.quality.oov_fraction = measurements.oov_fraction;
-        report.quality.empty_result_fraction = empty_result_fraction(eval_report);
+        report.quality.empty_result_fraction =
+            eval_report.metrics.empty_result_fraction;
 
-        report.speed.measured_query_count = eval_report.latency.sample_count;
-        report.speed.mean_latency_ms = eval_report.latency.mean;
-        report.speed.p50_latency_ms = eval_report.latency.p50;
-        report.speed.p95_latency_ms = eval_report.latency.p95;
-        report.speed.p99_latency_ms = eval_report.latency.p99;
+        report.speed.measured_query_count = evaluated_query_count(eval_report.metrics);
+        report.speed.mean_latency_ms = eval_report.metrics.latency_ms.mean;
+        report.speed.p50_latency_ms = eval_report.metrics.latency_ms.p50;
+        report.speed.p95_latency_ms = eval_report.metrics.latency_ms.p95;
+        report.speed.p99_latency_ms = eval_report.metrics.latency_ms.p99;
         report.speed.total_benchmark_time_ms = measurements.total_benchmark_time_ms;
         if(report.speed.total_benchmark_time_ms > 0.0) {
             report.speed.queries_per_second =
@@ -140,6 +167,12 @@ namespace agent_memory {
             report.quality.empty_result_fraction,
             "quality.empty_result_fraction"
         );
+        if(report.speed.measured_query_count == 0
+            && report.quality.empty_result_fraction != 0.0) {
+            throw std::invalid_argument(
+                "benchmark report empty-result fraction requires measured queries"
+            );
+        }
 
         require_finite_non_negative(
             report.speed.mean_latency_ms,
@@ -170,6 +203,25 @@ namespace agent_memory {
             throw std::invalid_argument(
                 "benchmark report latency percentiles must be monotonic"
             );
+        }
+        if(report.speed.total_benchmark_time_ms == 0.0) {
+            if(report.speed.queries_per_second != 0.0) {
+                throw std::invalid_argument(
+                    "benchmark report zero total time requires zero throughput"
+                );
+            }
+        } else {
+            constexpr double kThroughputEpsilon = 1e-9;
+            const double expected_qps =
+                static_cast<double>(report.speed.measured_query_count) * 1000.0
+                / report.speed.total_benchmark_time_ms;
+            if(std::fabs(report.speed.queries_per_second - expected_qps)
+                > kThroughputEpsilon) {
+                throw std::invalid_argument(
+                    "benchmark report throughput must match measured queries "
+                    "and total benchmark time"
+                );
+            }
         }
 
         require_finite_non_negative(
@@ -213,6 +265,36 @@ namespace agent_memory {
             report.pr29_hooks.candidate_set_recall,
             "pr29_hooks.candidate_set_recall"
         );
+
+        const double before =
+            report.pr29_hooks.candidate_count_before_filter;
+        const double after =
+            report.pr29_hooks.candidate_count_after_filter;
+        const double reduction =
+            report.pr29_hooks.candidate_reduction_ratio;
+        if(after > before) {
+            throw std::invalid_argument(
+                "benchmark report pr29_hooks candidate count after filter "
+                "must not exceed count before filter"
+            );
+        }
+        if(before == 0.0) {
+            if(after != 0.0 || reduction != 0.0) {
+                throw std::invalid_argument(
+                    "benchmark report pr29_hooks zero candidates before "
+                    "filter requires zero after count and zero reduction"
+                );
+            }
+        } else {
+            constexpr double kRatioEpsilon = 1e-9;
+            const double expected_reduction = 1.0 - (after / before);
+            if(std::fabs(reduction - expected_reduction) > kRatioEpsilon) {
+                throw std::invalid_argument(
+                    "benchmark report pr29_hooks candidate reduction ratio "
+                    "must match candidate counts"
+                );
+            }
+        }
     }
 
     void print_benchmark_report(std::ostream& out, const BenchmarkReport& report) {

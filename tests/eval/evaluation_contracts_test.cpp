@@ -175,6 +175,10 @@ int main() {
     if(!almost_equal(metrics.no_answer_accuracy, 1.0)) {
         return fail("no-answer accuracy must reward empty result sets");
     }
+    if(metrics.empty_result_count != 1
+        || !almost_equal(metrics.empty_result_fraction, 1.0 / 3.0)) {
+        return fail("empty-result fraction must count evaluated queries only");
+    }
 
     if(metrics.latency_ms.sample_count != 3 ||
        !almost_equal(metrics.latency_ms.mean, 20.0) ||
@@ -199,6 +203,10 @@ int main() {
 
     if(!almost_equal(missing_metrics.no_answer_accuracy, 0.0)) {
         return fail("no-answer accuracy must reject non-empty no-answer results");
+    }
+    if(missing_metrics.empty_result_count != 2
+        || !almost_equal(missing_metrics.empty_result_fraction, 2.0 / 3.0)) {
+        return fail("missing judged query runs must count as empty evaluated results");
     }
 
     agent_memory::RetrievalRun implicit_position_run;
@@ -278,6 +286,26 @@ int main() {
     );
     if(ignored_metrics.ignored_query_count != 1 || ignored_metrics.judged_query_count != 1) {
         return fail("ignored queries must be counted and skipped");
+    }
+
+    agent_memory::RetrievalRun ignored_non_empty_run;
+    ignored_non_empty_run.queries.push_back(agent_memory::RetrievalQueryRun{
+        "q",
+        {},
+        std::nullopt
+    });
+    ignored_non_empty_run.queries.push_back(agent_memory::RetrievalQueryRun{
+        "q:ignore",
+        {agent_memory::RetrievalRunHit{"doc:ignored", 1.0F, 0, "debug"}},
+        std::nullopt
+    });
+    const auto ignored_non_empty_metrics = agent_memory::evaluate_retrieval(
+        ignored_dataset,
+        ignored_non_empty_run
+    );
+    if(ignored_non_empty_metrics.empty_result_count != 1
+        || !almost_equal(ignored_non_empty_metrics.empty_result_fraction, 1.0)) {
+        return fail("ignored non-empty runs must not mask evaluated empty results");
     }
 
     if(!throws_invalid_argument([] {
