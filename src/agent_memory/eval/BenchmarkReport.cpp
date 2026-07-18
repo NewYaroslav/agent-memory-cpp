@@ -58,19 +58,47 @@ namespace agent_memory {
         [[nodiscard]] std::size_t evaluated_query_count(
             const RetrievalMetrics& metrics
         ) noexcept {
-            return metrics.judged_query_count + metrics.no_answer_query_count;
+            return metrics.evaluated_query_count;
         }
 
         void require_complete_query_run_coverage(const RetrievalEvalReport& report) {
-            const std::size_t evaluated_count = evaluated_query_count(report.metrics);
-            if(report.run.queries.size() != evaluated_count) {
+            const std::size_t expected_evaluated_count =
+                report.metrics.judged_query_count
+                + report.metrics.no_answer_query_count;
+            if(report.metrics.evaluated_query_count != expected_evaluated_count) {
+                throw std::invalid_argument(
+                    "benchmark report evaluated query count must match judged "
+                    "plus no-answer query counts"
+                );
+            }
+            if(report.metrics.evaluated_query_run_count
+                != report.metrics.evaluated_query_count) {
                 throw std::invalid_argument(
                     "benchmark report requires one run entry per evaluated query"
                 );
             }
-            if(report.metrics.latency_ms.sample_count != evaluated_count) {
+            if(report.metrics.evaluated_query_latency_count
+                != report.metrics.evaluated_query_count) {
                 throw std::invalid_argument(
                     "benchmark report requires latency for every evaluated query"
+                );
+            }
+            if(report.metrics.latency_ms.sample_count
+                != report.metrics.evaluated_query_latency_count) {
+                throw std::invalid_argument(
+                    "benchmark report latency sample count must match evaluated "
+                    "query latency coverage"
+                );
+            }
+            if(report.metrics.ignored_query_run_count != 0) {
+                throw std::invalid_argument(
+                    "benchmark report must not include run entries for ignored queries"
+                );
+            }
+            if(report.run.queries.size() != report.metrics.evaluated_query_run_count) {
+                throw std::invalid_argument(
+                    "benchmark report run entry count must match evaluated "
+                    "query run coverage"
                 );
             }
         }

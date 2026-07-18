@@ -307,6 +307,42 @@ int main() {
         || !almost_equal(ignored_non_empty_metrics.empty_result_fraction, 1.0)) {
         return fail("ignored non-empty runs must not mask evaluated empty results");
     }
+    if(ignored_non_empty_metrics.evaluated_query_count != 1
+        || ignored_non_empty_metrics.evaluated_query_run_count != 1
+        || ignored_non_empty_metrics.evaluated_query_latency_count != 0
+        || ignored_non_empty_metrics.ignored_query_run_count != 1) {
+        return fail("coverage counters must distinguish evaluated and ignored runs");
+    }
+
+    {
+        agent_memory::RetrievalEvalDataset coverage_dataset =
+            single_judged_dataset();
+        coverage_dataset.queries.push_back(agent_memory::EvalQuery{
+            "q:ignore",
+            "ignore me",
+            "Debug",
+            10,
+            {},
+            agent_memory::EvalQueryAnswerMode::Ignore
+        });
+        agent_memory::RetrievalRun ignored_only_run;
+        ignored_only_run.queries.push_back(agent_memory::RetrievalQueryRun{
+            "q:ignore",
+            {agent_memory::RetrievalRunHit{"doc:ignored", 1.0F, 0, "debug"}},
+            1.0
+        });
+        const auto coverage_metrics = agent_memory::evaluate_retrieval(
+            coverage_dataset,
+            ignored_only_run
+        );
+        if(coverage_metrics.evaluated_query_count != 1
+            || coverage_metrics.evaluated_query_run_count != 0
+            || coverage_metrics.evaluated_query_latency_count != 0
+            || coverage_metrics.ignored_query_run_count != 1
+            || coverage_metrics.latency_ms.sample_count != 0) {
+            return fail("ignored-only runs must not count as evaluated coverage");
+        }
+    }
 
     if(!throws_invalid_argument([] {
            agent_memory::RetrievalEvalDataset invalid = single_judged_dataset();

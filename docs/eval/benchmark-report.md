@@ -32,8 +32,13 @@ for index/build/process data.
 The v1 report is strict about query coverage:
 
 - `measured_query_count` is `judged_query_count + no_answer_query_count`.
-- `run.queries.size()` must equal `measured_query_count`.
-- `latency_ms.sample_count` must equal `measured_query_count`.
+- `evaluate_retrieval()` records identity-aware coverage counters for evaluated
+  query ids.
+- `evaluated_query_run_count` must equal `measured_query_count`.
+- `evaluated_query_latency_count` and `latency_ms.sample_count` must equal
+  `measured_query_count`.
+- `ignored_query_run_count` must be zero; benchmark reports do not accept runs
+  that executed ignored queries.
 - `queries_per_second` is derived from `measured_query_count` and
   `total_benchmark_time_ms`.
 

@@ -43,6 +43,9 @@ namespace {
         report.metrics.judged_query_count = 2;
         report.metrics.no_answer_query_count = 1;
         report.metrics.ignored_query_count = 1;
+        report.metrics.evaluated_query_count = 3;
+        report.metrics.evaluated_query_run_count = 3;
+        report.metrics.evaluated_query_latency_count = 3;
         report.metrics.recall_at = {
             {1, 0.25},
             {5, 0.50},
@@ -234,6 +237,39 @@ int main() {
                );
            })) {
             return fail("benchmark reports require latency for every evaluated query");
+        }
+    }
+
+    {
+        auto eval_report = make_eval_report();
+        eval_report.metrics.evaluated_query_run_count = 2;
+        if(!throws_invalid_argument([&] {
+               (void)agent_memory::make_benchmark_report(
+                   eval_report,
+                   "benchmark_fixture",
+                   make_measurements()
+               );
+           })) {
+            return fail("benchmark reports require evaluated query run coverage");
+        }
+    }
+
+    {
+        auto eval_report = make_eval_report();
+        eval_report.metrics.ignored_query_run_count = 1;
+        eval_report.run.queries.push_back(agent_memory::RetrievalQueryRun{
+            "query:ignored",
+            {agent_memory::RetrievalRunHit{"doc:ignored", 1.0F, 0, "debug"}},
+            1.0
+        });
+        if(!throws_invalid_argument([&] {
+               (void)agent_memory::make_benchmark_report(
+                   eval_report,
+                   "benchmark_fixture",
+                   make_measurements()
+               );
+           })) {
+            return fail("benchmark reports must reject ignored query run entries");
         }
     }
 

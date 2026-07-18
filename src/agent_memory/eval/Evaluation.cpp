@@ -615,8 +615,12 @@ namespace agent_memory {
         for(const auto& query : dataset.queries) {
             if(query.answer_mode == EvalQueryAnswerMode::Ignore) {
                 ++metrics.ignored_query_count;
+                if(runs_by_query.find(query.id) != runs_by_query.end()) {
+                    ++metrics.ignored_query_run_count;
+                }
                 continue;
             }
+            ++metrics.evaluated_query_count;
 
             const auto judgments_it = judgments_by_query.find(query.id);
             const QueryJudgments* query_judgments = nullptr;
@@ -628,7 +632,9 @@ namespace agent_memory {
             const RetrievalQueryRun* query_run = nullptr;
             if(run_it != runs_by_query.end()) {
                 query_run = run_it->second;
+                ++metrics.evaluated_query_run_count;
                 if(query_run->latency_ms) {
+                    ++metrics.evaluated_query_latency_count;
                     latency_values.push_back(*query_run->latency_ms);
                 }
             }
@@ -691,12 +697,10 @@ namespace agent_memory {
                 static_cast<double>(metrics.no_answer_query_count);
         }
 
-        const std::size_t evaluated_query_count =
-            metrics.judged_query_count + metrics.no_answer_query_count;
-        if(evaluated_query_count != 0) {
+        if(metrics.evaluated_query_count != 0) {
             metrics.empty_result_fraction =
                 static_cast<double>(metrics.empty_result_count) /
-                static_cast<double>(evaluated_query_count);
+                static_cast<double>(metrics.evaluated_query_count);
         }
 
         metrics.latency_ms = compute_latency_stats(std::move(latency_values));

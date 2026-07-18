@@ -134,6 +134,14 @@ namespace agent_memory {
         std::size_t judged_query_count = 0;
         std::size_t no_answer_query_count = 0;
         std::size_t ignored_query_count = 0;
+        /// \brief JudgedRetrieval plus NoAnswer queries considered by metrics.
+        std::size_t evaluated_query_count = 0;
+        /// \brief Evaluated query ids that have a corresponding run entry.
+        std::size_t evaluated_query_run_count = 0;
+        /// \brief Evaluated query ids whose run entry includes latency.
+        std::size_t evaluated_query_latency_count = 0;
+        /// \brief Ignore query ids that nevertheless have a run entry.
+        std::size_t ignored_query_run_count = 0;
 
         std::vector<MetricAtK> recall_at;
         std::vector<MetricAtK> ndcg_at;
