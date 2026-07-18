@@ -54,6 +54,28 @@ namespace {
         return dataset;
     }
 
+    agent_memory::RetrievalEvalDataset graded_two_doc_dataset() {
+        agent_memory::RetrievalEvalDataset dataset;
+        dataset.queries.push_back(agent_memory::EvalQuery{
+            "q",
+            "query",
+            "QALookup",
+            10,
+            {}
+        });
+        dataset.judgments.push_back(agent_memory::RelevanceJudgment{
+            "q",
+            "doc:high",
+            3
+        });
+        dataset.judgments.push_back(agent_memory::RelevanceJudgment{
+            "q",
+            "doc:low",
+            1
+        });
+        return dataset;
+    }
+
 } // namespace
 
 int main() {
@@ -269,6 +291,71 @@ int main() {
     }
     if(!almost_equal(explicit_gap_metrics.mrr, 0.01)) {
         return fail("explicit rank gaps must be preserved for MRR");
+    }
+
+    agent_memory::RetrievalRun duplicate_relevant_hit_run;
+    duplicate_relevant_hit_run.queries.push_back(agent_memory::RetrievalQueryRun{
+        "q",
+        {
+            agent_memory::RetrievalRunHit{"doc:high", 1.0F, 0, "dense"},
+            agent_memory::RetrievalRunHit{"doc:high", 0.9F, 0, "bm25"},
+        },
+        std::nullopt
+    });
+    const auto duplicate_relevant_hit_metrics = agent_memory::evaluate_retrieval(
+        graded_two_doc_dataset(),
+        duplicate_relevant_hit_run,
+        agent_memory::RetrievalEvaluationOptions{{2}, {2}}
+    );
+    if(!almost_equal(require_metric(duplicate_relevant_hit_metrics.recall_at, 2), 0.5)) {
+        return fail("duplicate relevant hits must not inflate Recall@K");
+    }
+    const auto duplicate_ndcg =
+        require_metric(duplicate_relevant_hit_metrics.ndcg_at, 2);
+    if(duplicate_ndcg <= 0.9 || duplicate_ndcg >= 1.0) {
+        return fail("duplicate relevant hits must not inflate nDCG@K");
+    }
+
+    agent_memory::RetrievalRun high_grade_first_run;
+    high_grade_first_run.queries.push_back(agent_memory::RetrievalQueryRun{
+        "q",
+        {
+            agent_memory::RetrievalRunHit{"doc:high", 1.0F, 0, "dense"},
+            agent_memory::RetrievalRunHit{"doc:low", 0.9F, 0, "bm25"},
+        },
+        std::nullopt
+    });
+    agent_memory::RetrievalRun low_grade_first_run;
+    low_grade_first_run.queries.push_back(agent_memory::RetrievalQueryRun{
+        "q",
+        {
+            agent_memory::RetrievalRunHit{"doc:low", 1.0F, 0, "bm25"},
+            agent_memory::RetrievalRunHit{"doc:high", 0.9F, 0, "dense"},
+        },
+        std::nullopt
+    });
+    const auto high_grade_first_metrics = agent_memory::evaluate_retrieval(
+        graded_two_doc_dataset(),
+        high_grade_first_run,
+        agent_memory::RetrievalEvaluationOptions{{2}, {2}}
+    );
+    const auto low_grade_first_metrics = agent_memory::evaluate_retrieval(
+        graded_two_doc_dataset(),
+        low_grade_first_run,
+        agent_memory::RetrievalEvaluationOptions{{2}, {2}}
+    );
+    if(!almost_equal(require_metric(high_grade_first_metrics.recall_at, 2), 1.0)
+        || !almost_equal(require_metric(low_grade_first_metrics.recall_at, 2), 1.0)) {
+        return fail("Recall@K must ignore ordering once all relevant docs are found");
+    }
+    if(!almost_equal(require_metric(high_grade_first_metrics.ndcg_at, 2), 1.0)) {
+        return fail("ideal graded ranking must produce nDCG@K ~= 1.0");
+    }
+    if(
+        require_metric(low_grade_first_metrics.ndcg_at, 2) >=
+        require_metric(high_grade_first_metrics.ndcg_at, 2)
+    ) {
+        return fail("nDCG@K must reward higher-grade documents at earlier ranks");
     }
 
     agent_memory::RetrievalEvalDataset ignored_dataset = single_judged_dataset();
