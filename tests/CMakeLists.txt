@@ -108,6 +108,27 @@ if(AGENT_MEMORY_ENABLE_JSON)
         COMMAND agent_memory_dataset_loader_test
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/eval
     )
+
+    add_executable(agent_memory_synthetic_sweep_test
+        eval/synthetic_sweep_test.cpp
+    )
+
+    target_link_libraries(agent_memory_synthetic_sweep_test
+        PRIVATE
+            agent_memory::agent_memory
+            agent_memory::json
+    )
+
+    target_include_directories(agent_memory_synthetic_sweep_test
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/eval/fixtures
+    )
+
+    add_test(
+        NAME agent_memory_synthetic_sweep_test
+        COMMAND agent_memory_synthetic_sweep_test
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/eval
+    )
 endif()
 
 add_executable(agent_memory_vector_index_contracts_test

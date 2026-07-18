@@ -51,9 +51,34 @@ cmake -S . -B tmp/build-bench \
     -DAGENT_MEMORY_ENABLE_JSON=ON
 
 cmake --build tmp/build-bench --parallel
+ctest --test-dir tmp/build-bench --output-on-failure
 ./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
     tools/agent-memory-bench/config.example.json \
     tmp/benchmark-report.json
+```
+
+When tests and benchmarks are enabled together, CTest also registers
+`agent_memory_benchmark_cli_synthetic_sweep`, a smoke test that runs
+`agent-memory-bench` against the committed synthetic sweep fixture.
+
+Run the BoW-vs-BM25 synthetic sweep fixture:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/synthetic-sweep.example.json \
+    tmp/synthetic-sweep-report.json
+```
+
+Regenerate the committed tiny synthetic fixture only when intentionally
+changing the generator contract:
+
+```bash
+py -3 tools/benchmarks/synthetic_generator.py \
+    --documents 50 \
+    --queries 40 \
+    --seed 12648430 \
+    --limit 50 \
+    --output tests/eval/fixtures/tiny_synthetic_v1.json
 ```
 
 Configure with flat MDBX submodules:

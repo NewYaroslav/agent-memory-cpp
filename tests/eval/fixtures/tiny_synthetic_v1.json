@@ -1,0 +1,1049 @@
+{
+  "name": "synthetic_v1_docs50_queries40_seed12648430",
+  "corpus": [
+    {
+      "id": "doc:0000",
+      "title": "Synthetic aurora document 0000",
+      "text": "aurora ion uniq0000 memory retrieval group0000 common common common common common common common common common common common common aurora aurora aurora aurora aurora",
+      "metadata": {
+        "topic": "aurora",
+        "facet": "ion"
+      }
+    },
+    {
+      "id": "doc:0001",
+      "title": "Synthetic harbor document 0001",
+      "text": "harbor dock uniq0001 memory retrieval group0001",
+      "metadata": {
+        "topic": "harbor",
+        "facet": "dock"
+      }
+    },
+    {
+      "id": "doc:0002",
+      "title": "Synthetic orchard document 0002",
+      "text": "orchard apple uniq0002 memory retrieval group0002",
+      "metadata": {
+        "topic": "orchard",
+        "facet": "apple"
+      }
+    },
+    {
+      "id": "doc:0003",
+      "title": "Synthetic kernel document 0003",
+      "text": "kernel mutex uniq0003 memory retrieval group0003",
+      "metadata": {
+        "topic": "kernel",
+        "facet": "mutex"
+      }
+    },
+    {
+      "id": "doc:0004",
+      "title": "Synthetic library document 0004",
+      "text": "library catalog uniq0004 memory retrieval group0004",
+      "metadata": {
+        "topic": "library",
+        "facet": "catalog"
+      }
+    },
+    {
+      "id": "doc:0005",
+      "title": "Synthetic desert document 0005",
+      "text": "desert dune uniq0005 memory retrieval group0000",
+      "metadata": {
+        "topic": "desert",
+        "facet": "dune"
+      }
+    },
+    {
+      "id": "doc:0006",
+      "title": "Synthetic studio document 0006",
+      "text": "studio camera uniq0006 memory retrieval group0001",
+      "metadata": {
+        "topic": "studio",
+        "facet": "camera"
+      }
+    },
+    {
+      "id": "doc:0007",
+      "title": "Synthetic forest document 0007",
+      "text": "forest moss uniq0007 memory retrieval group0002 common common common common common common common common common common common common",
+      "metadata": {
+        "topic": "forest",
+        "facet": "moss"
+      }
+    },
+    {
+      "id": "doc:0008",
+      "title": "Synthetic aurora document 0008",
+      "text": "aurora plasma uniq0008 memory retrieval group0003",
+      "metadata": {
+        "topic": "aurora",
+        "facet": "plasma"
+      }
+    },
+    {
+      "id": "doc:0009",
+      "title": "Synthetic harbor document 0009",
+      "text": "harbor cargo uniq0009 memory retrieval group0004",
+      "metadata": {
+        "topic": "harbor",
+        "facet": "cargo"
+      }
+    },
+    {
+      "id": "doc:0010",
+      "title": "Synthetic orchard document 0010",
+      "text": "orchard pear uniq0010 memory retrieval group0000",
+      "metadata": {
+        "topic": "orchard",
+        "facet": "pear"
+      }
+    },
+    {
+      "id": "doc:0011",
+      "title": "Synthetic kernel document 0011",
+      "text": "kernel thread uniq0011 memory retrieval group0001 kernel kernel kernel kernel kernel",
+      "metadata": {
+        "topic": "kernel",
+        "facet": "thread"
+      }
+    },
+    {
+      "id": "doc:0012",
+      "title": "Synthetic library document 0012",
+      "text": "library shelf uniq0012 memory retrieval group0002",
+      "metadata": {
+        "topic": "library",
+        "facet": "shelf"
+      }
+    },
+    {
+      "id": "doc:0013",
+      "title": "Synthetic desert document 0013",
+      "text": "desert cactus uniq0013 memory retrieval group0003",
+      "metadata": {
+        "topic": "desert",
+        "facet": "cactus"
+      }
+    },
+    {
+      "id": "doc:0014",
+      "title": "Synthetic studio document 0014",
+      "text": "studio light uniq0014 memory retrieval group0004 common common common common common common common common common common common common",
+      "metadata": {
+        "topic": "studio",
+        "facet": "light"
+      }
+    },
+    {
+      "id": "doc:0015",
+      "title": "Synthetic forest document 0015",
+      "text": "forest river uniq0015 memory retrieval group0000",
+      "metadata": {
+        "topic": "forest",
+        "facet": "river"
+      }
+    },
+    {
+      "id": "doc:0016",
+      "title": "Synthetic aurora document 0016",
+      "text": "aurora magnet uniq0016 memory retrieval group0001",
+      "metadata": {
+        "topic": "aurora",
+        "facet": "magnet"
+      }
+    },
+    {
+      "id": "doc:0017",
+      "title": "Synthetic harbor document 0017",
+      "text": "harbor tide uniq0017 memory retrieval group0002",
+      "metadata": {
+        "topic": "harbor",
+        "facet": "tide"
+      }
+    },
+    {
+      "id": "doc:0018",
+      "title": "Synthetic orchard document 0018",
+      "text": "orchard branch uniq0018 memory retrieval group0003",
+      "metadata": {
+        "topic": "orchard",
+        "facet": "branch"
+      }
+    },
+    {
+      "id": "doc:0019",
+      "title": "Synthetic kernel document 0019",
+      "text": "kernel syscall uniq0019 memory retrieval group0004",
+      "metadata": {
+        "topic": "kernel",
+        "facet": "syscall"
+      }
+    },
+    {
+      "id": "doc:0020",
+      "title": "Synthetic library document 0020",
+      "text": "library index uniq0020 memory retrieval group0000",
+      "metadata": {
+        "topic": "library",
+        "facet": "index"
+      }
+    },
+    {
+      "id": "doc:0021",
+      "title": "Synthetic desert document 0021",
+      "text": "desert oasis uniq0021 memory retrieval group0001 common common common common common common common common common common common common",
+      "metadata": {
+        "topic": "desert",
+        "facet": "oasis"
+      }
+    },
+    {
+      "id": "doc:0022",
+      "title": "Synthetic studio document 0022",
+      "text": "studio scene uniq0022 memory retrieval group0002 studio studio studio studio studio",
+      "metadata": {
+        "topic": "studio",
+        "facet": "scene"
+      }
+    },
+    {
+      "id": "doc:0023",
+      "title": "Synthetic forest document 0023",
+      "text": "forest canopy uniq0023 memory retrieval group0003",
+      "metadata": {
+        "topic": "forest",
+        "facet": "canopy"
+      }
+    },
+    {
+      "id": "doc:0024",
+      "title": "Synthetic aurora document 0024",
+      "text": "aurora solar uniq0024 memory retrieval group0004",
+      "metadata": {
+        "topic": "aurora",
+        "facet": "solar"
+      }
+    },
+    {
+      "id": "doc:0025",
+      "title": "Synthetic harbor document 0025",
+      "text": "harbor anchor uniq0025 memory retrieval group0000",
+      "metadata": {
+        "topic": "harbor",
+        "facet": "anchor"
+      }
+    },
+    {
+      "id": "doc:0026",
+      "title": "Synthetic orchard document 0026",
+      "text": "orchard harvest uniq0026 memory retrieval group0001",
+      "metadata": {
+        "topic": "orchard",
+        "facet": "harvest"
+      }
+    },
+    {
+      "id": "doc:0027",
+      "title": "Synthetic kernel document 0027",
+      "text": "kernel scheduler uniq0027 memory retrieval group0002",
+      "metadata": {
+        "topic": "kernel",
+        "facet": "scheduler"
+      }
+    },
+    {
+      "id": "doc:0028",
+      "title": "Synthetic library document 0028",
+      "text": "library archive uniq0028 memory retrieval group0003 common common common common common common common common common common common common",
+      "metadata": {
+        "topic": "library",
+        "facet": "archive"
+      }
+    },
+    {
+      "id": "doc:0029",
+      "title": "Synthetic desert document 0029",
+      "text": "desert mirage uniq0029 memory retrieval group0004",
+      "metadata": {
+        "topic": "desert",
+        "facet": "mirage"
+      }
+    },
+    {
+      "id": "doc:0030",
+      "title": "Synthetic studio document 0030",
+      "text": "studio audio uniq0030 memory retrieval group0000",
+      "metadata": {
+        "topic": "studio",
+        "facet": "audio"
+      }
+    },
+    {
+      "id": "doc:0031",
+      "title": "Synthetic forest document 0031",
+      "text": "forest trail uniq0031 memory retrieval group0001",
+      "metadata": {
+        "topic": "forest",
+        "facet": "trail"
+      }
+    },
+    {
+      "id": "doc:0032",
+      "title": "Synthetic aurora document 0032",
+      "text": "aurora ion uniq0032 memory retrieval group0002",
+      "metadata": {
+        "topic": "aurora",
+        "facet": "ion"
+      }
+    },
+    {
+      "id": "doc:0033",
+      "title": "Synthetic harbor document 0033",
+      "text": "harbor dock uniq0033 memory retrieval group0003 harbor harbor harbor harbor harbor",
+      "metadata": {
+        "topic": "harbor",
+        "facet": "dock"
+      }
+    },
+    {
+      "id": "doc:0034",
+      "title": "Synthetic orchard document 0034",
+      "text": "orchard apple uniq0034 memory retrieval group0004",
+      "metadata": {
+        "topic": "orchard",
+        "facet": "apple"
+      }
+    },
+    {
+      "id": "doc:0035",
+      "title": "Synthetic kernel document 0035",
+      "text": "kernel mutex uniq0035 memory retrieval group0000 common common common common common common common common common common common common",
+      "metadata": {
+        "topic": "kernel",
+        "facet": "mutex"
+      }
+    },
+    {
+      "id": "doc:0036",
+      "title": "Synthetic library document 0036",
+      "text": "library catalog uniq0036 memory retrieval group0001",
+      "metadata": {
+        "topic": "library",
+        "facet": "catalog"
+      }
+    },
+    {
+      "id": "doc:0037",
+      "title": "Synthetic desert document 0037",
+      "text": "desert dune uniq0037 memory retrieval group0002",
+      "metadata": {
+        "topic": "desert",
+        "facet": "dune"
+      }
+    },
+    {
+      "id": "doc:0038",
+      "title": "Synthetic studio document 0038",
+      "text": "studio camera uniq0038 memory retrieval group0003",
+      "metadata": {
+        "topic": "studio",
+        "facet": "camera"
+      }
+    },
+    {
+      "id": "doc:0039",
+      "title": "Synthetic forest document 0039",
+      "text": "forest moss uniq0039 memory retrieval group0004",
+      "metadata": {
+        "topic": "forest",
+        "facet": "moss"
+      }
+    },
+    {
+      "id": "doc:0040",
+      "title": "Synthetic aurora document 0040",
+      "text": "aurora plasma uniq0040 memory retrieval group0000",
+      "metadata": {
+        "topic": "aurora",
+        "facet": "plasma"
+      }
+    },
+    {
+      "id": "doc:0041",
+      "title": "Synthetic harbor document 0041",
+      "text": "harbor cargo uniq0041 memory retrieval group0001",
+      "metadata": {
+        "topic": "harbor",
+        "facet": "cargo"
+      }
+    },
+    {
+      "id": "doc:0042",
+      "title": "Synthetic orchard document 0042",
+      "text": "orchard pear uniq0042 memory retrieval group0002 common common common common common common common common common common common common",
+      "metadata": {
+        "topic": "orchard",
+        "facet": "pear"
+      }
+    },
+    {
+      "id": "doc:0043",
+      "title": "Synthetic kernel document 0043",
+      "text": "kernel thread uniq0043 memory retrieval group0003",
+      "metadata": {
+        "topic": "kernel",
+        "facet": "thread"
+      }
+    },
+    {
+      "id": "doc:0044",
+      "title": "Synthetic library document 0044",
+      "text": "library shelf uniq0044 memory retrieval group0004 library library library library library",
+      "metadata": {
+        "topic": "library",
+        "facet": "shelf"
+      }
+    },
+    {
+      "id": "doc:0045",
+      "title": "Synthetic desert document 0045",
+      "text": "desert cactus uniq0045 memory retrieval group0000",
+      "metadata": {
+        "topic": "desert",
+        "facet": "cactus"
+      }
+    },
+    {
+      "id": "doc:0046",
+      "title": "Synthetic studio document 0046",
+      "text": "studio light uniq0046 memory retrieval group0001",
+      "metadata": {
+        "topic": "studio",
+        "facet": "light"
+      }
+    },
+    {
+      "id": "doc:0047",
+      "title": "Synthetic forest document 0047",
+      "text": "forest river uniq0047 memory retrieval group0002",
+      "metadata": {
+        "topic": "forest",
+        "facet": "river"
+      }
+    },
+    {
+      "id": "doc:0048",
+      "title": "Synthetic aurora document 0048",
+      "text": "aurora magnet uniq0048 memory retrieval group0003",
+      "metadata": {
+        "topic": "aurora",
+        "facet": "magnet"
+      }
+    },
+    {
+      "id": "doc:0049",
+      "title": "Synthetic harbor document 0049",
+      "text": "harbor tide uniq0049 memory retrieval group0004 common common common common common common common common common common common common",
+      "metadata": {
+        "topic": "harbor",
+        "facet": "tide"
+      }
+    }
+  ],
+  "queries": [
+    {
+      "id": "q:0000",
+      "text": "kernel mutex uniq0003",
+      "query_type": "Synthetic/exact",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0001",
+      "text": "orchard pear",
+      "query_type": "Synthetic/partial",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0002",
+      "text": "harbor tide retrieval",
+      "query_type": "Synthetic/graded",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0003",
+      "text": "uniq0024 solar orchard aurora studio common",
+      "query_type": "Synthetic/distractor_heavy",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0004",
+      "text": "zzzoov4 phantomterm forest uniq0031",
+      "query_type": "Synthetic/oov",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0005",
+      "text": "zzznothing5 absentconcept5",
+      "query_type": "Synthetic/no_answer",
+      "limit": 50,
+      "answer_mode": "NoAnswer"
+    },
+    {
+      "id": "q:0006",
+      "text": "uniq0045 common common common desert",
+      "query_type": "Synthetic/length_bias",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0007",
+      "text": "orchard orchard orchard orchard uniq0002",
+      "query_type": "Synthetic/repeated_term",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0008",
+      "text": "harbor cargo uniq0009",
+      "query_type": "Synthetic/exact",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0009",
+      "text": "aurora magnet",
+      "query_type": "Synthetic/partial",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0010",
+      "text": "forest canopy retrieval",
+      "query_type": "Synthetic/graded",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0011",
+      "text": "uniq0030 audio studio harbor orchard common",
+      "query_type": "Synthetic/distractor_heavy",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0012",
+      "text": "zzzoov12 phantomterm desert uniq0037",
+      "query_type": "Synthetic/oov",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0013",
+      "text": "zzznothing13 absentconcept13",
+      "query_type": "Synthetic/no_answer",
+      "limit": 50,
+      "answer_mode": "NoAnswer"
+    },
+    {
+      "id": "q:0014",
+      "text": "uniq0001 common common common harbor",
+      "query_type": "Synthetic/length_bias",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0015",
+      "text": "aurora aurora aurora aurora uniq0008",
+      "query_type": "Synthetic/repeated_term",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0016",
+      "text": "forest river uniq0015",
+      "query_type": "Synthetic/exact",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0017",
+      "text": "studio scene",
+      "query_type": "Synthetic/partial",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0018",
+      "text": "desert mirage retrieval",
+      "query_type": "Synthetic/graded",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0019",
+      "text": "uniq0036 catalog forest kernel studio common",
+      "query_type": "Synthetic/distractor_heavy",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0020",
+      "text": "zzzoov20 phantomterm kernel uniq0043",
+      "query_type": "Synthetic/oov",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0021",
+      "text": "zzznothing21 absentconcept21",
+      "query_type": "Synthetic/no_answer",
+      "limit": 50,
+      "answer_mode": "NoAnswer"
+    },
+    {
+      "id": "q:0022",
+      "text": "uniq0007 common common common forest",
+      "query_type": "Synthetic/length_bias",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0023",
+      "text": "studio studio studio studio uniq0014",
+      "query_type": "Synthetic/repeated_term",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0024",
+      "text": "desert oasis uniq0021",
+      "query_type": "Synthetic/exact",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0025",
+      "text": "library archive",
+      "query_type": "Synthetic/partial",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0026",
+      "text": "kernel mutex retrieval",
+      "query_type": "Synthetic/graded",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0027",
+      "text": "uniq0042 pear desert forest harbor common",
+      "query_type": "Synthetic/distractor_heavy",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0028",
+      "text": "zzzoov28 phantomterm harbor uniq0049",
+      "query_type": "Synthetic/oov",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0029",
+      "text": "zzznothing29 absentconcept29",
+      "query_type": "Synthetic/no_answer",
+      "limit": 50,
+      "answer_mode": "NoAnswer"
+    },
+    {
+      "id": "q:0030",
+      "text": "uniq0013 common common common desert",
+      "query_type": "Synthetic/length_bias",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0031",
+      "text": "library library library library uniq0020",
+      "query_type": "Synthetic/repeated_term",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0032",
+      "text": "kernel scheduler uniq0027",
+      "query_type": "Synthetic/exact",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0033",
+      "text": "orchard apple",
+      "query_type": "Synthetic/partial",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0034",
+      "text": "harbor cargo retrieval",
+      "query_type": "Synthetic/graded",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0035",
+      "text": "uniq0048 magnet studio desert kernel common",
+      "query_type": "Synthetic/distractor_heavy",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0036",
+      "text": "zzzoov36 phantomterm desert uniq0005",
+      "query_type": "Synthetic/oov",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0037",
+      "text": "zzznothing37 absentconcept37",
+      "query_type": "Synthetic/no_answer",
+      "limit": 50,
+      "answer_mode": "NoAnswer"
+    },
+    {
+      "id": "q:0038",
+      "text": "uniq0019 common common common kernel",
+      "query_type": "Synthetic/length_bias",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    },
+    {
+      "id": "q:0039",
+      "text": "orchard orchard orchard orchard uniq0026",
+      "query_type": "Synthetic/repeated_term",
+      "limit": 50,
+      "answer_mode": "JudgedRetrieval"
+    }
+  ],
+  "judgments": [
+    {
+      "query_id": "q:0000",
+      "item_id": "doc:0003",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0001",
+      "item_id": "doc:0002",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0001",
+      "item_id": "doc:0010",
+      "relevance_grade": 2
+    },
+    {
+      "query_id": "q:0001",
+      "item_id": "doc:0018",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0002",
+      "item_id": "doc:0017",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0002",
+      "item_id": "doc:0001",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0002",
+      "item_id": "doc:0009",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0002",
+      "item_id": "doc:0025",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0003",
+      "item_id": "doc:0024",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0004",
+      "item_id": "doc:0031",
+      "relevance_grade": 2
+    },
+    {
+      "query_id": "q:0006",
+      "item_id": "doc:0045",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0007",
+      "item_id": "doc:0002",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0008",
+      "item_id": "doc:0009",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0009",
+      "item_id": "doc:0000",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0009",
+      "item_id": "doc:0008",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0009",
+      "item_id": "doc:0016",
+      "relevance_grade": 2
+    },
+    {
+      "query_id": "q:0010",
+      "item_id": "doc:0023",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0010",
+      "item_id": "doc:0007",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0010",
+      "item_id": "doc:0015",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0010",
+      "item_id": "doc:0031",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0011",
+      "item_id": "doc:0030",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0012",
+      "item_id": "doc:0037",
+      "relevance_grade": 2
+    },
+    {
+      "query_id": "q:0014",
+      "item_id": "doc:0001",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0015",
+      "item_id": "doc:0008",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0016",
+      "item_id": "doc:0015",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0017",
+      "item_id": "doc:0006",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0017",
+      "item_id": "doc:0014",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0017",
+      "item_id": "doc:0022",
+      "relevance_grade": 2
+    },
+    {
+      "query_id": "q:0018",
+      "item_id": "doc:0029",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0018",
+      "item_id": "doc:0005",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0018",
+      "item_id": "doc:0013",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0018",
+      "item_id": "doc:0021",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0019",
+      "item_id": "doc:0036",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0020",
+      "item_id": "doc:0043",
+      "relevance_grade": 2
+    },
+    {
+      "query_id": "q:0022",
+      "item_id": "doc:0007",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0023",
+      "item_id": "doc:0014",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0024",
+      "item_id": "doc:0021",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0025",
+      "item_id": "doc:0004",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0025",
+      "item_id": "doc:0012",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0025",
+      "item_id": "doc:0020",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0026",
+      "item_id": "doc:0035",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0026",
+      "item_id": "doc:0003",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0026",
+      "item_id": "doc:0011",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0026",
+      "item_id": "doc:0019",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0026",
+      "item_id": "doc:0027",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0027",
+      "item_id": "doc:0042",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0028",
+      "item_id": "doc:0049",
+      "relevance_grade": 2
+    },
+    {
+      "query_id": "q:0030",
+      "item_id": "doc:0013",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0031",
+      "item_id": "doc:0020",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0032",
+      "item_id": "doc:0027",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0033",
+      "item_id": "doc:0002",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0033",
+      "item_id": "doc:0010",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0033",
+      "item_id": "doc:0018",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0034",
+      "item_id": "doc:0041",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0034",
+      "item_id": "doc:0001",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0034",
+      "item_id": "doc:0009",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0034",
+      "item_id": "doc:0017",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0034",
+      "item_id": "doc:0025",
+      "relevance_grade": 1
+    },
+    {
+      "query_id": "q:0035",
+      "item_id": "doc:0048",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0036",
+      "item_id": "doc:0005",
+      "relevance_grade": 2
+    },
+    {
+      "query_id": "q:0038",
+      "item_id": "doc:0019",
+      "relevance_grade": 3
+    },
+    {
+      "query_id": "q:0039",
+      "item_id": "doc:0026",
+      "relevance_grade": 3
+    }
+  ]
+}
