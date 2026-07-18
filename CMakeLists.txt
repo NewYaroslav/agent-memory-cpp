@@ -132,5 +132,15 @@ endif()
 
 if(AGENT_MEMORY_BUILD_TESTS)
     enable_testing()
+    if(AGENT_MEMORY_BUILD_BENCHMARKS)
+        add_test(
+            NAME agent_memory_benchmark_cli_synthetic_sweep
+            COMMAND
+                $<TARGET_FILE:agent-memory-bench>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/synthetic-sweep.example.json
+                ${CMAKE_CURRENT_BINARY_DIR}/synthetic-sweep-ctest.json
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+    endif()
     add_subdirectory(tests)
 endif()

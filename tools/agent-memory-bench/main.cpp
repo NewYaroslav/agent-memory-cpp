@@ -182,6 +182,7 @@ namespace {
         }
         std::vector<std::string> baselines;
         baselines.reserve(node->size());
+        std::set<std::string> seen;
         for(const auto& entry : *node) {
             if(!entry.is_string()) {
                 throw std::runtime_error("config field 'baselines' entries must be strings");
@@ -189,6 +190,12 @@ namespace {
             auto value = entry.get<std::string>();
             if(value.empty()) {
                 throw std::runtime_error("config field 'baselines' entries must not be empty");
+            }
+            if(!seen.insert(value).second) {
+                throw std::runtime_error(
+                    "config field 'baselines' must not contain duplicate baseline: "
+                    + value
+                );
             }
             baselines.push_back(std::move(value));
         }
@@ -617,6 +624,8 @@ namespace {
         }
         if(reports.size() >= 2) {
             document["comparison"] = {
+                {"first_baseline", reports[0].baseline_name},
+                {"second_baseline", reports[1].baseline_name},
                 {
                     "recall_at_10_delta_second_minus_first",
                     reports[1].quality.recall_at_10 - reports[0].quality.recall_at_10
@@ -702,13 +711,22 @@ namespace {
             index_metrics.vocabulary_size = stats.vocabulary_size;
             index_metrics.mean_document_length = stats.mean_document_length;
             index_metrics.corpus_ingest_time_ms = elapsed_ms(ingest_start, ingest_end);
+            // Baselines run in-process, so process peak RSS is a lifetime
+            // high-water mark and cannot be honestly attributed per baseline.
+            // Leave this per-report value unsupported for synthetic_sweep
+            // until the runner isolates baselines in subprocesses.
+            index_metrics.peak_resident_set_bytes = 0;
 
             if(baseline == agent_memory::kBaselineNameBowVector) {
                 const auto build_start = Clock::now();
                 agent_memory::BowVectorRetriever retriever(ids, texts, 0);
                 const auto build_end = Clock::now();
-                index_metrics.embedding_time_ms = elapsed_ms(build_start, build_end);
-                index_metrics.peak_resident_set_bytes = peak_resident_set_bytes();
+                // BowVectorRetriever eagerly fits the dictionary, creates
+                // vectors, and builds the exact top-K index in one constructor.
+                // Until that API exposes a finer timing split, report the
+                // combined constructor time as index build time rather than
+                // mislabeling it as pure embedding time.
+                index_metrics.index_build_time_ms = elapsed_ms(build_start, build_end);
                 reports.push_back(run_retriever_benchmark(
                     retriever,
                     dataset,
@@ -722,7 +740,6 @@ namespace {
                 agent_memory::ExactLexicalRetriever retriever(ids, texts, metadata);
                 const auto build_end = Clock::now();
                 index_metrics.index_build_time_ms = elapsed_ms(build_start, build_end);
-                index_metrics.peak_resident_set_bytes = peak_resident_set_bytes();
                 reports.push_back(run_retriever_benchmark(
                     retriever,
                     dataset,

@@ -63,8 +63,11 @@ Local smoke run on the tiny fixture:
 Timing numbers are intentionally omitted from the table because the fixture is
 too small for stable latency conclusions. The JSON report still records
 mean/p50/p95/p99 latency, throughput, index build timings, vocabulary size,
-document count, mean document length, peak RSS, and roadmap-label PR #29 hook
-fields.
+document count, mean document length, and roadmap-label PR #29 hook fields.
+Per-baseline peak RSS is intentionally reported as `0` in in-process synthetic
+sweeps because process peak RSS is a lifetime high-water mark; memory
+attribution should wait for subprocess isolation or another dedicated
+measurement path.
 
 ## Interpretation
 

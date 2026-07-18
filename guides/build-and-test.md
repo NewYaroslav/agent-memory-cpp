@@ -51,10 +51,15 @@ cmake -S . -B tmp/build-bench \
     -DAGENT_MEMORY_ENABLE_JSON=ON
 
 cmake --build tmp/build-bench --parallel
+ctest --test-dir tmp/build-bench --output-on-failure
 ./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
     tools/agent-memory-bench/config.example.json \
     tmp/benchmark-report.json
 ```
+
+When tests and benchmarks are enabled together, CTest also registers
+`agent_memory_benchmark_cli_synthetic_sweep`, a smoke test that runs
+`agent-memory-bench` against the committed synthetic sweep fixture.
 
 Run the BoW-vs-BM25 synthetic sweep fixture:
 
