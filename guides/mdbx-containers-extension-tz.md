@@ -37,8 +37,161 @@
 - **Schema versioning framework поверх mdbx-containers** — payload versioning остаётся на стороне приложения (текущие префиксы `agent_memory.document.v1` и т.п. сохраняются).
 - **Background compaction API** — не в scope первой итерации.
 - **Bloom filters** — не в scope.
-- **Multi-process support**: extension НЕ добавляет новый multi-process API. MDBX штатно поддерживает multi-process read-only режим без изменений в extension; agent-memory-cpp может использовать этот режим без mdbx-containers изменений (future research, не входит в M0/M1/M2 scope).
+- **Multi-process write coordination через MDBX штатный multi-process API** не входит в scope (single-writer per env остаётся правилом M0/M1/M2). **Multi-node replication** через upstream `sync` subsystem (см. §1.6) рассматривается как опциональный opt-in profile за пределами M0/M1/M2; см. §11.7 для решения adoption.
 - **Per-thread transaction model** сохраняется как primary design constraint (см. `common/Connection.hpp`); multi-table write обеспечивается одним `Transaction`-объектом, разделяемым между таблицами, а не координацией отдельных транзакций (см. `guides/memory-stacks-roadmap.md`, open issue 17.9).
+
+### 1.6. Upstream sync subsystem (informational)
+
+#### 1.6.1 Purpose
+
+Этот раздел носит **чисто информационный характер** на момент написания ТЗ. Локальный submodule `external/mdbx-containers` (commit `e9e9f2f`, tag `v1.0.0-97-ge9e9f2f`) **не содержит** подкаталога `sync/`. Upstream `external/mdbx-containers` main snapshot `d4d219c` реализует sync subsystem, описанный ниже. Цель раздела — зафиксировать состояние upstream sync v0.1 в этом ТЗ, чтобы будущие ревизии не дрифтовали относительно фактической поверхности API. Никакие изменения в текущих DBIs секции 5 не подразумеваются; фиксация adoption — отдельный вопрос §11.7.
+
+#### 1.6.2 Source attribution policy
+
+Поскольку upstream `mdbx-containers` не публикует RFC / спецификации отдельно от кода, в этом разделе используется **двухуровневая citation pattern**:
+
+1. **Public + supplementary internal** — если у PR есть публичный URL (например, GitHub PR `#86`), ссылаемся на него как на первичный источник; внутренние файлы (`DESIGN.md`, `SyncEngine.hpp`) приводятся как подтверждение / цитата, не как независимая authorities.
+2. **Internal-only with explicit disclaimer** — для деталей, не отражённых в публичных PR description (например, точные LOC-счётчики header-файлов), приводится оценка со ссылкой на конкретный файл; такие числа считаются best-effort и должны быть перепроверены при формальной adoption.
+
+Никакие URL, arXiv ID, или DOI не публикуются без верификации; если источника нет — пишем «нет публичного источника» и приводим internal anchor.
+
+#### 1.6.3 Upstream `sync` v0.1 — файлы
+
+Директория: `include/mdbx_containers/sync/` в upstream main snapshot `d4d219c`. Состав:
+
+| Файл | Назначение | Ориентир LOC |
+|---|---|---|
+| `DESIGN.md` | Дизайн-контракт v0.1, locked decisions | н/д |
+| `SyncEngine.hpp` | Pull/push/apply координатор | н/д |
+| `SyncWorker.hpp` | Фоновый pull/apply lifecycle | н/д |
+| `protocol.hpp` | `PullRequest`, `PullResponse`, `PushRequest`, `PushResponse` + `CancellationToken` | н/д |
+| `ISyncPeer.hpp` | Абстрактный transport interface (`pull`, `push`, `request_cancel`) | н/д |
+| `DirectSyncPeer.hpp` | Полностью in-process peer | н/д |
+| `TransportMessageCodec.hpp` | Версионированная envelope-кодировка transport DTO | н/д |
+| `HttpTransport.hpp` | Framework-neutral HTTP-shaped adapter seam | н/д |
+| `WebSocketTransport.hpp` | Framework-neutral WebSocket-shaped adapter seam | н/д |
+| `TransportMiddleware.hpp` | Transport middleware, allow-list, rate limiting, auth context policies | н/д |
+
+Внутренний layout дополнительно содержит `stores/` подкаталог с 5 системными DBIs (см. §1.6.10) и compile-time gate `MDBXC_SYNC_ENABLED` (default `0`). Подключение sync-функционала требует явного `-DMDBXC_SYNC_ENABLED=1` при сборке `mdbx-containers`.
+
+Public first-class упоминания sync subsystem в PR descriptions — это GitHub PR #86–#105 (chronologically; детали в §1.6.8). PR #104 и PR #105 уже merged на момент этого snapshot-а; transport DTO codec и HTTP adapter seam входят в v0.1.
+
+#### 1.6.4 v0.1 support matrix
+
+Sync v0.1 покрывает wire-format round-trip только для определённых table types upstream:
+
+| Upstream table type | Sync v0.1 | Замечание |
+|---|---|---|
+| `KeyValueTable<K, V, Options>` | Supported | Базовый KV путь |
+| `KeyTable<K, Options>` | Supported | Set-like без payload |
+| `ValueTable<V>` | Supported | Одиночный value per name |
+| `SequenceTable<V>` | Supported | Auto-increment ID generator |
+| `VectorStore` (через `vector::VectorStore`) | Supported (indirect) | Round-trip через KeyValueTable-обёртку в v0.1 |
+| `AnyValueTable<K, Options>` | **NOT supported** | Heterogeneous typed payload не имеет wire-format в v0.1 |
+| `KeyMultiValueTable<K, V, Options>` | **NOT supported** | DUPSORT multi-payload; блокирует inverted index sync (см. §5.6) |
+| `HashedKeyValueStore` | **NOT supported** | Coverage shadow-graphs and HashedKeyValueStore excluded |
+
+Покрытие для любого table type, не перечисленного как «Supported», считается **out of v0.1 scope**; см. §5.6 для влияния на DBI-схему настоящего проекта.
+
+#### 1.6.5 Wire format locks (по `DESIGN.md`)
+
+Locked decisions, цитаты согласно `include/mdbx_containers/sync/DESIGN.md`:
+
+- **ChangeBatch magic** — 8 ASCII-байт `MDBXCSYN`. Позволяет отличать batch payload от других потенциальных payload-ов по тому же транспорту.
+- **Transport envelope magic** — 8 ASCII-байт `MDBXCPRT`. Используется `TransportMessageCodec` для HTTP/WebSocket/IPC/message-queue DTO поверх отдельных `ChangeBatch` records.
+- **ChangeBatch codec integers**, включая `codec_version`, `batch_version`, `batch_flags`, `seq`, `time_unix_ns`, `ops_count` и op-level fields, сериализуются **little-endian**; эти значения не сортируются как wire bytes.
+- **`ChangeLogStore` key `seq` part** сериализуется **big-endian**, чтобы MDBX bytewise range scan по ключу `(origin_node_id, seq)` сохранял числовой порядок `seq`.
+- **Payload integers** (record sizes, lengths, флаги) сериализуются **little-endian**, чтобы MDBX native word order не требовал byte-swap на типичной x86_64 / aarch64 платформе.
+- **Application keys** — **opaque bytes** на уровне wire format. Sync subsystem не интерпретирует содержимое ключей; ordering и deduplication отдаются на стороне `KeyValueTable`/`KeyMultiValueTable` интерфейса.
+
+Эти решения считаются **locked** до появления отдельного `DESIGN.md` update-а; пересмотр требует явного bump-а версии wire format.
+
+#### 1.6.6 Lifecycle state machine (по `SyncWorker.hpp`)
+
+`SyncWorker` реализует явный state machine для фонового pull/apply:
+
+```
+Stopped -> Starting -> Idle -> Pulling -> Applying -> Idle
+                              -> Backoff -> Idle
+                              -> Stopping -> Stopped
+                              -> Failed
+```
+
+Переходы:
+
+- `Stopped → Starting` — worker started и готовит background loop.
+- `Starting → Idle` — background loop вошёл в режим ожидания между sync rounds (`idle_interval`).
+- `Idle → Pulling` — начат pull batch.
+- `Pulling → Applying` — batch received, начинается apply.
+- `Applying → Idle` — apply finished без ошибок (Applied/Skipped).
+- `Pulling` / `Applying` → `Backoff` — pull/apply round завершился ошибкой или конфликтом, который background loop будет ретраить.
+- `Backoff → Idle` — backoff timer истёк, повторная попытка; задержка растёт от `initial_backoff` до `max_backoff`.
+- Любое состояние → `Stopping` — user сигнал (`stop()` / shutdown).
+- `Stopping → Stopped` — текущая операция отменена через `CancellationToken` (см. §1.6.3).
+- `* → Failed` — unexpected exception вышел из основного worker loop.
+
+В `SyncWorkerOptions` нет `max_consecutive_failures`: background worker продолжает retry loop с bounded backoff. Foreground `run_once()` имеет другую семантику: обычный неуспешный round возвращает result с `ok=false` и переводит worker в `Failed`, потому что одноразовый вызов не имеет фонового retry loop.
+
+#### 1.6.7 Conflict reasons (по `SyncEngine.hpp`)
+
+Возвращаемое значение `ApplyResult`:
+
+| Значение | Семантика |
+|---|---|
+| `Applied` | Запись применена успешно |
+| `Skipped` | Batch redundant: `seq <= last contiguous applied seq` в `_mdbxc_applied`, либо batch пришёл от local node |
+| `Conflict` | Запись отклонена — см. `ApplyConflictReason` |
+
+`ApplyConflictReason` enum (ориентировочный набор по `SyncEngine.hpp`):
+
+| Reason | Когда возникает |
+|---|---|
+| `SequenceGap` | Полученный `seq` не равен `last_applied_seq + 1`; caller должен re-pull недостающие batches |
+| `InconsistentBatchDbiFlags` | Внутри одного batch-а DBI flags противоречат друг другу (mixed read-only / read-write в одной txn) |
+| `ExistingDbiFlagsMismatch` | DBI на локальном узле имеет flags, несовместимые с incoming batch (например, `MDBX_DUPSORT` mismatch) |
+
+В background worker такие round failures приводят к `Backoff` и новой попытке. Переход в `Failed` не привязан к счётчику recoverable failures; он означает unexpected exception в основном worker loop или неуспешный foreground `run_once()`.
+
+#### 1.6.8 Merged PRs since local checkout
+
+Upstream PR-ы, появившиеся после submodule-pointer-а `e9e9f2f` и затрагивающие sync subsystem (или напрямую предшествующие sync-work):
+
+| GitHub PR # | Направление | Связь с sync v0.1 |
+|---|---|---|
+| #86 | … | начальная sync-инфраструктура (точная сводка требует верификации при adoption) |
+| #87–#103 | … | последующие sync-коммиты (детали per-PR требуют верификации при adoption) |
+| #104 | Transport DTO codec | `TransportMessageCodec`, отдельный envelope magic `MDBXCPRT` |
+| #105 | HTTP transport adapter seam | Framework-neutral HTTP-shaped adapter seam поверх `ISyncPeer` |
+
+Расхождения с roadmap-label «PR #N» в `guides/memory-stacks-roadmap.md` §14 / open issues не предполагаются; при синтаксической коллизии (например, внутренний roadmap-link «PR #95») приоритет — фактический upstream PR #95, и в этом ТЗ ссылка даётся явно: «GitHub PR #95» или «roadmap-label PR #95».
+
+Точный per-PR breakdown отложен до формальной adoption (§11.7); в этом разделе фиксируется диапазон для accounting-а.
+
+#### 1.6.9 Transport status after PR #104–#105
+
+- **Direct peer** — `DirectSyncPeer` остаётся единственным полностью in-process peer.
+- **HTTP seam** — `HttpSyncPeer`, `IHttpSyncClient`, `HttpSyncServer` и `HttpSyncRoutes` задают route/content-type/body/status mapping поверх `TransportMessageCodec`, но не открывают sockets и не зависят от конкретного HTTP framework.
+- **WebSocket seam** — `WebSocketSyncPeer`, `IWebSocketSyncChannel` и `WebSocketSyncServer` задают binary-message request/response contract поверх `TransportMessageCodec`, но не владеют sessions и не зависят от WebSocket framework.
+- **Optional examples** — socket-backed HTTP/WebSocket examples существуют как examples, но production-grade concrete socket transport библиотека не навязывает.
+- **Middleware** — transport middleware покрывает allow-list policies, fixed-budget rate limiting, HTTP request context, bearer token / remote address policies, WebSocket session identity и retry status classification.
+
+Следствие для `agent-memory-cpp`: HTTP/WebSocket adapter seams больше не являются upstream blocker-ом сами по себе. Adoption всё равно откладывается из-за coverage gap по `KeyMultiValueTable` / `AnyValueTable` и отсутствия multi-host scope-routing requirement для M0/M1/M2 (§11.7).
+
+#### 1.6.10 System DBIs и `max_dbs` budget
+
+Upstream sync subsystem вводит 5 системных DBIs:
+
+| System DBI | Назначение |
+|---|---|
+| `_mdbxc_meta` | Sync metadata: `db_uuid`, local `node_id`, `schema_version`, `local_seq`, `created_at_ms` |
+| `_mdbxc_changelog` | Append-only changelog keyed by `(origin_node_id, seq)`; `seq` в ключе хранится BE для range scans |
+| `_mdbxc_origins` | Accelerator index: `origin_node_id → max known changelog seq` для multi-origin pull |
+| `_mdbxc_applied` | Last contiguous applied `seq` per origin; primary replay/skip state |
+| `_mdbxc_identity_index` | Declared identity map для opaque app keys ↔ storage identity; write path deferred в v0.1 |
+
+Эти 5 DBIs разделяют `Config::max_dbs` budget с таблицами секции 5.5. Текущее значение `max_dbs == 64` (см. §5.5 замечание о расширении 16 → 64). Adoption sync v0.1 **потребует перерасчёта budget-а** (подробнее — §11.7). На момент написания ТЗ sync subsystem не активирован, и эти 5 DBIs **не учитываются** в подсчёте `max_dbs == 64`.
+
+> **Note**: raw-code compression и storage budget — разные вещи. Размер wire-format payload-ов зависит от compression-а (LZ4 / ZSTD), и raw source code footprint (см. §1.6.3) не равен полному end-to-end storage footprint при включённом sync. Полная cost-модель откладывается до формальной adoption.
 
 ## 1.5. Текущее состояние
 
@@ -504,6 +657,66 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 
 Все таблицы используют префикс payload versioning (`agent_memory.knowledge_unit.v1`, `agent_memory.qa.v1`, и т.п.), `Config::max_dbs` увеличивается с 16 до 64.
 
+### 5.6. Sync subsystem mapping (informational)
+
+Этот подраздел фиксирует соответствие между таблицами секций 5.1–5.5 и sync v0.1 coverage из §1.6.4. На момент написания ТЗ sync subsystem **не активирован** (см. §1.6 и §11.7), поэтому mapping носит **прогнозный / informational** характер: формальный статус каждого DBI будет пересмотрен при adoption.
+
+#### 5.6.1 Per-DBI sync coverage
+
+Для каждой DBI из §5.5 (а также §5.1, §5.2, §5.3) приводим предполагаемый underlying table type и соответствующий статус sync v0.1:
+
+| DBI | Underlying mdbx-containers type | Sync v0.1 status | Замечание |
+|---|---|---|---|
+| `knowledge_units` | `KeyValueTable<UnitId, KnowledgeUnitEnvelope>` (§5.5 Layer A) | Supported | Базовый KV путь; sync v0.1 покрывает |
+| `knowledge_units_by_kind` | `KeyMultiValueTable<KnowledgeUnitKind, UnitId>` DUPSORT (§5.5) | **NOT supported** | DUPSORT не покрыт в v0.1; reverse index layer не синхронизируется |
+| `unit_components` | `TypeDiscriminatedTable<ComponentKind, UnitId, ValueVariant<…>>` через `AnyValueTable` (§3.4) | **NOT supported** | `AnyValueTable` не покрыт в v0.1 |
+| `qa_payloads`, `fact_payloads`, `conversation_episode_payloads`, `compiled_article_payloads`, `chunk_payloads` | `KeyValueTable<UnitId, PerKindPayload>` (§5.5 Layer B) | Supported | Per-kind payloads — обычные KV |
+| `unit_projections` | `KeyValueTable<CompositeKey<...>, SearchProjection>` (§5.5 Layer C) | Supported | Composite key — opaque bytes на wire (см. §1.6.5) |
+| `embedding_meta`, `embedding_vectors` | `KeyValueTable<CompositeKey<...>, …>` (§5.5) | Supported | KV; vector store дополнительно через indirect path (§1.6.4) |
+| `inverted_token_to_unit` | `ReverseIndexTable<CompositeKey<ScopeId, TokenId, ProjectionKind, FieldId>, UnitId>` поверх `KeyMultiValueTable` (§3.2) | **NOT supported** | См. §5.6.2 — critical gap для lexical inverted index |
+| `field_to_postings` | `ReverseIndexTable<CompositeKey<…>, PostingStats>` поверх `KeyMultiValueTable` | **NOT supported** | Та же DUPSORT-проблема, что и у `inverted_token_to_unit` |
+| `metadata_filters` | `ReverseIndexTable<CompositeKey<ScopeId, MetadataKey, MetadataValue>, UnitId>` поверх `KeyMultiValueTable` | **NOT supported** | Pre-filter indexes не синхронизируются в v0.1 |
+| `graph_edges_by_src`, `graph_edges_by_dst` | `ReverseIndexTable` поверх `KeyMultiValueTable` | **NOT supported** | Graph edges — DUPSORT-семантика, см. §3.2 + §5.5 |
+| `temporal_event_index`, `temporal_unit_index` | `RangeIndexTable<uint64_timestamp, …>` поверх `KeyValueTable` или `KeyMultiValueTable` (§3.3) | Supported *или* **NOT supported** в зависимости от impl-а | Требует решения: если `RangeIndexTable` реализуется поверх `KeyMultiValueTable` (multi-payload per key), статус NOT supported; если поверх `KeyValueTable` (single payload), Supported |
+| `speaker_to_units`, `session_to_units` | `ReverseIndexTable` поверх `KeyMultiValueTable` | **NOT supported** | DUPSORT |
+| `usage_stats_index` | `ReverseIndexTable<CompositeKey<ScopeId, UnitId>, UsageStatsComponent>` (§5.5) | **NOT supported** | DUPSORT |
+| `schema_info` | `KeyValueTable<string, SchemaInfo>` (§5.5) | Supported | KV |
+| `lexical_token_by_text`, `lexical_token_by_id`, `lexical_chunk_stats`, `lexical_token_stats` | `KeyValueTable<...>` (§5.1) | Supported | KV |
+| `lexical_postings`, `lexical_field_postings` | `KeyMultiValueTable<...>` / `ReverseIndexTable` (§5.1, §3.2) | **NOT supported** | DUPSORT postings — критический gap для BM25 sync |
+| `binary_bucket_index`, `embedding_store`, `chunk_store` | `RangeIndexTable` / `KeyValueTable` (§5.2) | Supported (KV) *или* **NOT supported** (если `RangeIndexTable` через `KeyMultiValueTable`) | Зависит от impl-а, см. temporal_event_index выше |
+| `qa_knowledge`, `fact_store`, `event_store`, `graph_nodes` | `KeyValueTable<...>` (§5.3) | Supported | KV |
+| `qa_inverted`, `fact_inverted`, `resource_metadata_filters`, `graph_edges_by_src/dst` | `ReverseIndexTable` поверх `KeyMultiValueTable` | **NOT supported** | DUPSORT reverse indexes |
+| `resource_kinds` | `TypeDiscriminatedTable<DerivedRecordKind, ResourceId, payload>` через `AnyValueTable` (§5.3) | **NOT supported** | `AnyValueTable` |
+| `agent_memory_documents`, `agent_memory_chunks`, `agent_memory_document_chunks`, `agent_memory_resource_manifests` | `KeyValueTable<...>` (§5.4) | Supported | KV infrastructure |
+
+Эта таблица — **best-effort projection на момент написания TZ**. Статус для каждого DBI может измениться после `RangeIndexTable` upstream-уточнения (`KeyValueTable` vs `KeyMultiValueTable` основа) и после `KeyMultiValueTable` sync coverage, который формально запланирован на v0.2 (см. §11.7).
+
+#### 5.6.2 Critical gaps (явные)
+
+Из таблицы §5.6.1 вытекают два **критических gap-а** для agent-memory-cpp:
+
+1. **`inverted_token_to_unit` (DBI из §3.3 / §5.5 Layer C secondary indexes).**
+   Underlying `KeyMultiValueTable` через `ReverseIndexTable` (см. §3.2) — DUPSORT-семантика. Sync v0.1 не покрывает `KeyMultiValueTable`, поэтому lexical inverted index **не синхронизируется между узлами в v0.1**.
+
+2. **`unit_components` (DBI из §3.4 / §5.5 Layer B).**
+   Underlying `AnyValueTable` через `TypeDiscriminatedTable` (см. §3.4). Sync v0.1 не покрывает `AnyValueTable`, поэтому operational + per-kind components **не синхронизируются между узлами в v0.1**.
+
+Та же проблема распространяется на остальные DUPSORT-производные DBI (`field_to_postings`, `metadata_filters`, `graph_edges_by_src/dst`, `speaker_to_units`, `session_to_units`, `usage_stats_index`, BM25 `lexical_postings`).
+
+Цитата из upstream `DESIGN.md` (по указанному в §1.6.3 файлу):
+
+> "Do not add `record_op()` paths for unsupported table types without first updating this design document and adding round-trip replication tests for the new wire-format semantics."
+
+Это означает, что **любая попытка «форсировать» sync для `KeyMultiValueTable` / `AnyValueTable` без обновления `DESIGN.md` + новых round-trip тестов считается нарушением upstream-контракта**. Adoption для указанных путей в v0.1 заблокирован upstream policy-ей.
+
+#### 5.6.3 Implication для agent-memory-cpp
+
+До тех пор, пока upstream не выпустит v0.2 с `KeyMultiValueTable` и `AnyValueTable` wire-format-ом, **lexical inverted index и scope-aware secondary indexes, а также `unit_components` storage, не могут быть синхронизированы между узлами**. Это напрямую влияет на multi-host scenario в `guides/memory-stacks-roadmap.md` §13.2/13.3 (Distributed scope routing).
+
+**Промежуточное решение** для проекта: defer sync adoption для путей `KeyMultiValueTable` / `AnyValueTable` до v0.2. KV-derived пути (`knowledge_units`, `unit_projections`, `embedding_*`, `schema_info`, per-kind payloads) технически покрыты, но включать их в v0.1 single-host конфигурации смысла нет (single-writer per env остаётся правилом M0/M1/M2, см. §1 non-goals).
+
+Конкретное решение о formal adoption (включая budget reallocation для 5 sync system DBIs) фиксируется в §11.7.
+
 ## 6. Порядок реализации (приоритеты)
 
 **P0 (блокер для knowledge units):**
@@ -637,6 +850,31 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 5. **Schema versioning остаётся на стороне приложения.** `TypeDiscriminatedTable` не навязывает payload version. Контракт: payload prefix `agent_memory.knowledge_unit.v1` etc. валидируется на уровне `agent-memory-cpp`, не в mdbx-containers.
 
 6. **`max_dbs` увеличение.** Текущее значение 16 недостаточно для всех таблиц секции 5. План: 64 (16 существующих + 48 новых). Verify, что MDBX env flags поддерживают это без `MDBX_NOTLS` reconfiguration.
+
+7. **Sync subsystem adoption** (см. §1.6 и §5.6). Принимать ли upstream `sync` v0.1, отложить adoption полностью, или форкать custom решение?
+
+   **Контекст.** v0.1 покрывает только KV-derived table types (`KeyValueTable`, `KeyTable`, `ValueTable`, `SequenceTable`, `VectorStore` indirect). Это **исключает** наши критические paths: lexical inverted index через `inverted_token_to_unit` (`KeyMultiValueTable` underlying) и `unit_components` storage (`AnyValueTable` underlying через `TypeDiscriminatedTable`). Тот же gap покрывает BM25 postings, scope-aware secondary indexes (`field_to_postings`, `metadata_filters`, `graph_edges_by_*`, `speaker_to_units`, `session_to_units`, `usage_stats_index`), а также все DUPSORT-производные пути из §5.3.
+
+   **Trade-offs.**
+
+   - **Принять v0.1 сейчас.** Получаем baseline для KV-путей (`knowledge_units`, `unit_projections`, `embedding_*`, `schema_info`, per-kind payloads) — но inverted index и components по-прежнему остаются локальными. Mixed replication state (часть DBIs synced, часть — нет) увеличивает operational complexity без видимого выигрыша для M0/M1/M2.
+   - **Игнорировать sync полностью.** Минимальный cognitive load на этом этапе; остаёмся strict single-host. Стоимость: позже придётся догонять upstream API drift-ы, если когда-нибудь понадобится multi-host.
+   - **Форкнуть custom решение** (поверх существующих `KeyValueTable`/`KeyMultiValueTable`). Полный контроль над wire format и table coverage, включая `KeyMultiValueTable` и `AnyValueTable`. Стоимость: собственный DESIGN.md, свои round-trip тесты, своя on-call ответственность за конфликт-резолюцию. По сути повторяет upstream работу.
+
+   Дополнительные соображения:
+
+   - **Budget impact.** Активация sync v0.1 добавляет 5 системных DBIs (`_mdbxc_meta`, `_mdbxc_changelog`, `_mdbxc_origins`, `_mdbxc_applied`, `_mdbxc_identity_index`, см. §1.6.10) в `max_dbs` budget. Текущий план — 64 (см. §5.5 замечание). Adoption потребует перерасчёта: либо bump до ~80+, либо группировка некоторых из текущих 23 DBIs секции 5.5 в `TypeDiscriminatedTable`-агрегаты.
+   - **`IdentityIndexStore` write path deferred upstream.** Не все identity-mapping writes покрыты в v0.1; конкретные edges помечены в upstream `SyncEngine.hpp` TODO-комментариями. Это влияет на dedup state, но не блокирует базовый pull/push.
+   - **HTTP/WebSocket transport seams.** GitHub PR #104 и #105 уже merged в upstream main snapshot `d4d219c`: `TransportMessageCodec` и framework-neutral HTTP seam входят в v0.1; WebSocket seam также присутствует в текущем `DESIGN.md`. Это снимает прежний blocker «нет HTTP seam», но не превращает sync v0.1 в готовый distributed profile для `agent-memory-cpp`: concrete production socket transport остаётся adapter-local responsibility, а table coverage gaps ниже важнее для M0/M1/M2.
+   - **Wire-format byte cost.** 5 sync DBIs суммарно хранят metadata/changelog/origins/applied/identity. Полная on-disk cost-модель (включая compression overhead) — отдельная задача, не решается в этом TZ; ссылка на общий принцип raw-code vs end-to-end storage footprint — §1.6.10 note.
+
+   **Decision deadline** привязан к двум внешним триггерам и одному readiness-check:
+
+   - (a) **Upstream v0.2** ship-ит `KeyMultiValueTable` wire format. Без этого блокируется lexical inverted index sync; см. §5.6.2.
+   - (b) **agent-memory-cpp** достигает multi-host scope routing (см. `guides/memory-stacks-roadmap.md` §13.2 строка 1006 «Distributed scope routing» и §13.3 строка 1028 «Distributed scope routing (multi-process / multi-host scope namespaces)»). До этого момента single-host остаётся правилом M0/M1/M2.
+   - (c) **Transport readiness-check** для выбранного deployment-а: подтвердить, что framework-neutral HTTP/WebSocket seam из upstream достаточно закрывает нужный transport boundary, или добавить adapter-local bridge / concrete binding вне core library.
+
+   **Recommendation.** **DEFER** formal adoption sync v0.1 как минимум до выполнения **(a) + (b)** и прохождения readiness-check **(c)**. До этих условий: sync subsystem не активируется, текущий TZ остаётся informational (§1.6, §5.6.1), а future revision этого документа будет обязана пересмотреть §11.7 при срабатывании любого из (a)/(b) или при выборе concrete multi-host deployment-а. v0.1 **не блокирует** M0/M1/M2 deliverables; это явное исключение из «everything upstream-goes» policy-и данного TZ.
 
 ## 12. Дополнительные требования к API (из обзора существующих roadmap-документов upstream)
 
