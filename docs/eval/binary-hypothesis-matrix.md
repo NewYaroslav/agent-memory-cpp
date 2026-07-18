@@ -46,8 +46,8 @@ query text
     -> RetrievalEvalDataset metrics
 ```
 
-The binary path is allowed to be faster only if it keeps enough candidate-set
-recall for the exact reranker to recover final quality.
+A speed result is useful only when candidate recall remains sufficient for the
+exact reranker to preserve final quality.
 
 ## Vector sources
 
@@ -66,8 +66,8 @@ run.
 | Encoder | BoW applicability | Dense applicability | First hypothesis | First status |
 | --- | --- | --- | --- | --- |
 | Sign threshold (`x_i >= 0`) | Poor: non-negative BoW collapses most bits to `1` | Cheap baseline for centered embeddings | Useful only as a dense sanity baseline | Do not start here for BoW |
-| Corpus mean threshold | Good dependency-free baseline | Useful when dimensions are not centered | More balanced bits than sign threshold | Candidate for first BoW implementation |
-| Corpus median threshold | Good dependency-free baseline | Useful when dimensions are skewed or sparse-ish | More robust bit balance than mean threshold | Candidate for first BoW implementation |
+| Corpus mean threshold | Good dependency-free baseline | Useful when dimensions are not centered | Avoids zero-as-one collapse for non-negative BoW when thresholds are positive; occupancy still depends on document frequency | Candidate for first simple BoW baseline, with measured occupancy |
+| Corpus median threshold | Risky for sparse zero-heavy BoW: the median is often zero, and tie handling can collapse or highly imbalance bits | Useful when dimensions are continuous or less tie-heavy | May be robust for dense or skewed dimensions, but is not presumed balanced for sparse BoW | Test only after bit-occupancy diagnostics |
 | Random hyperplane LSH | Usable, but sensitive to sparse lexical geometry | Main no-training cosine-LSH baseline | Best first general encoder for dense embeddings | Candidate for first reusable encoder |
 | SimHash / weighted projection | Good lexical-space candidate | Secondary dense candidate | Better lexical candidate filtering than raw random hyperplanes | Later no-training baseline |
 | Product/block quantization style binary code | Probably overkill for BoW | Possible ANN/compression follow-up | Better recall at fixed bytes than simple LSH | Later, only after simple baselines |
@@ -78,10 +78,15 @@ run.
 The first code PR should implement only the shared binary primitives and one
 no-training encoder. Two acceptable routes:
 
-1. `MedianThresholdBinaryEncoder` first, because it is easiest to reason about
-   on BoW and gives balanced bits on the synthetic fixture.
+1. `MeanThresholdBinaryEncoder` first, because it is the simplest BoW-specific
+   diagnostic baseline and avoids the sign-threshold zero collapse when corpus
+   means are positive. It still needs explicit bit-occupancy measurements.
 2. `RandomHyperplaneLshEncoder` first, because it is the most reusable bridge
    to dense embeddings.
+
+`MedianThresholdBinaryEncoder` should not be the first BoW recommendation unless
+bit-occupancy measurements show that zero-valued medians and tie handling do not
+collapse the fixture.
 
 Do not implement autoencoder code in the first wave. It needs a training
 corpus, train/validation/test split, leakage controls, model versioning, and a
@@ -113,12 +118,25 @@ Storage:
 - estimated in-memory index bytes;
 - later, bucket posting overhead.
 
+Binary code health:
+
+- fraction of `1` values per bit;
+- fraction of constant bits;
+- mean, minimum, and maximum bit entropy;
+- duplicate-signature rate;
+- mean pairwise Hamming distance;
+- candidate bucket-size distribution.
+
 ## Stop/go criteria
 
 Treat these as investigation gates, not production contracts:
 
-- If BoW binary filtering cannot preserve candidate-set recall under exact
-  rerank, fix the binary plumbing before testing dense embeddings.
+- If the BoW filter cannot preserve candidate-set recall high enough for exact
+  reranking to recover final quality, fix the binary plumbing before testing
+  dense embeddings.
+- If bit-health diagnostics show many constant bits or a high
+  duplicate-signature rate, retune thresholds or projections before interpreting
+  retrieval metrics.
 - If BoW works but dense embeddings fail, do not discard the binary pipeline;
   discard or retune that encoder for dense geometry.
 - If an encoder reduces candidates but total p95 latency does not improve, keep
@@ -132,14 +150,15 @@ Treat these as investigation gates, not production contracts:
 ## Suggested PR ladder
 
 1. Add binary value types and Hamming distance tests.
-2. Add one no-training encoder in memory, with deterministic seeds or corpus
+2. Add bit-health diagnostics for candidate binary codes.
+3. Add one no-training encoder in memory, with deterministic seeds or corpus
    thresholds.
-3. Add an in-memory candidate filter plus exact rerank path.
-4. Wire roadmap-label PR #29 hook fields in `BenchmarkReport` for binary
+4. Add an in-memory candidate filter plus exact rerank path.
+5. Wire roadmap-label PR #29 hook fields in `BenchmarkReport` for binary
    filtering.
-5. Run synthetic BoW sweep.
-6. Add dense embedding fixture or adapter and repeat the same matrix.
-7. Only then evaluate learned autoencoder-style encoders.
+6. Run synthetic BoW sweep.
+7. Add dense embedding fixture or adapter and repeat the same matrix.
+8. Only then evaluate learned autoencoder-style encoders.
 
 ## Relationship to existing roadmaps
 
