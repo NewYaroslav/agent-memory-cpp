@@ -115,3 +115,23 @@ The smoke run uses:
 The v1 report for the committed tiny fixture lives in
 [`reports/synthetic-v1.md`](reports/synthetic-v1.md). Larger generated datasets
 belong under `tmp/` and should not be committed.
+
+## Synthetic staircase runner
+
+`tools/benchmarks/synthetic_staircase.py` automates the next measurement step:
+generate deterministic synthetic datasets at multiple corpus sizes, run
+`agent-memory-bench` in `synthetic_sweep` mode for each size, and write a compact
+Markdown summary.
+
+Example:
+
+```bash
+py -3 tools/benchmarks/synthetic_staircase.py \
+    --bench-exe tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    --output-dir tmp/synthetic-staircase-v1 \
+    --summary docs/eval/reports/synthetic-staircase-v1.md
+```
+
+The default staircase uses 1k, 2.5k, and 5k documents with 80 queries per size.
+Generated datasets, per-size configs, and raw JSON reports should stay under
+`tmp/`; commit only the Markdown summary when it supports a design decision.

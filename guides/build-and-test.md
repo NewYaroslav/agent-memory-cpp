@@ -69,6 +69,19 @@ Run the BoW-vs-BM25 synthetic sweep fixture:
     tmp/synthetic-sweep-report.json
 ```
 
+Run the deterministic staircase sweep helper:
+
+```bash
+py -3 tools/benchmarks/synthetic_staircase.py \
+    --bench-exe tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    --output-dir tmp/synthetic-staircase-v1 \
+    --summary tmp/synthetic-staircase-v1/synthetic-staircase-v1.md
+```
+
+The staircase helper keeps generated datasets, configs, and raw JSON reports in
+`tmp/`. Commit only the generated Markdown summary when it changes a design
+decision.
+
 Regenerate the committed tiny synthetic fixture only when intentionally
 changing the generator contract:
 
