@@ -68,15 +68,18 @@ namespace {
 
         agent_memory::RetrievalQueryRun first;
         first.query_id = "query:1";
+        first.latency_ms = 1.0;
         first.hits.push_back(agent_memory::RetrievalRunHit{"doc:1", 1.0F, 0, "exact_test"});
         report.run.queries.push_back(std::move(first));
 
         agent_memory::RetrievalQueryRun second;
         second.query_id = "query:2";
+        second.latency_ms = 2.0;
         report.run.queries.push_back(std::move(second));
 
         agent_memory::RetrievalQueryRun third;
         third.query_id = "query:3";
+        third.latency_ms = 3.0;
         third.hits.push_back(agent_memory::RetrievalRunHit{"doc:3", 0.5F, 0, "exact_test"});
         report.run.queries.push_back(std::move(third));
         return report;
