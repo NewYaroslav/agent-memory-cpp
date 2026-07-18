@@ -81,12 +81,16 @@ The tiny fixture validates that:
    synthetic fixture;
 4. PR #29 hook fields remain present and zero for exact baselines.
 
-The next useful measurement step is a generated staircase sweep:
+The first generated staircase sweep is captured in
+[`synthetic-staircase-v1.md`](synthetic-staircase-v1.md). It covers:
 
 - 1k documents;
 - 2.5k documents;
-- 5k documents;
-- 10k documents only after inspecting the 5k run.
+- 5k documents.
+
+Run 10k documents only after deciding whether the dense `bow_vector` control is
+still useful at that size, because its current exact dense representation grows
+with synthetic vocabulary size.
 
 Do not commit the larger generated JSON datasets; commit only the resulting
 summary report if it changes an architectural decision.
