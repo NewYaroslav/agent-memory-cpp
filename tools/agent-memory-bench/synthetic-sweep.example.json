@@ -1,0 +1,8 @@
+{
+  "mode": "synthetic_sweep",
+  "benchmark_name": "synthetic_sweep_v1_tiny",
+  "dataset_path": "tests/eval/fixtures/tiny_synthetic_v1.json",
+  "result_limit": 50,
+  "baselines": ["bow_vector", "bm25_exact"],
+  "output_path": "tmp/synthetic-sweep-report.json"
+}

@@ -56,6 +56,26 @@ cmake --build tmp/build-bench --parallel
     tmp/benchmark-report.json
 ```
 
+Run the BoW-vs-BM25 synthetic sweep fixture:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/synthetic-sweep.example.json \
+    tmp/synthetic-sweep-report.json
+```
+
+Regenerate the committed tiny synthetic fixture only when intentionally
+changing the generator contract:
+
+```bash
+py -3 tools/benchmarks/synthetic_generator.py \
+    --documents 50 \
+    --queries 40 \
+    --seed 12648430 \
+    --limit 50 \
+    --output tests/eval/fixtures/tiny_synthetic_v1.json
+```
+
 Configure with flat MDBX submodules:
 
 ```bash
