@@ -135,3 +135,8 @@ py -3 tools/benchmarks/synthetic_staircase.py \
 The default staircase uses 1k, 2.5k, and 5k documents with 80 queries per size.
 Generated datasets, per-size configs, and raw JSON reports should stay under
 `tmp/`; commit only the Markdown summary when it supports a design decision.
+
+The follow-up binary candidate-filter experiment ladder is pinned in
+[`binary-hypothesis-matrix.md`](binary-hypothesis-matrix.md). It distinguishes
+BoW mechanism tests from dense-embedding value tests and keeps trained
+autoencoder-style encoders out of the first implementation wave.
