@@ -64,6 +64,29 @@ target_link_libraries(agent_memory_eval_runner_test
 
 add_test(NAME agent_memory_eval_runner_test COMMAND agent_memory_eval_runner_test)
 
+add_executable(agent_memory_benchmark_report_test
+    eval/benchmark_report_test.cpp
+)
+
+target_link_libraries(agent_memory_benchmark_report_test
+    PRIVATE
+        agent_memory::agent_memory
+        agent_memory::json
+)
+
+add_test(NAME agent_memory_benchmark_report_test COMMAND agent_memory_benchmark_report_test)
+
+add_executable(agent_memory_retriever_adapter_test
+    eval/retriever_adapter_test.cpp
+)
+
+target_link_libraries(agent_memory_retriever_adapter_test
+    PRIVATE
+        agent_memory::agent_memory
+)
+
+add_test(NAME agent_memory_retriever_adapter_test COMMAND agent_memory_retriever_adapter_test)
+
 if(AGENT_MEMORY_ENABLE_JSON)
     add_executable(agent_memory_dataset_loader_test
         eval/loader_test.cpp
@@ -120,26 +143,28 @@ target_link_libraries(agent_memory_retrieval_contracts_test
 
 add_test(NAME agent_memory_retrieval_contracts_test COMMAND agent_memory_retrieval_contracts_test)
 
-add_executable(agent_memory_exact_vector_retriever_test
-    retrieval/exact_vector_retriever_test.cpp
-)
+if(AGENT_MEMORY_ENABLE_JSON)
+    add_executable(agent_memory_exact_vector_retriever_test
+        retrieval/exact_vector_retriever_test.cpp
+    )
 
-target_link_libraries(agent_memory_exact_vector_retriever_test
-    PRIVATE
-        agent_memory::agent_memory
-        agent_memory::json
-)
+    target_link_libraries(agent_memory_exact_vector_retriever_test
+        PRIVATE
+            agent_memory::agent_memory
+            agent_memory::json
+    )
 
-target_include_directories(agent_memory_exact_vector_retriever_test
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/eval/fixtures
-)
+    target_include_directories(agent_memory_exact_vector_retriever_test
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/eval/fixtures
+    )
 
-add_test(
-    NAME agent_memory_exact_vector_retriever_test
-    COMMAND agent_memory_exact_vector_retriever_test
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/retrieval
-)
+    add_test(
+        NAME agent_memory_exact_vector_retriever_test
+        COMMAND agent_memory_exact_vector_retriever_test
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/retrieval
+    )
+endif()
 
 add_executable(agent_memory_exact_lexical_retriever_test
     retrieval/exact_lexical_retriever_test.cpp

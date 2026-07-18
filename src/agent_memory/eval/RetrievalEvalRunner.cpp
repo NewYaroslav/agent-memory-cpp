@@ -51,7 +51,8 @@ namespace agent_memory {
             << "query_count:    " << report.query_count << '\n'
             << "judged:         " << report.metrics.judged_query_count << '\n'
             << "no-answer:      " << report.metrics.no_answer_query_count << '\n'
-            << "ignored:        " << report.metrics.ignored_query_count << '\n';
+            << "ignored:        " << report.metrics.ignored_query_count << '\n'
+            << "empty results:  " << report.metrics.empty_result_count << '\n';
         out << "Recall@K:\n";
         for(const auto& recall : report.metrics.recall_at) {
             out << "  @" << recall.k << " = " << format_double(recall.value)

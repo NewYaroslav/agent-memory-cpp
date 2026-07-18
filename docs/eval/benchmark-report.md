@@ -1,0 +1,77 @@
+# BenchmarkReport contract (v1)
+
+`agent_memory::BenchmarkReport` is the stable hand-off record for benchmark
+tools. It wraps the existing retrieval evaluation metrics with the extra
+measurements a benchmark runner knows but `evaluate_retrieval()` deliberately
+does not compute.
+
+## Sections
+
+- `quality` — required Recall@1/5/10/50, required nDCG@10, unbounded MRR,
+  no-answer accuracy, OOV fraction, and empty-result fraction.
+- `speed` — measured query count, mean/p50/p95/p99 latency, throughput, and
+  total retrieval-loop wall time.
+- `index` — document count, vocabulary size, mean document length, ingest time,
+  embedding time, index build time, and peak resident-set bytes.
+- `pr29_hooks` — forward-compatible candidate-filter counters for the
+  roadmap-label "PR #29" binary-signature work. Exact baselines leave these
+  values at zero.
+
+The schema is versioned by `BenchmarkReport::kSchemaVersion`. JSON output uses
+`schema_version: 1` and preserves the four sections above as top-level objects.
+Missing required cutoffs are rejected instead of serialized as `0.0`, because
+`0.0` is a real measurement and must not also mean "not computed".
+
+## Construction path
+
+Use `make_benchmark_report(eval_report, benchmark_name, measurements)` after a
+runner has produced a `RetrievalEvalReport`. The helper copies quality and
+latency metrics from the eval report and copies driver-provided measurements
+for index/build/process data.
+
+The v1 report is strict about query coverage:
+
+- `measured_query_count` is `judged_query_count + no_answer_query_count`.
+- `evaluate_retrieval()` records identity-aware coverage counters for evaluated
+  query ids.
+- `evaluated_query_run_count` must equal `measured_query_count`.
+- `evaluated_query_latency_count` and `latency_ms.sample_count` must equal
+  `measured_query_count`.
+- `ignored_query_run_count` must be zero; benchmark reports do not accept runs
+  that executed ignored queries.
+- `queries_per_second` is derived from `measured_query_count` and
+  `total_benchmark_time_ms`.
+
+`empty_result_fraction` is computed by `evaluate_retrieval()` over evaluated
+non-ignored query ids only. Ignore queries never contribute to the numerator or
+denominator, even if a caller supplies a run entry for them.
+
+`validate_benchmark_report()` rejects empty names, unsupported schema versions,
+NaN/infinite values, negative timings, fraction fields outside `[0, 1]`, and
+non-monotonic p50/p95/p99 latency. It also rejects inconsistent throughput and
+inconsistent PR29 hook counters: `candidate_count_after_filter` must not exceed
+`candidate_count_before_filter`, and `candidate_reduction_ratio` must match the
+counts.
+
+## CLI smoke benchmark
+
+The synthetic CLI lives under `tools/agent-memory-bench/`. It is intentionally a
+small exact-vector smoke benchmark, not the full BEIR or MemoryStack sweep. It
+exists to prove that benchmark reports can be generated, serialized, and
+rendered without adding external dataset requirements.
+
+```bash
+cmake -S . -B tmp/build-bench \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DAGENT_MEMORY_BUILD_BENCHMARKS=ON \
+    -DAGENT_MEMORY_ENABLE_JSON=ON
+
+cmake --build tmp/build-bench --parallel
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/config.example.json \
+    tmp/benchmark-report.json
+```
+
+On Windows, append `.exe` to the executable path or run it from the generated
+build tree. The optional second CLI argument overrides the `output_path` field
+from the config file.

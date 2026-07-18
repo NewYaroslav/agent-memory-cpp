@@ -19,6 +19,8 @@ All project options use the `AGENT_MEMORY_` prefix.
 | --- | --- | --- |
 | `AGENT_MEMORY_BUILD_TESTS` | top-level build only | Build tests and register them with CTest. |
 | `AGENT_MEMORY_BUILD_EXAMPLES` | `OFF` | Build examples from `examples/`. |
+| `AGENT_MEMORY_BUILD_BENCHMARKS` | `OFF` | Build benchmark tools from `tools/`. Requires `AGENT_MEMORY_ENABLE_JSON=ON`. |
+| `AGENT_MEMORY_ENABLE_JSON` | `ON` | Enable JSON-backed eval loaders and benchmark report serialization. |
 | `AGENT_MEMORY_ENABLE_WARNINGS` | `ON` | Enable project compiler warnings. |
 | `AGENT_MEMORY_ENABLE_MDBX` | `OFF` | Enable MDBX-backed storage dependencies. |
 | `AGENT_MEMORY_MDBX_CONTAINERS_SOURCE_DIR` | empty | Optional override for a local `mdbx-containers` source tree. Defaults to `external/mdbx-containers` when present. |
@@ -37,6 +39,21 @@ cmake -S . -B tmp/build-cpp17 \
 
 cmake --build tmp/build-cpp17 --parallel
 ctest --test-dir tmp/build-cpp17 --output-on-failure
+```
+
+Build and smoke-test the synthetic benchmark CLI:
+
+```bash
+cmake -S . -B tmp/build-bench \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DAGENT_MEMORY_BUILD_TESTS=ON \
+    -DAGENT_MEMORY_BUILD_BENCHMARKS=ON \
+    -DAGENT_MEMORY_ENABLE_JSON=ON
+
+cmake --build tmp/build-bench --parallel
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/config.example.json \
+    tmp/benchmark-report.json
 ```
 
 Configure with flat MDBX submodules:

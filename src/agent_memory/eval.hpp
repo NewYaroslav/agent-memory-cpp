@@ -6,7 +6,9 @@
 /// \brief Public aggregate include for retrieval evaluation domain headers.
 
 #include "domain.hpp"
+#include "eval/BenchmarkReport.hpp"
 #include "eval/Evaluation.hpp"
+#include "eval/IRetrieverAdapter.hpp"
 #include "eval/RetrievalEvalRunner.hpp"
 
 #if defined(AGENT_MEMORY_ENABLE_JSON) && AGENT_MEMORY_ENABLE_JSON
