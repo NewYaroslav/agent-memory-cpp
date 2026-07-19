@@ -1,5 +1,8 @@
 #include "ResourceIndexer.hpp"
 
+#include <agent_memory/embedding/IEmbedder.hpp>
+#include <agent_memory/index/IVectorIndex.hpp>
+
 #include <stdexcept>
 #include <utility>
 #include <vector>

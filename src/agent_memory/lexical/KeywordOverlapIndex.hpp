@@ -22,6 +22,7 @@ namespace agent_memory {
     /// This is intentionally not BM25: it has no IDF, term-frequency
     /// saturation, or document-length normalization. It is useful as a tiny-KB
     /// baseline and as a dependency-free deterministic oracle for unit tests.
+    /// LexicalSearchQuery::bm25 is ignored by this implementation.
     class KeywordOverlapIndex final : public ILexicalIndex {
     public:
         [[nodiscard]] std::size_t size() const noexcept override;

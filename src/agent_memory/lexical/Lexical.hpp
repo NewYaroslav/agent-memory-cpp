@@ -7,7 +7,9 @@
 
 #include "Tokenizer.hpp"
 
-#include <agent_memory/domain.hpp>
+#include <agent_memory/domain/Metadata.hpp>
+#include <agent_memory/domain/MetadataFilter.hpp>
+#include <agent_memory/domain/Resource.hpp>
 
 #include <cstddef>
 #include <cstdint>
