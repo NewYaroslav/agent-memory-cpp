@@ -55,6 +55,9 @@ omitting the prefix would be misleading.
   focused tests, but keep their cross-domain includes narrow. Use forward
   declarations plus the smallest required public header when a type is only
   used by reference or pointer in the header.
+- `agent_memory_header_self_sufficiency_test` compiles every public header as
+  the first include in its own translation unit; update or extend that test
+  when changing public include conventions.
 - Do not use `using namespace` in headers or implementation files.
 
 ## Formatting
