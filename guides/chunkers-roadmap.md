@@ -568,8 +568,11 @@ Content edits создают новую identity. Стабилен при пов
 - **Anthropic Contextual Retrieval enrichment** — Haiku-class context generator через `AsyncIndexer` hook.
 - **Late chunking** — long-context embedding model.
 - **Two-stage indexing (chunks + synthetic Q-A / doc2query)** — reverse Q-A
-  generation and query expansion terms stored as derived `SearchProjection`s,
-  evaluated separately from free-form contextual prefixes.
+  generation and query expansion terms stored as materialized, versioned
+  derived `SearchProjection`s. Each generated projection records generator
+  identity, model/version, prompt/config hash, source revision,
+  projection kind, artifact hash, and regeneration policy. Evaluate this
+  separately from free-form contextual prefixes.
 - **Decompiled-code entity-card chunker** — Smart3D pattern для проприетарных API.
 - **OCR fallback** (Tesseract) — для scanned PDFs в Legal-RAG.
 

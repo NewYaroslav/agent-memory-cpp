@@ -210,17 +210,24 @@ Curated bibliography с маппингом paper → roadmap decision для `ag
 ### LLM Page Relevance Classification
 
 - **Source**: `ai-agent-playbook/concepts/rag-knowledge/RAG без эмбеддингов — LLM-классификация страниц вместо similarity search.md`.
-- **Roadmap decision**: M2+ external adapter lane under `IRetrievalEvaluator` /
-  retrieval-hook contracts; C++ core owns schema, metrics, and fallback policy,
-  not the LLM classifier runtime.
+- **Roadmap decision**: M2+ external retriever / page-scanning adapter lane.
+  Primary mode is candidate generation (`query + page corpus -> relevant
+  pages`), not `IRetrievalEvaluator`. A separate evaluator mode may re-check
+  a bounded candidate pool after BM25F/dense retrieval. C++ core owns schemas,
+  metrics, and fallback policy, not the LLM classifier runtime.
 - **Зачем**: Exact-number/date/condition workloads where embedding similarity
   misses answer-bearing pages. Must be benchmarked against BM25F+dense+rerank.
 
 ### Document Expansion / doc2query
 
-- **Source**: `ai-agent-playbook/concepts/rag-knowledge/Learned sparse retrieval — SPLADE семейство и гибридный sparse+dense.md`.
+- **Source**: doc2query / docT5query document expansion family; pin the exact
+  primary paper(s) before implementation. Internal discovery note:
+  `ai-agent-playbook/concepts/rag-knowledge/Learned sparse retrieval — SPLADE семейство и гибридный sparse+dense.md`.
 - **Roadmap decision**: M2+ pre-index enrichment job producing derived
-  `SearchProjection`s; evaluate separately from Contextual Retrieval prefixes.
+  `SearchProjection`s. Generated projections must be materialized and
+  versioned with generator identity, prompt/config hash, source revision,
+  projection kind, artifact hash, and regeneration policy; evaluate separately
+  from Contextual Retrieval prefixes.
 - **Зачем**: Bridge query/document vocabulary mismatch before heavier learned
   sparse backends are enabled.
 
@@ -242,9 +249,9 @@ Phase 5 — adaptive retrieval:
   query rewrite hook, HyDE hook, retrieval evaluator hook, context compressor hook.
 
 Phase 5a — playbook follow-ups:
-  history-aware rewrite fixtures, LLM page relevance classifier adapter lane,
+  history-aware rewrite fixtures, LLM page relevance retriever adapter lane,
   doc2query-style expansion projections, citation-first regulated-doc gates,
-  CRAG promotion from open question to explicit contract work.
+  CRAG contract clarification through the existing M2+ evaluator lane.
 
 ## 11. References Mapping
 
@@ -271,8 +278,8 @@ Phase 5a — playbook follow-ups:
 | arXiv:2401.18059 (RAPTOR) | compaction-roadmap.md | SummaryTreeJob |
 | arXiv:2212.10496 (HyDE) | memory-stacks-roadmap.md | IQueryTransformer hook |
 | arXiv:2305.14283 (Rewrite-Retrieve-Read) | memory-stacks-roadmap.md | IQueryTransformer hook |
-| LLM page relevance classification | retrieval-techniques-roadmap.md | M2+ adapter lane |
-| doc2query / document expansion | chunkers-roadmap.md | M2+ derived SearchProjection |
+| LLM page relevance classification | retrieval-techniques-roadmap.md | M2+ retriever/page-scanning adapter lane |
+| doc2query / document expansion | chunkers-roadmap.md | M2+ materialized derived SearchProjection |
 | arXiv:2310.11511 (Self-RAG) | memory-stacks-roadmap.md | IRetrievalEvaluator hook |
 | arXiv:2401.15884 (CRAG) | memory-stacks-roadmap.md | IRetrievalEvaluator hook |
 

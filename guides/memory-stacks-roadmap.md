@@ -430,6 +430,15 @@ conversation context must NOT be injected into the new query.
 class IQueryTransformer {
 public:
     virtual ~IQueryTransformer() = default;
+
+    struct QueryTransformationContext {
+        Query current_query;
+        std::optional<std::string> bounded_dialogue_summary;
+        std::vector<Query> selected_previous_turns;
+        std::vector<std::string> correction_markers;
+        std::size_t max_generated_variants = 5;
+        std::size_t max_history_tokens = 0;
+    };
     
     struct QueryVariant {
         std::string text;
@@ -437,14 +446,16 @@ public:
         double weight = 1.0;
     };
     
-    virtual std::vector<QueryVariant> transform(const Query& q) = 0;
+    virtual std::vector<QueryVariant> transform(
+        const QueryTransformationContext& context) = 0;
 };
 
 // HyDE implementation:
 class HydeQueryTransformer final : public IQueryTransformer {
 public:
-    std::vector<QueryVariant> transform(const Query& q) override {
-        // 1. LLM генерирует hypothetical answer (external).
+    std::vector<QueryVariant> transform(
+        const QueryTransformationContext& context) override {
+        // 1. LLM генерирует hypothetical answer for context.current_query (external).
         // 2. Embed hypothesis через IEmbedder.
         // 3. Return как QueryVariant с transformer_id="hyde".
     }
@@ -453,23 +464,29 @@ public:
 // Rewrite implementation:
 class RewriteQueryTransformer final : public IQueryTransformer {
 public:
-    std::vector<QueryVariant> transform(const Query& q) override {
-        // LLM rephrases query в 3-5 вариантов.
+    std::vector<QueryVariant> transform(
+        const QueryTransformationContext& context) override {
+        // LLM rephrases context.current_query в 3-5 вариантов.
     }
 };
 
 // History-aware rewrite implementation:
 class HistoryAwareRewriteQueryTransformer final : public IQueryTransformer {
 public:
-    std::vector<QueryVariant> transform(const Query& q) override {
-        // LLM rewrites follow-up queries using bounded conversation context.
-        // It must preserve explicit user corrections and avoid stale context.
+    std::vector<QueryVariant> transform(
+        const QueryTransformationContext& context) override {
+        // Uses bounded_dialogue_summary, selected_previous_turns, and
+        // correction_markers. The adapter must be stateless by default:
+        // hidden session state makes tests, concurrency, and replay
+        // reproducibility brittle.
     }
 };
 ```
 
 Integration:
-  `MemoryStack::retrieve(plan)` вызывает `transformer.expand(plan.raw_query)` перед retriever'ами.
+  `MemoryStack::retrieve(plan)` builds `QueryTransformationContext` from the
+  current query plus explicit, bounded session context and calls the transformer
+  before retriever'ами.
   Каждый `QueryVariant` даёт свой набор кандидатов.
   RRF fusion combines across all variants.
 
