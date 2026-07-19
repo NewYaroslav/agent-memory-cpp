@@ -5,7 +5,9 @@
 /// \file Retrieval.hpp
 /// \brief Dependency-free retrieval query and result value types.
 
-#include <agent_memory/domain.hpp>
+#include <agent_memory/domain/Document.hpp>
+#include <agent_memory/domain/Metadata.hpp>
+#include <agent_memory/domain/MetadataFilter.hpp>
 #include <agent_memory/embedding/embedding_types.hpp>
 
 #include <cstddef>

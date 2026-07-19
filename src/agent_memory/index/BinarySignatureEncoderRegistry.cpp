@@ -39,20 +39,6 @@ namespace agent_memory {
             }
         }
 
-        [[nodiscard]] auto find_by_fingerprint(
-            const std::vector<BinarySignatureEncoderRegistry::EncoderPtr>& encoders,
-            std::string_view config_fingerprint
-        ) {
-            return std::find_if(
-                encoders.begin(),
-                encoders.end(),
-                [&](const auto& encoder) {
-                    return std::string_view(encoder->info().config_fingerprint) ==
-                           config_fingerprint;
-                }
-            );
-        }
-
     } // namespace
 
     bool operator==(
@@ -124,11 +110,11 @@ namespace agent_memory {
     }
 
     std::size_t BinarySignatureEncoderRegistry::size() const noexcept {
-        return m_encoders.size();
+        return m_entries.size();
     }
 
     bool BinarySignatureEncoderRegistry::empty() const noexcept {
-        return m_encoders.empty();
+        return m_entries.empty();
     }
 
     void BinarySignatureEncoderRegistry::register_encoder(EncoderPtr encoder) {
@@ -136,12 +122,13 @@ namespace agent_memory {
             throw std::invalid_argument("binary signature encoder registry cannot store null encoder");
         }
 
-        const auto& info = encoder->info();
+        const auto info = encoder->info();
         validate_encoder_info(info);
 
-        const auto existing = find_by_fingerprint(m_encoders, info.config_fingerprint);
-        if(existing != m_encoders.end()) {
-            if(!same_encoder_info((*existing)->info(), info)) {
+        const auto existing = find_entry(info.config_fingerprint);
+        if(existing != m_entries.end()) {
+            require_consistent_entry(*existing);
+            if(!same_encoder_info(existing->info, info)) {
                 throw std::invalid_argument(
                     "binary signature encoder fingerprint collision with different metadata"
                 );
@@ -149,28 +136,29 @@ namespace agent_memory {
             return;
         }
 
-        m_encoders.push_back(std::move(encoder));
+        m_entries.push_back(Entry{info, std::move(encoder)});
         std::sort(
-            m_encoders.begin(),
-            m_encoders.end(),
+            m_entries.begin(),
+            m_entries.end(),
             [](const auto& lhs, const auto& rhs) {
-                return lhs->info().config_fingerprint < rhs->info().config_fingerprint;
+                return lhs.info.config_fingerprint < rhs.info.config_fingerprint;
             }
         );
     }
 
     bool BinarySignatureEncoderRegistry::contains(std::string_view config_fingerprint) const {
-        return find_by_fingerprint(m_encoders, config_fingerprint) != m_encoders.end();
+        return find_entry(config_fingerprint) != m_entries.end();
     }
 
     BinarySignatureEncoderRegistry::EncoderPtr BinarySignatureEncoderRegistry::find(
         std::string_view config_fingerprint
     ) const {
-        const auto existing = find_by_fingerprint(m_encoders, config_fingerprint);
-        if(existing == m_encoders.end()) {
+        const auto existing = find_entry(config_fingerprint);
+        if(existing == m_entries.end()) {
             return nullptr;
         }
-        return *existing;
+        require_consistent_entry(*existing);
+        return existing->encoder;
     }
 
     BinarySignatureEncoderRegistry::EncoderPtr BinarySignatureEncoderRegistry::require(
@@ -185,11 +173,32 @@ namespace agent_memory {
 
     std::vector<BinarySignatureEncoderInfo> BinarySignatureEncoderRegistry::entries() const {
         std::vector<BinarySignatureEncoderInfo> result;
-        result.reserve(m_encoders.size());
-        for(const auto& encoder : m_encoders) {
-            result.push_back(encoder->info());
+        result.reserve(m_entries.size());
+        for(const auto& entry : m_entries) {
+            result.push_back(entry.info);
         }
         return result;
+    }
+
+    std::vector<BinarySignatureEncoderRegistry::Entry>::const_iterator
+    BinarySignatureEncoderRegistry::find_entry(
+        std::string_view config_fingerprint
+    ) const {
+        return std::find_if(
+            m_entries.begin(),
+            m_entries.end(),
+            [&](const auto& entry) {
+                return std::string_view(entry.info.config_fingerprint) == config_fingerprint;
+            }
+        );
+    }
+
+    void BinarySignatureEncoderRegistry::require_consistent_entry(const Entry& entry) const {
+        if(!entry.encoder || !same_encoder_info(entry.info, entry.encoder->info())) {
+            throw std::logic_error(
+                "registered binary signature encoder metadata changed after registration"
+            );
+        }
     }
 
 } // namespace agent_memory
