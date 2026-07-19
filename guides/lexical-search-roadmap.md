@@ -81,6 +81,33 @@ This separation matters because Boolean search, phrase search, and metadata
 filters may be useful even when BM25 scoring is disabled or replaced by a later
 BM25F/fuzzy/hybrid pipeline.
 
+### Keyword-Overlap Tiny-KB Baseline
+
+`KeywordOverlapIndex` is the deliberately small deterministic baseline for
+unit-testable knowledge bases and tiny curated corpora. Its score is:
+
+```text
+score(q, d) = |unique_terms(q) ∩ unique_terms(d)|
+```
+
+It is not BM25: it does not use IDF, term-frequency saturation, or document
+length normalization. Duplicate query terms and repeated document terms do not
+increase the score beyond one match per unique term. Ties are resolved by
+`chunk_id` so fixtures remain stable.
+
+Use it for:
+
+- tiny KBs, roughly 5-100 curated articles, where deterministic behaviour and
+  zero infrastructure matter more than semantic recall;
+- fast unit-test or oracle fixtures that should not depend on embeddings,
+  vector stores, external services, or BM25 corpus statistics;
+- a lower-bound lexical baseline in experiments.
+
+Do not use it as the default production lexical scorer. Larger corpora,
+multilingual corpora, long documents, user phrasing that diverges from KB
+terminology, and hybrid retrieval experiments should use BM25/BM25F and/or
+dense retrieval with measured `Recall@K`/`nDCG@K`.
+
 ## Lexical Data Model
 
 The logical indexing pipeline is:
@@ -1127,6 +1154,8 @@ of that ordering; each substep is its own PR.
    `projection_kind = Original, field_id = body` path.
 7. Add an in-memory BM25 lexical index for tests and the `BasicRag` smoke
    gate.
+7a. Add `KeywordOverlapIndex` as a deterministic tiny-KB lower-bound baseline
+    and unit-test oracle. Keep it separate from BM25 naming and scoring.
 8. Integrate lexical indexing into the resource reindex path using the
    targeted reindexing protocol from this document.
 9. Add hybrid retrieval with BM25 + vector through RRF. The lexical retriever
