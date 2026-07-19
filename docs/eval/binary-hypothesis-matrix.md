@@ -124,8 +124,9 @@ Binary code health:
 - fraction of constant bits;
 - mean, minimum, and maximum bit entropy;
 - duplicate-signature rate;
-- mean pairwise Hamming distance;
-- candidate bucket-size distribution.
+- sampled mean pairwise Hamming distance;
+- exact-signature bucket-size distribution until Hamming-radius candidate
+  buckets exist.
 
 ## Stop/go criteria
 

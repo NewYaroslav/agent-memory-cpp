@@ -8,6 +8,7 @@
 #include "domain.hpp"
 #include "embedding.hpp"
 
+#include "index/BinarySignature.hpp"
 #include "index/ExactVectorIndex.hpp"
 #include "index/IVectorIndex.hpp"
 #include "index/VectorIndex.hpp"

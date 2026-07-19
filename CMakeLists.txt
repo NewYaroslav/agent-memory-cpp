@@ -42,6 +42,7 @@ add_library(agent_memory STATIC
     src/agent_memory/eval/StubRetriever.cpp
     src/agent_memory/facts/Fact.cpp
     src/agent_memory/ingestion/ResourceIndexer.cpp
+    src/agent_memory/index/BinarySignature.cpp
     src/agent_memory/index/ExactVectorIndex.cpp
     src/agent_memory/index/IVectorIndex.cpp
     src/agent_memory/index/VectorIndex.cpp
