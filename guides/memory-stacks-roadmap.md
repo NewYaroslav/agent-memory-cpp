@@ -421,6 +421,10 @@ struct RetrievalResult {
 Reference: HyDE (arXiv:2212.10496), Rewrite-Retrieve-Read (arXiv:2305.14283).
 
 LLM-driven query transformation перед retrieval. C++ ядро не зависит от LLM; adapters реализуют конкретные стратегии.
+Keep history-aware rewrite separate from generic rewrite: the former receives a
+bounded dialogue summary / previous-turn query context and is evaluated on
+multi-turn follow-up fixtures, including over-expansion cases where stale
+conversation context must NOT be injected into the new query.
 
 ```cpp
 class IQueryTransformer {
@@ -451,6 +455,15 @@ class RewriteQueryTransformer final : public IQueryTransformer {
 public:
     std::vector<QueryVariant> transform(const Query& q) override {
         // LLM rephrases query в 3-5 вариантов.
+    }
+};
+
+// History-aware rewrite implementation:
+class HistoryAwareRewriteQueryTransformer final : public IQueryTransformer {
+public:
+    std::vector<QueryVariant> transform(const Query& q) override {
+        // LLM rewrites follow-up queries using bounded conversation context.
+        // It must preserve explicit user corrections and avoid stale context.
     }
 };
 ```
@@ -1283,6 +1296,7 @@ double apply_filters(
 ### Шаги R31-R34 (M2): Retrieval hook contracts
 
 - R31 (M2): IQueryTransformer interface + HydeQueryTransformer + RewriteQueryTransformer adapters.
+- R31a (M2): HistoryAwareRewriteQueryTransformer adapter + multi-turn eval fixtures.
 - R32 (M2): IRetrievalEvaluator interface + CragRetrievalEvaluator + SelfRagEvaluator adapters.
 - R33 (M2): HyDE integration в HybridRetriever.
 - R34 (M2): CRAG corrective search loop.
