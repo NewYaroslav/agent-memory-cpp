@@ -50,6 +50,10 @@ namespace {
         explicit FakeBinarySignatureEncoder(agent_memory::BinarySignatureEncoderInfo info)
             : m_info(std::move(info)) {}
 
+        void set_info(agent_memory::BinarySignatureEncoderInfo info) {
+            m_info = std::move(info);
+        }
+
         [[nodiscard]] const agent_memory::BinarySignatureEncoderInfo& info() const noexcept override {
             return m_info;
         }
@@ -140,6 +144,47 @@ int main() {
            registry.register_encoder(std::make_shared<FakeBinarySignatureEncoder>(collision_info));
        })) {
         return fail("registry must reject fingerprint collisions with different metadata");
+    }
+
+    auto mutable_info = make_fake_info("mutable-before-registration");
+    auto mutable_encoder = std::make_shared<FakeBinarySignatureEncoder>(mutable_info);
+    registry.register_encoder(mutable_encoder);
+    mutable_info.config_fingerprint = "mutable-after-registration";
+    mutable_info.bit_count = 32;
+    mutable_encoder->set_info(mutable_info);
+    if(!registry.contains("mutable-before-registration") ||
+       registry.contains("mutable-after-registration")) {
+        return fail("registry lookup keys must be based on registration-time metadata snapshot");
+    }
+    if(!throws<std::logic_error>([&] {
+           (void)registry.find("mutable-before-registration");
+       })) {
+        return fail("registry find must reject mutated registered encoder metadata");
+    }
+    if(!throws<std::logic_error>([&] {
+           (void)registry.require("mutable-before-registration");
+       })) {
+        return fail("registry require must reject mutated registered encoder metadata");
+    }
+    if(!throws<std::logic_error>([&] {
+           registry.register_encoder(std::make_shared<FakeBinarySignatureEncoder>(
+               make_fake_info("mutable-before-registration")
+           ));
+       })) {
+        return fail("registry idempotent registration must reject corrupted existing metadata");
+    }
+    bool found_snapshot = false;
+    for(const auto& entry : registry.entries()) {
+        if(entry.config_fingerprint == "mutable-before-registration" &&
+           entry.bit_count == 16) {
+            found_snapshot = true;
+        }
+        if(entry.config_fingerprint == "mutable-after-registration") {
+            return fail("registry entries must not expose mutated encoder metadata");
+        }
+    }
+    if(!found_snapshot) {
+        return fail("registry entries must expose registration-time metadata snapshots");
     }
 
     auto empty_fingerprint = make_fake_info("");
