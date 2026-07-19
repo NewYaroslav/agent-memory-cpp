@@ -5,6 +5,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <stdexcept>
 #include <utility>
 
@@ -43,17 +44,6 @@ namespace agent_memory {
             );
         }
 
-        [[nodiscard]] std::size_t deterministic_pair_index(
-            std::size_t sample_index,
-            std::size_t signature_count,
-            std::uint64_t multiplier,
-            std::uint64_t increment
-        ) noexcept {
-            const auto value =
-                (static_cast<std::uint64_t>(sample_index) * multiplier) + increment;
-            return static_cast<std::size_t>(value % static_cast<std::uint64_t>(signature_count));
-        }
-
         [[nodiscard]] std::size_t total_pair_count(std::size_t n) {
             if(n < 2) {
                 return 0;
@@ -64,10 +54,72 @@ namespace agent_memory {
             return (n * (n - 1)) / 2;
         }
 
+        [[nodiscard]] std::size_t pairs_before_row(std::size_t row, std::size_t n) noexcept {
+            return (row * ((2 * n) - row - 1)) / 2;
+        }
+
+        [[nodiscard]] std::pair<std::size_t, std::size_t> decode_pair_ordinal(
+            std::size_t ordinal,
+            std::size_t signature_count
+        ) noexcept {
+            std::size_t low = 0;
+            std::size_t high = signature_count - 1;
+
+            while(low + 1 < high) {
+                const auto middle = low + ((high - low) / 2);
+                if(pairs_before_row(middle, signature_count) <= ordinal) {
+                    low = middle;
+                } else {
+                    high = middle;
+                }
+            }
+
+            const auto offset_in_row = ordinal - pairs_before_row(low, signature_count);
+            return {low, low + 1 + offset_in_row};
+        }
+
+        [[nodiscard]] std::size_t deterministic_pair_stride(std::size_t pair_count) noexcept {
+            if(pair_count <= 1) {
+                return 1;
+            }
+
+            std::size_t stride = static_cast<std::size_t>(1099511628211ULL % pair_count);
+            if(stride == 0) {
+                stride = 1;
+            }
+
+            while(std::gcd(stride, pair_count) != 1) {
+                ++stride;
+                if(stride == pair_count) {
+                    stride = 1;
+                }
+            }
+
+            return stride;
+        }
+
+        [[nodiscard]] std::size_t deterministic_pair_offset(std::size_t pair_count) noexcept {
+            if(pair_count == 0) {
+                return 0;
+            }
+            return static_cast<std::size_t>(1469598103934665603ULL % pair_count);
+        }
+
+        [[nodiscard]] std::size_t add_mod(
+            std::size_t value,
+            std::size_t addend,
+            std::size_t modulus
+        ) noexcept {
+            if(value >= modulus - addend) {
+                return value - (modulus - addend);
+            }
+            return value + addend;
+        }
+
     } // namespace
 
     std::size_t binary_signature_word_count(std::size_t bit_count) noexcept {
-        return (bit_count + (kBitsPerWord - 1)) / kBitsPerWord;
+        return (bit_count / kBitsPerWord) + ((bit_count % kBitsPerWord) == 0 ? 0 : 1);
     }
 
     BinarySignature::BinarySignature(std::size_t bit_count)
@@ -246,24 +298,15 @@ namespace agent_memory {
                 }
             }
         } else {
+            auto ordinal = deterministic_pair_offset(all_pairs);
+            const auto stride = deterministic_pair_stride(all_pairs);
             for(std::size_t sample = 0; sample < sample_limit; ++sample) {
-                const auto i = deterministic_pair_index(
-                    sample,
-                    signatures.size(),
-                    1103515245ULL,
-                    12345ULL
-                );
-                auto j = deterministic_pair_index(
-                    sample,
-                    signatures.size() - 1,
-                    2654435761ULL,
-                    1013904223ULL
-                );
-                if(j >= i) {
-                    ++j;
-                }
+                const auto pair = decode_pair_ordinal(ordinal, signatures.size());
+                const auto i = pair.first;
+                const auto j = pair.second;
                 distance_sum += hamming_distance(signatures[i], signatures[j]);
                 ++metrics.sampled_pair_count;
+                ordinal = add_mod(ordinal, stride, all_pairs);
             }
         }
 

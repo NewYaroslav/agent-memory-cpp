@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -43,6 +44,14 @@ namespace {
         agent_memory::BinarySignature signature(bit_count);
         for(const auto bit : bits) {
             signature.set_bit(bit);
+        }
+        return signature;
+    }
+
+    agent_memory::BinarySignature make_low_bits_signature(std::size_t value) {
+        agent_memory::BinarySignature signature(8);
+        for(std::size_t bit = 0; bit < signature.bit_count(); ++bit) {
+            signature.set_bit(bit, ((value >> bit) & std::size_t{1}) != 0);
         }
         return signature;
     }
@@ -91,6 +100,10 @@ int main() {
     }
     if(agent_memory::binary_signature_word_count(65) != 2) {
         return fail("65-bit signatures must allocate two words");
+    }
+    const auto max_bits = std::numeric_limits<std::size_t>::max();
+    if(agent_memory::binary_signature_word_count(max_bits) != (max_bits / 64U) + 1U) {
+        return fail("word count must not overflow for very large bit counts");
     }
 
     agent_memory::BinarySignature signature(70);
@@ -179,7 +192,7 @@ int main() {
 
     std::vector<agent_memory::BinarySignature> many;
     for(std::size_t i = 0; i < 20; ++i) {
-        many.push_back(make_signature(8, {i % 8}));
+        many.push_back(make_low_bits_signature(i));
     }
     const auto sampled = agent_memory::analyze_binary_code_health(
         many,
@@ -187,6 +200,17 @@ int main() {
     );
     if(sampled.sampled_pair_count != 7) {
         return fail("large health analysis must respect max_pairwise_samples");
+    }
+    if(!near(sampled.sampled_mean_pairwise_hamming_distance, 17.0 / 7.0)) {
+        return fail("sampled health analysis must use deterministic unique pair ordinals");
+    }
+
+    const auto no_pair_sample = agent_memory::analyze_binary_code_health(
+        many,
+        agent_memory::BinaryCodeHealthOptions{0}
+    );
+    if(no_pair_sample.sampled_pair_count != 0) {
+        return fail("health analysis must allow pairwise Hamming sampling to be disabled");
     }
 
     if(!throws_invalid_argument(health_width_mismatch)) {
