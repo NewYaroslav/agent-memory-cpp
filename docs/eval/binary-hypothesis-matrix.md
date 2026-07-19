@@ -128,6 +128,30 @@ Binary code health:
 - exact-signature bucket-size distribution until Hamming-radius candidate
   buckets exist.
 
+## Deterministic vs statistical diagnostics
+
+The first binary diagnostics are deterministic regression checks. In particular,
+`sampled_mean_pairwise_hamming_distance` is a reproducible health signal, not a
+Monte Carlo estimate of the true corpus-wide pairwise Hamming distribution. It
+should catch obvious encoder failures such as collapsed bits, duplicate
+signatures, and suspiciously small pairwise distances.
+
+A later statistical diagnostic can be added after dense embeddings and larger
+corpora are in the benchmark matrix. That follow-up should use a separate metric
+name, for example `estimated_mean_pairwise_hamming_distance`, and record:
+
+- random or hash-based sampling seed;
+- pair sample count;
+- independent repeat count;
+- mean and standard deviation;
+- confidence interval, for example CI95;
+- whether sampling is uniform over pairs or stratified by bucket, scope, or
+  document group.
+
+Do not use statistical confidence intervals on tiny fixtures. They are useful
+only when the corpus is large enough that exhaustive pairwise Hamming analysis is
+too expensive and the benchmark needs uncertainty estimates.
+
 ## Stop/go criteria
 
 Treat these as investigation gates, not production contracts:
@@ -159,7 +183,9 @@ Treat these as investigation gates, not production contracts:
    filtering.
 6. Run synthetic BoW sweep.
 7. Add dense embedding fixture or adapter and repeat the same matrix.
-8. Only then evaluate learned autoencoder-style encoders.
+8. Add statistical pairwise-distance estimates with seed, repeats, and
+   confidence intervals for large dense/corpus workloads.
+9. Only then evaluate learned autoencoder-style encoders.
 
 ## Relationship to existing roadmaps
 

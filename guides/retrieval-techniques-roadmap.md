@@ -877,6 +877,23 @@ RLM — **альтернатива**, а не расширение. RLM живё
 - **Cross-encoder reranker** через `IRerankerAdapter` — post-fusion rerank.
 - **Self-reflective RAG** — Corrective RAG pattern, validate retrieved context quality before LLM.
 
+### 13.4. Playbook Audit Follow-Up Lanes
+
+2026-07 playbook audit found no missing "must-have" production primitive, but
+it highlighted five practical lanes that should be tracked explicitly:
+
+| Lane | Roadmap status | Fit |
+|---|---|---|
+| **LLM page relevance classifier** | M2+ retriever / page-scanning adapter lane | Primary mode is a candidate generator: `query + page corpus -> relevant pages`. A secondary evaluator mode may only re-check a bounded candidate pool after another retriever. |
+| **Citation-first structural chunking** | M1 chunker/eval hardening | Strengthen legal/regulatory chunking around stable structural ids, citation headers, and citation-fidelity gates. |
+| **History-aware query rewrite** | M2+ `IQueryTransformer` variant | Separate multi-turn rephrasing from generic HyDE/rewrite so follow-up questions preserve dialogue context before retrieval. |
+| **Document expansion / doc2query** | M2+ pre-index enrichment | Materialize versioned synthetic questions or expansion terms per chunk as derived `SearchProjection`s, before learned sparse backends are required. |
+| **Corrective RAG gate** | Clarify existing M2+ `IRetrievalEvaluator` lane | Validate retrieved context quality after retrieval and trigger corrective search/fallback on low confidence. |
+
+These lanes are not new defaults. Each must pass the normal eval gates
+(`Recall@K`, `nDCG@K`, no-answer coverage, citation fidelity, latency) before
+being enabled in a production profile.
+
 ## §14. Open Questions
 
 1. **Optimal RRF k per stack.** Значение k=60 — common default, но для разных workloads возможно нужны per-stack tuning. Нужны benchmarks на `AgentLTM`, `BasicRag`, `QAKB`.
@@ -887,9 +904,20 @@ RLM — **альтернатива**, а не расширение. RLM живё
 6. **Spreading activation depth & decay-per-hop.** lifemodel не публикует конкретные параметры [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/ai-agents/Dual-layer memory retrieval LanceDB и spreading activation graph.md]. Нужны работы на наших корпусах.
 7. **Embedding anisotropy problem.** NOUZ документирует: сырой cosine обманчив из-за анизотропии embeddings [Source: internal note — no public source available. Path: ai-agent-playbook/concepts/NOUZ — структурированная память для ИИ-агентов в Obsidian.md]. Нужна ли calibration layer? Mem0 обходит через multi-signal scoring — возможно, наш `HybridRetriever` автоматически выигрывает.
 8. **Bi-temporal validation.** Zep использует bi-temporal; наш `TemporalComponent.valid_from_ms`/`valid_until_ms` одномерный [Source: github.com/getzep/graphiti — Zep Graphiti] <br>[Internal note: ai-agent-playbook/tools/ai-agents/Zep Graphiti — temporal knowledge graph для AI-агентов (документация).md]. Нужно ли расширять для legal/compliance workloads?
-9. **Deterministic RAG gate.** Когда добавлять Corrective RAG-валидатор (валидирует retrieved context перед передачей в LLM) — на M1 или M2+?
-10. **Multimodal RAG readiness.** Docling — M2+ candidate. Стоит ли включать в M1 как optional adapter?
-11. **Learned sparse в M2 backend.** BGE-M3 sparse + dense + ColBERT даёт единый inference pipeline. Это сильный кандидат для production-grade M2+ retrieval.
+9. **Multimodal RAG readiness.** Docling — M2+ candidate. Стоит ли включать в M1 как optional adapter?
+10. **Learned sparse в M2 backend.** BGE-M3 sparse + dense + ColBERT даёт единый inference pipeline. Это сильный кандидат для production-grade M2+ retrieval.
+11. **LLM page relevance classification.** Для regulated/spec workloads нужен
+    head-to-head с BM25F+dense+rerank: лучше ли binary/high-medium-low
+    page classifier на точных числах, датах и условиях, и какой budget нужен
+    для parallel page scan? Отдельно сравнить full page-scanner retriever и
+    post-retrieval evaluator over bounded candidates.
+12. **History-aware rewriting metrics.** Multi-turn rewrite должен измеряться
+    не только по Recall@K, но и по rate of over-expansion: сколько follow-up
+    queries ошибочно подтянули старый dialogue context.
+13. **Document expansion vs Contextual Retrieval.** Synthetic questions
+    (`doc2query`-style) и free-form contextual prefixes оба меняют индексируемый
+    текст. Нужен ablation: Original, SyntheticQuestions, ContextualPrefix,
+    Both.
 
 ## §15. References
 

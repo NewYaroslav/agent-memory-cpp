@@ -53,6 +53,7 @@ add_library(agent_memory STATIC
     src/agent_memory/lexical/IReranker.cpp
     src/agent_memory/lexical/ITokenDictionary.cpp
     src/agent_memory/lexical/ITokenizer.cpp
+    src/agent_memory/lexical/KeywordOverlapIndex.cpp
     src/agent_memory/lexical/Lexical.cpp
     src/agent_memory/lexical/StandardTokenizer.cpp
     src/agent_memory/lexical/TokenDictionary.cpp

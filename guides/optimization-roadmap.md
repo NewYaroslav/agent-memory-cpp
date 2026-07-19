@@ -1682,6 +1682,11 @@ add projection-aware benchmarks.
    projection-aware buckets.
 9. Recall/latency benchmark against exact float search, run per
    `(model_id, projection_kind)` slice.
+   - Keep early binary-code health diagnostics deterministic so regressions are
+     reproducible.
+   - Add statistical pairwise-distance estimates later, after large dense
+     workloads exist: seed, sample count, repeat count, mean/stddev, CI95, and
+     the sampling policy.
 
 ### Steps 10-13: Scope-aware secondary indexes and resource manifest
 
@@ -1690,6 +1695,9 @@ add projection-aware benchmarks.
     `embedding_vectors: (scope_id, model_id, projection_kind, unit_id)` and
     `binary_bucket_index: (scope_id, projection_kind, short_key)`.
 12. Bucket compression benchmarks and bucket diagnostics.
+    - Separate deterministic diagnostics from statistical estimates; do not
+      treat a fixed sampled health metric as a confidence-bounded benchmark
+      result.
 13. Generation-aware stale filtering and compaction hooks.
 
 ### Steps 14-15: Projection-aware benchmarks and one-stage variants

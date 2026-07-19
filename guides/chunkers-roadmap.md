@@ -554,6 +554,10 @@ Content edits создают новую identity. Стабилен при пов
 - **HTML → Markdown adapter** — `IResourceAdapter.preprocess`.
 - **PlantUML chunker** — indent-aware blocks + diagram title.
 - **Legal structural chunker** (по «Статьям» + пунктам) с citation header + UUID5 dedupe.
+- **Citation-first eval gate** for regulated chunkers: every chunk intended for
+  answer grounding must expose a stable `source_section_anchor`, citation text,
+  and `SourceRef`/`quote_hash` link so `CitationFidelity` can fail fast when
+  provenance is missing.
 - **`IResourceAdapter` контракт** — preprocessed → `ChunkPayload[]` через `IResourceStore`.
 
 ### 8.3. M2+ (Advanced, optional)
@@ -563,7 +567,12 @@ Content edits создают новую identity. Стабилен при пов
 - **Docling multimodal chunker** — PDF/DOCX/PPTX/XLSX/images/audio/HTML.
 - **Anthropic Contextual Retrieval enrichment** — Haiku-class context generator через `AsyncIndexer` hook.
 - **Late chunking** — long-context embedding model.
-- **Two-stage indexing (chunks + synthetic Q-A)** — reverse Q-A generation.
+- **Two-stage indexing (chunks + synthetic Q-A / doc2query)** — reverse Q-A
+  generation and query expansion terms stored as materialized, versioned
+  derived `SearchProjection`s. Each generated projection records generator
+  identity, model/version, prompt/config hash, source revision,
+  projection kind, artifact hash, and regeneration policy. Evaluate this
+  separately from free-form contextual prefixes.
 - **Decompiled-code entity-card chunker** — Smart3D pattern для проприетарных API.
 - **OCR fallback** (Tesseract) — для scanned PDFs в Legal-RAG.
 

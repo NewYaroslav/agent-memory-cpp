@@ -421,11 +421,24 @@ struct RetrievalResult {
 Reference: HyDE (arXiv:2212.10496), Rewrite-Retrieve-Read (arXiv:2305.14283).
 
 LLM-driven query transformation перед retrieval. C++ ядро не зависит от LLM; adapters реализуют конкретные стратегии.
+Keep history-aware rewrite separate from generic rewrite: the former receives a
+bounded dialogue summary / previous-turn query context and is evaluated on
+multi-turn follow-up fixtures, including over-expansion cases where stale
+conversation context must NOT be injected into the new query.
 
 ```cpp
 class IQueryTransformer {
 public:
     virtual ~IQueryTransformer() = default;
+
+    struct QueryTransformationContext {
+        Query current_query;
+        std::optional<std::string> bounded_dialogue_summary;
+        std::vector<Query> selected_previous_turns;
+        std::vector<std::string> correction_markers;
+        std::size_t max_generated_variants = 5;
+        std::size_t max_history_tokens = 0;
+    };
     
     struct QueryVariant {
         std::string text;
@@ -433,14 +446,16 @@ public:
         double weight = 1.0;
     };
     
-    virtual std::vector<QueryVariant> transform(const Query& q) = 0;
+    virtual std::vector<QueryVariant> transform(
+        const QueryTransformationContext& context) = 0;
 };
 
 // HyDE implementation:
 class HydeQueryTransformer final : public IQueryTransformer {
 public:
-    std::vector<QueryVariant> transform(const Query& q) override {
-        // 1. LLM генерирует hypothetical answer (external).
+    std::vector<QueryVariant> transform(
+        const QueryTransformationContext& context) override {
+        // 1. LLM генерирует hypothetical answer for context.current_query (external).
         // 2. Embed hypothesis через IEmbedder.
         // 3. Return как QueryVariant с transformer_id="hyde".
     }
@@ -449,14 +464,29 @@ public:
 // Rewrite implementation:
 class RewriteQueryTransformer final : public IQueryTransformer {
 public:
-    std::vector<QueryVariant> transform(const Query& q) override {
-        // LLM rephrases query в 3-5 вариантов.
+    std::vector<QueryVariant> transform(
+        const QueryTransformationContext& context) override {
+        // LLM rephrases context.current_query в 3-5 вариантов.
+    }
+};
+
+// History-aware rewrite implementation:
+class HistoryAwareRewriteQueryTransformer final : public IQueryTransformer {
+public:
+    std::vector<QueryVariant> transform(
+        const QueryTransformationContext& context) override {
+        // Uses bounded_dialogue_summary, selected_previous_turns, and
+        // correction_markers. The adapter must be stateless by default:
+        // hidden session state makes tests, concurrency, and replay
+        // reproducibility brittle.
     }
 };
 ```
 
 Integration:
-  `MemoryStack::retrieve(plan)` вызывает `transformer.expand(plan.raw_query)` перед retriever'ами.
+  `MemoryStack::retrieve(plan)` builds `QueryTransformationContext` from the
+  current query plus explicit, bounded session context and calls the transformer
+  before retriever'ами.
   Каждый `QueryVariant` даёт свой набор кандидатов.
   RRF fusion combines across all variants.
 
@@ -1283,6 +1313,7 @@ double apply_filters(
 ### Шаги R31-R34 (M2): Retrieval hook contracts
 
 - R31 (M2): IQueryTransformer interface + HydeQueryTransformer + RewriteQueryTransformer adapters.
+- R31a (M2): HistoryAwareRewriteQueryTransformer adapter + multi-turn eval fixtures.
 - R32 (M2): IRetrievalEvaluator interface + CragRetrievalEvaluator + SelfRagEvaluator adapters.
 - R33 (M2): HyDE integration в HybridRetriever.
 - R34 (M2): CRAG corrective search loop.

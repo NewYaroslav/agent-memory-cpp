@@ -14,6 +14,7 @@
 #include "lexical/IReranker.hpp"
 #include "lexical/ITokenDictionary.hpp"
 #include "lexical/ITokenizer.hpp"
+#include "lexical/KeywordOverlapIndex.hpp"
 #include "lexical/Lexical.hpp"
 #include "lexical/LexicalHash.hpp"
 #include "lexical/QueryAnalysis.hpp"
