@@ -47,8 +47,14 @@ omitting the prefix would be misleading.
 - Public project headers must not include dependencies through parent-directory
   paths such as `../` or `../../`. Use the public include root instead, for
   example `#include <agent_memory/domain.hpp>`.
+- User-facing code should prefer top-level or subdomain aggregate headers such
+  as `<agent_memory.hpp>` or `<agent_memory/index.hpp>`.
 - Prefer subdomain/domain aggregate headers for cross-module public
   dependencies when a leaf header does not need a single narrow type.
+- Leaf public headers may be included directly by implementation files and
+  focused tests, but keep their cross-domain includes narrow. Use forward
+  declarations plus the smallest required public header when a type is only
+  used by reference or pointer in the header.
 - Do not use `using namespace` in headers or implementation files.
 
 ## Formatting

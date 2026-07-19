@@ -2,7 +2,7 @@
 
 > C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо `std::span` и явные конструкторы вместо designated initializers. Binary signatures (`BinarySignature`, `IBinarySignatureEncoder`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH`, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`) — это cache-friendly fingerprints для coarse filter (bucket index); binary embeddings — это semantic-preserving quantizers общего назначения. Этот гайд расширяет roadmap binary signatures до общего compression layer; cross-link с [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Signature Index Tasks" обязателен.
 
-> **Implementation status.** `BinarySignature`, `BinarySignature::hamming_distance` and binary-code health diagnostics are implemented in `src/agent_memory/index/`. The first encoder slice adds the dependency-free `IBinarySignatureEncoder` contract and `RandomHyperplaneBinaryEncoder` scalar baseline. `BinarySignatureInfo`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH` bucket wiring, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`, `DenseIndexMode::BinaryOnly`, `DenseIndexMode::ApproximateVector`, `BinaryOnlyIndex`, `ApproximateVectorIndex`, `AutoencoderBinarySignatureEncoder`, `IAutoencoderEncoder`, and `IAutoencoderDecoder` remain roadmap-only and require separate PRs.
+> **Implementation status.** `BinarySignature`, `BinarySignature::hamming_distance`, binary-code health diagnostics, `IBinarySignatureEncoder`, `RandomHyperplaneBinaryEncoder`, `BinarySignatureInfo`, and the in-memory `BinarySignatureEncoderRegistry` are implemented in `src/agent_memory/index/`. `.bse` loading, `RandomHyperplaneLSH` bucket wiring, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`, `DenseIndexMode::BinaryOnly`, `DenseIndexMode::ApproximateVector`, `BinaryOnlyIndex`, `ApproximateVectorIndex`, `AutoencoderBinarySignatureEncoder`, `IAutoencoderEncoder`, and `IAutoencoderDecoder` remain roadmap-only and require separate PRs.
 
 ## Source attribution policy
 
@@ -33,7 +33,7 @@ Related roadmaps:
 
 Non-goals:
 
-- Не повторять детальную спецификацию `BinarySignatureEncoderRegistry` (это в `optimization-roadmap.md` §"Encoder Registry и Versioning"). `BinarySignatureEncoderRegistry` сам по себе roadmap-only.
+- Не повторять детальную спецификацию `BinarySignatureEncoderRegistry` (это в `optimization-roadmap.md` §"Encoder Registry и Versioning"). In-memory registry identity is implemented; `.bse` loading remains roadmap-only.
 - Не описывать float32 / float16 / int8 codecs (это в `optimization-roadmap.md` §"Future Encodings").
 - Не каталогизировать ANN-методы (HNSW, IVF, DiskANN — это в `optimization-roadmap.md` §"Dense Index Modes").
 
@@ -359,14 +359,15 @@ struct DenseIndexConfig {
 
 ### M0: Binary Signatures Only (partially implemented)
 
-> **Status.** `BinarySignature`, Hamming distance, code-health diagnostics, `IBinarySignatureEncoder`, and the scalar `RandomHyperplaneBinaryEncoder` baseline are the first implemented pieces. Registry, persisted bucket layout, and dense-index integration remain planned.
+> **Status.** `BinarySignature`, Hamming distance, code-health diagnostics, `IBinarySignatureEncoder`, `BinarySignatureInfo`, the scalar `RandomHyperplaneBinaryEncoder` baseline, and the in-memory `BinarySignatureEncoderRegistry` are the first implemented pieces. `.bse` loading, persisted bucket layout, and dense-index integration remain planned.
 
 M0 scope:
 
 - `BinarySignature` value type with `std::vector<std::uint64_t> words` (implemented).
-- `BinarySignatureInfo` with encoder id, model id, source projection kind (Planned API).
+- `BinarySignatureInfo` with encoder id, model id, source projection kind (implemented).
 - `IBinarySignatureEncoder` interface (implemented).
-- `BinarySignatureEncoderRegistry` with `.bse` file format (Planned API).
+- `BinarySignatureEncoderRegistry` in-memory identity registry (implemented).
+- `.bse` file format and registry loading (Planned API).
 - `RandomHyperplaneBinaryEncoder` scalar baseline encoder (implemented).
 - `RandomHyperplaneLSH` bucket/index wiring (Planned API).
 - `binary_bucket_index` MDBX layout (Planned API).

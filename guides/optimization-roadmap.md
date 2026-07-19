@@ -836,6 +836,12 @@ Float rerank remains mandatory for quality-sensitive retrieval.
 
 ### Encoder Registry и Versioning
 
+Implemented slice: `BinarySignatureInfo` and the in-memory
+`BinarySignatureEncoderRegistry` provide dependency-free identity validation by
+`config_fingerprint`. They intentionally do not load `.bse` files yet. File
+loading, trained autoencoder weights, and per-stack default encoder selection
+remain separate follow-up PRs.
+
 ID taxonomy:
 
 ```text
