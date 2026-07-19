@@ -1,0 +1,12 @@
+{
+  "mode": "synthetic_binary_flat_vs_float",
+  "benchmark_name": "synthetic_binary_flat_vs_float_v1_tiny",
+  "dataset_name": "synthetic_clustered_dense_v1_tiny",
+  "document_count": 256,
+  "query_count": 32,
+  "embedding_dimensions": 64,
+  "bit_count": 128,
+  "result_limit": 10,
+  "seed": 42,
+  "output_path": "tmp/synthetic-binary-flat-vs-float-report.json"
+}

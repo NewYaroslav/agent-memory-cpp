@@ -1,10 +1,25 @@
 #include "FlatBinarySignatureIndex.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <stdexcept>
 #include <utility>
 
 namespace agent_memory {
+
+    namespace {
+
+        [[nodiscard]] bool closer_binary_result(
+            const BinarySignatureSearchResult& lhs,
+            const BinarySignatureSearchResult& rhs
+        ) noexcept {
+            if(lhs.hamming_distance == rhs.hamming_distance) {
+                return lhs.chunk_id < rhs.chunk_id;
+            }
+            return lhs.hamming_distance < rhs.hamming_distance;
+        }
+
+    } // namespace
 
     FlatBinarySignatureIndex::FlatBinarySignatureIndex()
         : FlatBinarySignatureIndex(FlatBinarySignatureIndexOptions{}) {}
@@ -71,19 +86,16 @@ namespace agent_memory {
             });
         }
 
-        std::sort(
-            results.begin(),
-            results.end(),
-            [](const auto& lhs, const auto& rhs) {
-                if(lhs.hamming_distance == rhs.hamming_distance) {
-                    return lhs.chunk_id < rhs.chunk_id;
-                }
-                return lhs.hamming_distance < rhs.hamming_distance;
-            }
-        );
-
         if(results.size() > query.limit) {
+            std::partial_sort(
+                results.begin(),
+                results.begin() + static_cast<std::ptrdiff_t>(query.limit),
+                results.end(),
+                closer_binary_result
+            );
             results.resize(query.limit);
+        } else {
+            std::sort(results.begin(), results.end(), closer_binary_result);
         }
         return results;
     }

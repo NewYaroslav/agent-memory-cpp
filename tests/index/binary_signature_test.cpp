@@ -146,6 +146,16 @@ int main() {
     if(agent_memory::hamming_distance(a, b) != 3) {
         return fail("hamming_distance must count differing bits only");
     }
+    const auto wide_a = make_signature(256, {0, 63, 64, 127, 128, 191, 192, 255});
+    const auto wide_b = make_signature(256, {1, 63, 65, 127, 129, 191, 193, 255});
+    if(agent_memory::hamming_distance(wide_a, wide_b) != 8) {
+        return fail("hamming_distance must count differing bits across many words");
+    }
+    const auto avx_tail_a = make_signature(320, {0, 63, 64, 127, 128, 191, 192, 255, 256, 319});
+    const auto avx_tail_b = make_signature(320, {1, 63, 65, 127, 129, 191, 193, 255, 257, 319});
+    if(agent_memory::hamming_distance(avx_tail_a, avx_tail_b) != 10) {
+        return fail("hamming_distance must count differing bits in non-four-word tails");
+    }
     if(!throws_invalid_argument(hamming_width_mismatch)) {
         return fail("hamming_distance must reject width mismatches");
     }

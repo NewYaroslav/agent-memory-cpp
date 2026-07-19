@@ -47,6 +47,20 @@ asks for a direct push.
 - Documentation-only changes normally require Markdown review and
   `git diff --check`, not a full CMake build.
 
+## Experiment Notes
+
+When a task tests a hypothesis, compares approaches, produces directional
+benchmark evidence, or changes the roadmap, update `guides/experiments/`.
+
+- Create one note per experiment line, not per command invocation.
+- If a later PR continues the same research question, append a new dated section
+  to the existing note instead of overwriting earlier results.
+- Record the date, PR/commit context, hypothesis, setup, expected result,
+  actual result, interpretation, limitations, possible improvements, and next
+  checks.
+- Include compact tables for benchmark results when they materially support the
+  conclusion.
+
 ## Context Hygiene
 
 - Keep the root `AGENTS.md` short. Add detailed rules under `guides/`.

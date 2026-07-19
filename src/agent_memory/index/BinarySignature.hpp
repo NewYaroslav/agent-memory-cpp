@@ -56,6 +56,9 @@ namespace agent_memory {
     };
 
     /// \brief Hamming distance between two equal-width binary signatures.
+    ///
+    /// Uses the best available implementation for the current build and CPU
+    /// support, falling back to a portable lookup-table implementation.
     [[nodiscard]] std::size_t hamming_distance(
         const BinarySignature& lhs,
         const BinarySignature& rhs

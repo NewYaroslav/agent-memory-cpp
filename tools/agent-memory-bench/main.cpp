@@ -3,6 +3,10 @@
 #include <agent_memory/eval/Evaluation.hpp>
 #include <agent_memory/eval/IRetrieverAdapter.hpp>
 #include <agent_memory/eval/RetrievalEvalRunner.hpp>
+#include <agent_memory/index/BinarySignatureInfo.hpp>
+#include <agent_memory/index/ExactVectorIndex.hpp>
+#include <agent_memory/index/FlatBinarySignatureIndex.hpp>
+#include <agent_memory/index/RandomHyperplaneBinaryEncoder.hpp>
 #include <agent_memory/retrieval/ExactLexicalRetriever.hpp>
 #include <agent_memory/retrieval/BowVectorRetriever.hpp>
 #include <agent_memory/retrieval/IRetrievalEngine.hpp>
@@ -47,6 +51,8 @@ namespace {
 
     constexpr std::string_view kModeRandomExact = "synthetic_random_exact";
     constexpr std::string_view kModeSyntheticSweep = "synthetic_sweep";
+    constexpr std::string_view kModeSyntheticBinaryFlatVsFloat =
+        "synthetic_binary_flat_vs_float";
     constexpr std::string_view kBaselineNameBm25Exact = "bm25_exact";
 
     struct BenchmarkConfig final {
@@ -57,6 +63,7 @@ namespace {
         std::size_t document_count = 0;
         std::size_t query_count = 0;
         std::size_t embedding_dimensions = 0;
+        std::size_t bit_count = 0;
         std::size_t result_limit = 0;
         std::uint32_t seed = 0;
         fs::path dataset_path;
@@ -73,6 +80,30 @@ namespace {
         std::size_t vocabulary_size = 0;
         double mean_document_length = 0.0;
         double oov_fraction = 0.0;
+    };
+
+    struct SyntheticDenseData final {
+        std::vector<agent_memory::Embedding> documents;
+        std::vector<agent_memory::Embedding> queries;
+    };
+
+    struct SearchTiming final {
+        double total_ms = 0.0;
+        double encode_ms = 0.0;
+        double search_ms = 0.0;
+    };
+
+    struct BinaryFlatVsFloatResult final {
+        double data_generation_ms = 0.0;
+        double exact_build_ms = 0.0;
+        double binary_build_ms = 0.0;
+        SearchTiming exact_query;
+        SearchTiming binary_query;
+        double mean_recall_at_k_vs_exact = 0.0;
+        double top1_agreement = 0.0;
+        std::uint64_t exact_payload_bytes = 0;
+        std::uint64_t binary_payload_bytes = 0;
+        std::uint64_t process_peak_resident_set_bytes = 0;
     };
 
     [[nodiscard]] double elapsed_ms(Clock::time_point start, Clock::time_point end) {
@@ -234,13 +265,18 @@ namespace {
             config.baselines = read_baselines(document);
             return config;
         }
-        if(config.mode != kModeRandomExact) {
+        const bool binary_flat_vs_float =
+            config.mode == kModeSyntheticBinaryFlatVsFloat;
+        if(config.mode != kModeRandomExact && !binary_flat_vs_float) {
             throw std::runtime_error(
-                "config field 'mode' must be synthetic_random_exact or synthetic_sweep"
+                "config field 'mode' must be synthetic_random_exact, synthetic_sweep, "
+                "or synthetic_binary_flat_vs_float"
             );
         }
 
-        config.baseline_name = require_string(document, "baseline_name");
+        if(!binary_flat_vs_float) {
+            config.baseline_name = require_string(document, "baseline_name");
+        }
         config.dataset_name = require_string(document, "dataset_name");
         config.document_count = checked_size(
             require_positive_integer(document, "document_count"),
@@ -254,6 +290,12 @@ namespace {
             require_positive_integer(document, "embedding_dimensions"),
             "embedding_dimensions"
         );
+        if(binary_flat_vs_float) {
+            config.bit_count = checked_size(
+                require_positive_integer(document, "bit_count"),
+                "bit_count"
+            );
+        }
         config.result_limit = checked_size(
             require_positive_integer(document, "result_limit"),
             "result_limit"
@@ -324,6 +366,105 @@ namespace {
             }
         }
         return embeddings;
+    }
+
+    void normalize(agent_memory::Embedding& embedding) {
+        double squared_norm = 0.0;
+        for(const float value : embedding.values) {
+            squared_norm += static_cast<double>(value) * value;
+        }
+        if(squared_norm == 0.0) {
+            throw std::runtime_error("synthetic embedding generator produced zero vector");
+        }
+        const float inverse_norm = 1.0F / static_cast<float>(std::sqrt(squared_norm));
+        for(float& value : embedding.values) {
+            value *= inverse_norm;
+        }
+    }
+
+    [[nodiscard]] agent_memory::Embedding noisy_embedding(
+        const agent_memory::Embedding& center,
+        std::mt19937& generator,
+        float noise_stddev
+    ) {
+        std::normal_distribution<float> noise(0.0F, noise_stddev);
+        agent_memory::Embedding embedding;
+        embedding.values.reserve(center.values.size());
+        for(const float value : center.values) {
+            embedding.values.push_back(value + noise(generator));
+        }
+        normalize(embedding);
+        return embedding;
+    }
+
+    [[nodiscard]] SyntheticDenseData make_clustered_dense_data(
+        const BenchmarkConfig& config
+    ) {
+        constexpr std::size_t kMaxClusterCount = 64;
+        const std::size_t cluster_count = std::max<std::size_t>(
+            1,
+            std::min(kMaxClusterCount, config.document_count / 32)
+        );
+
+        std::mt19937 generator(config.seed);
+        std::normal_distribution<float> distribution(0.0F, 1.0F);
+        std::vector<agent_memory::Embedding> centers;
+        centers.reserve(cluster_count);
+        for(std::size_t cluster = 0; cluster < cluster_count; ++cluster) {
+            agent_memory::Embedding center;
+            center.values.reserve(config.embedding_dimensions);
+            for(std::size_t dimension = 0; dimension < config.embedding_dimensions; ++dimension) {
+                center.values.push_back(distribution(generator));
+            }
+            normalize(center);
+            centers.push_back(std::move(center));
+        }
+
+        SyntheticDenseData data;
+        data.documents.reserve(config.document_count);
+        for(std::size_t index = 0; index < config.document_count; ++index) {
+            const auto& center = centers[index % centers.size()];
+            data.documents.push_back(noisy_embedding(center, generator, 0.28F));
+        }
+
+        data.queries.reserve(config.query_count);
+        for(std::size_t index = 0; index < config.query_count; ++index) {
+            const auto& center = centers[(index * 7) % centers.size()];
+            data.queries.push_back(noisy_embedding(center, generator, 0.18F));
+        }
+        return data;
+    }
+
+    [[nodiscard]] agent_memory::EmbeddingModelInfo make_synthetic_model_info(
+        const BenchmarkConfig& config
+    ) {
+        agent_memory::EmbeddingModelInfo model;
+        model.model_id = "synthetic-clustered-dense-v1";
+        model.dimension = config.embedding_dimensions;
+        model.similarity_metric = agent_memory::SimilarityMetric::Cosine;
+        model.normalized = true;
+        return model;
+    }
+
+    [[nodiscard]] agent_memory::ChunkId make_chunk_id(std::size_t index) {
+        return agent_memory::ChunkId{"doc:" + std::to_string(index)};
+    }
+
+    [[nodiscard]] std::uint64_t checked_payload_bytes(
+        std::size_t count,
+        std::size_t width,
+        std::size_t unit_bytes
+    ) {
+        const auto max_value = std::numeric_limits<std::uint64_t>::max();
+        if(count != 0 && width > max_value / count) {
+            return max_value;
+        }
+        const std::uint64_t elements =
+            static_cast<std::uint64_t>(count) * static_cast<std::uint64_t>(width);
+        if(unit_bytes != 0 && elements > max_value / unit_bytes) {
+            return max_value;
+        }
+        return elements * static_cast<std::uint64_t>(unit_bytes);
     }
 
     class SyntheticExactEngine final : public agent_memory::IRetrievalEngine {
@@ -639,6 +780,237 @@ namespace {
         write_text_file(path, document.dump(2) + "\n");
     }
 
+    [[nodiscard]] double per_query_ms(double total_ms, std::size_t query_count) noexcept {
+        if(query_count == 0) {
+            return 0.0;
+        }
+        return total_ms / static_cast<double>(query_count);
+    }
+
+    [[nodiscard]] double queries_per_second(
+        double total_ms,
+        std::size_t query_count
+    ) noexcept {
+        if(total_ms <= 0.0) {
+            return 0.0;
+        }
+        return static_cast<double>(query_count) * 1000.0 / total_ms;
+    }
+
+    void write_binary_flat_vs_float_json_report(
+        const fs::path& path,
+        const BenchmarkConfig& config,
+        const agent_memory::BinarySignatureEncoderInfo& encoder_info,
+        const BinaryFlatVsFloatResult& result
+    ) {
+        nlohmann::json document;
+        document["schema_version"] = 1;
+        document["mode"] = std::string{kModeSyntheticBinaryFlatVsFloat};
+        document["benchmark_name"] = config.benchmark_name;
+        document["dataset_name"] = config.dataset_name;
+        document["corpus_size"] = config.document_count;
+        document["query_count"] = config.query_count;
+        document["embedding_dimensions"] = config.embedding_dimensions;
+        document["bit_count"] = config.bit_count;
+        document["result_limit"] = config.result_limit;
+        document["seed"] = config.seed;
+        document["encoder"] = {
+            {"encoder_id", encoder_info.encoder_id},
+            {"encoder_version", encoder_info.encoder_version},
+            {"config_fingerprint", encoder_info.config_fingerprint}
+        };
+        document["quality"] = {
+            {"reference_baseline", "exact_float_flat"},
+            {"candidate_baseline", "flat_binary_hamming"},
+            {"mean_recall_at_k_vs_exact", result.mean_recall_at_k_vs_exact},
+            {"top1_agreement", result.top1_agreement}
+        };
+        document["speed"] = {
+            {"data_generation_ms", result.data_generation_ms},
+            {"exact_float_build_ms", result.exact_build_ms},
+            {"binary_encode_and_build_ms", result.binary_build_ms},
+            {"exact_float_query_search_ms", result.exact_query.search_ms},
+            {"exact_float_query_total_ms", result.exact_query.total_ms},
+            {"exact_float_mean_query_ms", per_query_ms(
+                result.exact_query.total_ms,
+                config.query_count
+            )},
+            {"exact_float_queries_per_second", queries_per_second(
+                result.exact_query.total_ms,
+                config.query_count
+            )},
+            {"binary_query_encode_ms", result.binary_query.encode_ms},
+            {"binary_query_search_ms", result.binary_query.search_ms},
+            {"binary_query_total_ms", result.binary_query.total_ms},
+            {"binary_mean_query_ms", per_query_ms(
+                result.binary_query.total_ms,
+                config.query_count
+            )},
+            {"binary_queries_per_second", queries_per_second(
+                result.binary_query.total_ms,
+                config.query_count
+            )},
+            {"binary_search_speedup_vs_exact_search",
+                result.binary_query.search_ms <= 0.0
+                ? 0.0
+                : result.exact_query.search_ms / result.binary_query.search_ms},
+            {"binary_total_speedup_vs_exact_search_including_encode",
+                result.binary_query.total_ms <= 0.0
+                ? 0.0
+                : result.exact_query.total_ms / result.binary_query.total_ms}
+        };
+        document["index"] = {
+            {"exact_vector_payload_bytes", result.exact_payload_bytes},
+            {"binary_signature_payload_bytes", result.binary_payload_bytes},
+            {"payload_compression_ratio_exact_over_binary",
+                result.binary_payload_bytes == 0
+                    ? 0.0
+                    : static_cast<double>(result.exact_payload_bytes)
+                        / static_cast<double>(result.binary_payload_bytes)}
+        };
+        document["process"] = {
+            {"peak_resident_set_bytes", result.process_peak_resident_set_bytes}
+        };
+        document["notes"] = nlohmann::json::array({
+            "Synthetic clustered dense vectors; exact_float_flat top-k is the oracle.",
+            "Timing is one local in-process run and is directional, not statistically stable.",
+            "Exact search timing excludes quality-bookkeeping ID extraction.",
+            "Binary total timing is query signature encoding plus exact flat Hamming scan.",
+            "Process peak RSS is a whole benchmark-process high-water mark, not per-index memory."
+        });
+        write_text_file(path, document.dump(2) + "\n");
+    }
+
+    [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark(
+        const BenchmarkConfig& config,
+        const agent_memory::RandomHyperplaneBinaryEncoder& encoder
+    ) {
+        const auto data_start = Clock::now();
+        auto data = make_clustered_dense_data(config);
+        const auto data_end = Clock::now();
+
+        agent_memory::ExactVectorIndex exact_index(agent_memory::ExactVectorIndexOptions{
+            config.embedding_dimensions,
+            agent_memory::SimilarityMetric::Cosine
+        });
+
+        const auto signature_info = agent_memory::make_binary_signature_info(
+            encoder.info(),
+            make_synthetic_model_info(config),
+            "symmetric_dense_projection"
+        );
+        agent_memory::FlatBinarySignatureIndex binary_index(
+            agent_memory::FlatBinarySignatureIndexOptions{signature_info}
+        );
+
+        const auto exact_build_start = Clock::now();
+        for(std::size_t index = 0; index < data.documents.size(); ++index) {
+            exact_index.upsert(agent_memory::VectorRecord{
+                make_chunk_id(index),
+                data.documents[index],
+                {}
+            });
+        }
+        const auto exact_build_end = Clock::now();
+
+        const auto binary_build_start = Clock::now();
+        for(std::size_t index = 0; index < data.documents.size(); ++index) {
+            binary_index.upsert(agent_memory::BinarySignatureRecord{
+                make_chunk_id(index),
+                encoder.encode(data.documents[index]),
+                signature_info,
+                {}
+            });
+        }
+        const auto binary_build_end = Clock::now();
+
+        BinaryFlatVsFloatResult result;
+        result.data_generation_ms = elapsed_ms(data_start, data_end);
+        result.exact_build_ms = elapsed_ms(exact_build_start, exact_build_end);
+        result.binary_build_ms = elapsed_ms(binary_build_start, binary_build_end);
+        result.exact_payload_bytes = checked_payload_bytes(
+            config.document_count,
+            config.embedding_dimensions,
+            sizeof(float)
+        );
+        result.binary_payload_bytes = checked_payload_bytes(
+            config.document_count,
+            agent_memory::binary_signature_word_count(config.bit_count),
+            sizeof(std::uint64_t)
+        );
+
+        std::vector<std::vector<std::string>> exact_top_k;
+        exact_top_k.reserve(data.queries.size());
+        for(const auto& query_embedding : data.queries) {
+            const auto search_start = Clock::now();
+            const auto hits = exact_index.search(agent_memory::VectorSearchQuery{
+                query_embedding,
+                config.result_limit,
+                {}
+            });
+            const auto search_end = Clock::now();
+            result.exact_query.search_ms += elapsed_ms(search_start, search_end);
+
+            std::vector<std::string> ids;
+            ids.reserve(hits.size());
+            for(const auto& hit : hits) {
+                ids.push_back(hit.chunk_id.value());
+            }
+            exact_top_k.push_back(std::move(ids));
+        }
+        result.exact_query.total_ms = result.exact_query.search_ms;
+
+        double recall_sum = 0.0;
+        std::size_t top1_match_count = 0;
+        for(std::size_t query_index = 0; query_index < data.queries.size(); ++query_index) {
+            const auto encode_start = Clock::now();
+            const auto query_signature = encoder.encode(data.queries[query_index]);
+            const auto encode_end = Clock::now();
+            result.binary_query.encode_ms += elapsed_ms(encode_start, encode_end);
+
+            const auto search_start = Clock::now();
+            const auto hits = binary_index.search(agent_memory::BinarySignatureSearchQuery{
+                query_signature,
+                signature_info,
+                config.result_limit,
+                {}
+            });
+            const auto search_end = Clock::now();
+            result.binary_query.search_ms += elapsed_ms(search_start, search_end);
+            result.binary_query.total_ms =
+                result.binary_query.encode_ms + result.binary_query.search_ms;
+
+            std::unordered_set<std::string> exact_ids(
+                exact_top_k[query_index].begin(),
+                exact_top_k[query_index].end()
+            );
+            std::size_t intersection_count = 0;
+            for(const auto& hit : hits) {
+                if(exact_ids.find(hit.chunk_id.value()) != exact_ids.end()) {
+                    ++intersection_count;
+                }
+            }
+            if(!exact_ids.empty()) {
+                recall_sum += static_cast<double>(intersection_count)
+                    / static_cast<double>(exact_ids.size());
+            }
+            if(!exact_top_k[query_index].empty() && !hits.empty()
+               && exact_top_k[query_index].front() == hits.front().chunk_id.value()) {
+                ++top1_match_count;
+            }
+        }
+
+        if(!data.queries.empty()) {
+            result.mean_recall_at_k_vs_exact =
+                recall_sum / static_cast<double>(data.queries.size());
+            result.top1_agreement =
+                static_cast<double>(top1_match_count)
+                / static_cast<double>(data.queries.size());
+        }
+        result.process_peak_resident_set_bytes = peak_resident_set_bytes();
+        return result;
+    }
+
     int run_random_exact(const BenchmarkConfig& config) {
         const auto ingest_start = Clock::now();
         const auto dataset = make_random_exact_dataset(config);
@@ -768,9 +1140,63 @@ namespace {
         return 0;
     }
 
+    int run_binary_flat_vs_float(const BenchmarkConfig& config) {
+        agent_memory::RandomHyperplaneBinaryEncoderOptions encoder_options;
+        encoder_options.input_dimension = config.embedding_dimensions;
+        encoder_options.bit_count = config.bit_count;
+        encoder_options.seed = config.seed;
+        const agent_memory::RandomHyperplaneBinaryEncoder encoder(encoder_options);
+
+        const auto result = run_binary_flat_vs_float_benchmark(config, encoder);
+        write_binary_flat_vs_float_json_report(
+            config.output_path,
+            config,
+            encoder.info(),
+            result
+        );
+
+        std::cout << "Benchmark: " << config.benchmark_name << '\n';
+        std::cout << "Dataset: " << config.dataset_name
+                  << " corpus=" << config.document_count
+                  << " queries=" << config.query_count
+                  << " dim=" << config.embedding_dimensions
+                  << " bits=" << config.bit_count
+                  << " top_k=" << config.result_limit << '\n';
+        std::cout << "Quality vs exact float: recall@k="
+                  << result.mean_recall_at_k_vs_exact
+                  << " top1_agreement=" << result.top1_agreement << '\n';
+        std::cout << "Exact float query total ms: " << result.exact_query.total_ms
+                  << " qps=" << queries_per_second(
+                      result.exact_query.total_ms,
+                      config.query_count
+                  ) << '\n';
+        std::cout << "Binary query total ms: " << result.binary_query.total_ms
+                  << " qps=" << queries_per_second(
+                      result.binary_query.total_ms,
+                      config.query_count
+                  ) << '\n';
+        std::cout << "Binary search speedup vs exact search: "
+                  << (result.binary_query.search_ms <= 0.0
+                      ? 0.0
+                      : result.exact_query.search_ms / result.binary_query.search_ms)
+                  << '\n';
+        std::cout << "Binary total speedup vs exact search including encode: "
+                  << (result.binary_query.total_ms <= 0.0
+                      ? 0.0
+                      : result.exact_query.total_ms / result.binary_query.total_ms)
+                  << '\n';
+        std::cout << "Payload bytes exact/binary: " << result.exact_payload_bytes
+                  << '/' << result.binary_payload_bytes << '\n';
+        std::cout << "JSON output: " << config.output_path.string() << '\n';
+        return 0;
+    }
+
     int run(const BenchmarkConfig& config) {
         if(config.mode == kModeSyntheticSweep) {
             return run_synthetic_sweep(config);
+        }
+        if(config.mode == kModeSyntheticBinaryFlatVsFloat) {
+            return run_binary_flat_vs_float(config);
         }
         return run_random_exact(config);
     }
