@@ -438,7 +438,7 @@ dense_index_config.mode    = BinaryCandidateFilter  # planned candidate mode
 [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §10 row 7) blocks
 `enable_compiled_article = true` if compaction is off.
 
-**Note:** `BinaryCandidateFilter`, `BinarySignature`, `IBinarySignatureEncoder`, `RandomHyperplaneLSH`, and `binary_bucket_index` (MDBX) are NOT yet implemented. This block is forward-looking configuration; running it today will fail. Subject to implementation gates per `binary-embeddings-roadmap.md`.
+**Note:** `BinaryCandidateFilter`, `RandomHyperplaneLSH` bucket wiring, and `binary_bucket_index` (MDBX) are NOT yet implemented. `BinarySignature`, `IBinarySignatureEncoder`, and the scalar `RandomHyperplaneBinaryEncoder` baseline exist as lower-level primitives, but this full configuration block is still forward-looking and will fail until dense-index integration lands. Subject to implementation gates per `binary-embeddings-roadmap.md`.
 
 ### §6.3. Folder / DBI layout
 

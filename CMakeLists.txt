@@ -44,7 +44,9 @@ add_library(agent_memory STATIC
     src/agent_memory/ingestion/ResourceIndexer.cpp
     src/agent_memory/index/BinarySignature.cpp
     src/agent_memory/index/ExactVectorIndex.cpp
+    src/agent_memory/index/IBinarySignatureEncoder.cpp
     src/agent_memory/index/IVectorIndex.cpp
+    src/agent_memory/index/RandomHyperplaneBinaryEncoder.cpp
     src/agent_memory/index/VectorIndex.cpp
     src/agent_memory/lexical/ExactLexicalIndex.cpp
     src/agent_memory/lexical/IChunkEnricher.cpp
