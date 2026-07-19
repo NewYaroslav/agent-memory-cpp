@@ -5,11 +5,14 @@
 /// \file ResourceIndexer.hpp
 /// \brief Resource indexing orchestration over storage, embedding, and index contracts.
 
-#include <agent_memory/embedding.hpp>
-#include <agent_memory/index.hpp>
-#include <agent_memory/storage.hpp>
+#include <agent_memory/domain/Resource.hpp>
+#include <agent_memory/storage/IDocumentStorage.hpp>
+#include <agent_memory/storage/IResourceManifestStorage.hpp>
 
 namespace agent_memory {
+
+    class IEmbedder;
+    class IVectorIndex;
 
     /// \brief Pre-chunked resource state ready to be indexed.
     struct ResourceIndexSnapshot final {

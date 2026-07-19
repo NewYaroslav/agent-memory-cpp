@@ -9,8 +9,9 @@
 /// rate in 2023 was 3.4%") without surfacing whole chunks. This header
 /// reserves the value types; runtime extraction will be added later.
 
-#include <agent_memory/domain.hpp>
-#include <agent_memory/memory.hpp>
+#include <agent_memory/domain/Metadata.hpp>
+#include <agent_memory/domain/Resource.hpp>
+#include <agent_memory/memory/MemoryObject.hpp>
 
 #include <cstdint>
 #include <optional>
