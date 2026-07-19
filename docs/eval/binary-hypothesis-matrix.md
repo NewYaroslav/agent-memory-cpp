@@ -75,14 +75,17 @@ run.
 
 ## First implementation recommendation
 
-The first code PR should implement only the shared binary primitives and one
-no-training encoder. Two acceptable routes:
+The first encoder PR should implement only the shared binary encoder contract
+and one no-training encoder. The chosen first reusable route is:
 
-1. `MeanThresholdBinaryEncoder` first, because it is the simplest BoW-specific
-   diagnostic baseline and avoids the sign-threshold zero collapse when corpus
-   means are positive. It still needs explicit bit-occupancy measurements.
-2. `RandomHyperplaneLshEncoder` first, because it is the most reusable bridge
-   to dense embeddings.
+- `RandomHyperplaneBinaryEncoder`, because it is the most reusable bridge to
+  dense embeddings and still works for BoW vectors that are represented through
+  the common `Embedding` value type.
+
+`MeanThresholdBinaryEncoder` remains a BoW-specific diagnostic follow-up. It
+avoids the sign-threshold zero collapse when corpus means are positive, but it
+still needs explicit bit-occupancy measurements and should not be treated as a
+general dense-embedding baseline.
 
 `MedianThresholdBinaryEncoder` should not be the first BoW recommendation unless
 bit-occupancy measurements show that zero-valued medians and tie handling do not

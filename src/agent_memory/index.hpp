@@ -10,7 +10,9 @@
 
 #include "index/BinarySignature.hpp"
 #include "index/ExactVectorIndex.hpp"
+#include "index/IBinarySignatureEncoder.hpp"
 #include "index/IVectorIndex.hpp"
+#include "index/RandomHyperplaneBinaryEncoder.hpp"
 #include "index/VectorIndex.hpp"
 
 #endif

@@ -616,7 +616,7 @@ model has new signatures alongside (or superseding) the old ones.
 
 ### Baseline Encoder
 
-- Implement random-hyperplane LSH first:
+- Implement a dependency-free scalar random-hyperplane encoder first:
 
 ```text
 bit_i = sign(dot(embedding, random_hyperplane_i))
@@ -627,6 +627,10 @@ bit_i = sign(dot(embedding, random_hyperplane_i))
 - Store encoder config with the index.
 - Reject or rebuild indexes when model id, projection kind, dimension,
   encoder id, seed, or signature bit count does not match.
+- Keep the public encoder contract shared by BoW-derived vectors and dense
+  embeddings. Later SIMD/AVX and Eigen-backed implementations must preserve the
+  same bit-level contract or advertise a new `encoder_version` and config
+  fingerprint.
 
 ### Learned Autoencoder Binary Encoder (M2 experimental)
 

@@ -2,7 +2,7 @@
 
 > C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо `std::span` и явные конструкторы вместо designated initializers. Binary signatures (`BinarySignature`, `IBinarySignatureEncoder`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH`, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`) — это cache-friendly fingerprints для coarse filter (bucket index); binary embeddings — это semantic-preserving quantizers общего назначения. Этот гайд расширяет roadmap binary signatures до общего compression layer; cross-link с [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Signature Index Tasks" обязателен.
 
-> **Scope note.** All symbols listed in this guide (`BinarySignature`, `BinarySignatureInfo`, `IBinarySignatureEncoder`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH`, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`, `DenseIndexMode::BinaryOnly`, `DenseIndexMode::ApproximateVector`, `BinaryOnlyIndex`, `ApproximateVectorIndex`, `AutoencoderBinarySignatureEncoder`, `IAutoencoderEncoder`, `IAutoencoderDecoder`, `BinarySignature::hamming_distance`) are roadmap-only. None are implemented in `src/agent_memory/` yet (verified by `git ls-files 'src/agent_memory/**/*.hpp'`). Implementation requires separate PRs; M0 here means "roadmap-only, intended for the first PR lane", NOT "already shipped".
+> **Implementation status.** `BinarySignature`, `BinarySignature::hamming_distance` and binary-code health diagnostics are implemented in `src/agent_memory/index/`. The first encoder slice adds the dependency-free `IBinarySignatureEncoder` contract and `RandomHyperplaneBinaryEncoder` scalar baseline. `BinarySignatureInfo`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH` bucket wiring, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`, `DenseIndexMode::BinaryOnly`, `DenseIndexMode::ApproximateVector`, `BinaryOnlyIndex`, `ApproximateVectorIndex`, `AutoencoderBinarySignatureEncoder`, `IAutoencoderEncoder`, and `IAutoencoderDecoder` remain roadmap-only and require separate PRs.
 
 ## Source attribution policy
 
@@ -13,7 +13,7 @@
 
 Внутренние заметки — это discovery aids, а не авторитетные цитаты. Публичные roadmap-заявления цитируют публичный источник первым; внутренние заметки служат лишь маркером частного происхождения.
 
-Этот гайд покрывает **binary embeddings** как общий compression layer поверх continuous эмбеддингов. Цель — дать набор решений «когда какой метод», включая relationship к roadmap binary signatures (Planned API, not yet implemented), SIMD-accelerated distance (XOR + POPCNT), и quality vs storage tradeoff на 64/128/256/512 bit.
+Этот гайд покрывает **binary embeddings** как общий compression layer поверх continuous эмбеддингов. Цель — дать набор решений «когда какой метод», включая relationship к binary signatures, SIMD-accelerated distance (XOR + POPCNT), и quality vs storage tradeoff на 64/128/256/512 bit.
 
 Related roadmaps:
 
@@ -27,7 +27,7 @@ Related roadmaps:
 
 Этот гайд существует для трёх целей:
 
-1. **Extend binary-signatures roadmap to general compression layer.** Binary signatures (cache-friendly fingerprints для coarse bucket filter) — roadmap-only, not yet implemented. Binary embeddings — semantic-preserving quantizers общего назначения, расширяющие signature-only подход до storage tier (binary + optional decoder) и hybrid modes (binary + dense rerank).
+1. **Extend binary-signatures roadmap to general compression layer.** Binary signatures (cache-friendly fingerprints для coarse bucket filter) are the low-level primitive; binary embeddings are semantic-preserving quantizers общего назначения, расширяющие signature-only подход до storage tier (binary + optional decoder) и hybrid modes (binary + dense rerank).
 2. **Comparison framework.** Свести в одну карту методы binarization (sign-based, autoencoder, LSH, PQ), по единому набору осей: compression ratio, accuracy retention, training cost, inference cost, hardware-friendliness.
 3. **Adoption guidance.** Для каждого метода пометить, что из него `agent-memory-cpp` может воспроизвести через наши planned primitives (`BinarySignature`, `BinarySignatureEncoderRegistry`, `IBinarySignatureEncoder`, `DenseIndexMode`) и что требует нового контракта.
 
@@ -240,7 +240,7 @@ uint32_t hamming_distance_u64(
 }  // namespace simd
 ```
 
-This is the same SIMD layer defined in [`optimization-roadmap.md`](optimization-roadmap.md) §"Eigen и SIMD стратегия". Binary embeddings are planned to reuse it via `BinarySignature::hamming_distance(lhs, rhs)` (Planned API, **not yet implemented**) and the `HammingTopK` kernel (see `optimization-roadmap.md` §"HammingTopK kernel" for the full design).
+This is the same SIMD layer defined in [`optimization-roadmap.md`](optimization-roadmap.md) §"Eigen и SIMD стратегия". Binary embeddings reuse `BinarySignature::hamming_distance(lhs, rhs)` and later the planned `HammingTopK` kernel (see `optimization-roadmap.md` §"HammingTopK kernel" for the full design).
 
 ## §5. Relationship to the Binary-Signatures Roadmap
 
@@ -357,17 +357,18 @@ struct DenseIndexConfig {
 
 ## §8. Implementation Ladder
 
-### M0: Binary Signatures Only (roadmap-only, not yet implemented)
+### M0: Binary Signatures Only (partially implemented)
 
-> **Planned API — not yet implemented.** Every symbol in the M0 list below is a roadmap item, not a shipped feature. None of `BinarySignature`, `BinarySignatureInfo`, `IBinarySignatureEncoder`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH`, `binary_bucket_index`, or `DenseIndexMode::BinaryCandidateFilter` are in `src/agent_memory/` (verified by `git ls-files 'src/agent_memory/**/*.hpp'`). Each requires its own PR; M0 here denotes the **first** PR lane, not a shipped milestone.
+> **Status.** `BinarySignature`, Hamming distance, code-health diagnostics, `IBinarySignatureEncoder`, and the scalar `RandomHyperplaneBinaryEncoder` baseline are the first implemented pieces. Registry, persisted bucket layout, and dense-index integration remain planned.
 
-M0 (planned scope):
+M0 scope:
 
-- `BinarySignature` value type with `std::vector<std::uint64_t> words` (Planned API).
+- `BinarySignature` value type with `std::vector<std::uint64_t> words` (implemented).
 - `BinarySignatureInfo` with encoder id, model id, source projection kind (Planned API).
-- `IBinarySignatureEncoder` interface (Planned API).
+- `IBinarySignatureEncoder` interface (implemented).
 - `BinarySignatureEncoderRegistry` with `.bse` file format (Planned API).
-- `RandomHyperplaneLSH` baseline encoder (Planned API).
+- `RandomHyperplaneBinaryEncoder` scalar baseline encoder (implemented).
+- `RandomHyperplaneLSH` bucket/index wiring (Planned API).
 - `binary_bucket_index` MDBX layout (Planned API).
 - `DenseIndexMode::BinaryCandidateFilter` default candidate-filter mode (Planned API).
 
