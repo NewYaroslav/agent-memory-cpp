@@ -9,9 +9,13 @@
 #include "embedding.hpp"
 
 #include "index/BinarySignature.hpp"
+#include "index/BinarySignatureInfo.hpp"
 #include "index/BinarySignatureEncoderRegistry.hpp"
+#include "index/BinarySignatureIndex.hpp"
 #include "index/ExactVectorIndex.hpp"
+#include "index/FlatBinarySignatureIndex.hpp"
 #include "index/IBinarySignatureEncoder.hpp"
+#include "index/IBinarySignatureIndex.hpp"
 #include "index/IVectorIndex.hpp"
 #include "index/RandomHyperplaneBinaryEncoder.hpp"
 #include "index/VectorIndex.hpp"
