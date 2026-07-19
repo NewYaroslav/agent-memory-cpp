@@ -9,6 +9,60 @@ target_link_libraries(agent_memory_smoke
 
 add_test(NAME agent_memory_smoke COMMAND agent_memory_smoke)
 
+file(GLOB_RECURSE agent_memory_public_headers
+    CONFIGURE_DEPENDS
+    RELATIVE ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/src/*.hpp
+)
+list(SORT agent_memory_public_headers)
+
+set(agent_memory_header_self_sufficiency_sources)
+set(agent_memory_header_self_sufficiency_dir
+    ${CMAKE_CURRENT_BINARY_DIR}/header_self_sufficiency
+)
+file(MAKE_DIRECTORY ${agent_memory_header_self_sufficiency_dir})
+
+foreach(agent_memory_public_header IN LISTS agent_memory_public_headers)
+    string(MAKE_C_IDENTIFIER
+        "${agent_memory_public_header}"
+        agent_memory_header_source_name
+    )
+    set(agent_memory_header_source
+        "${agent_memory_header_self_sufficiency_dir}/${agent_memory_header_source_name}.cpp"
+    )
+    file(WRITE
+        "${agent_memory_header_source}"
+        "#include <${agent_memory_public_header}>\n\n"
+        "void ${agent_memory_header_source_name}_is_self_sufficient() {}\n"
+    )
+    list(APPEND agent_memory_header_self_sufficiency_sources
+        "${agent_memory_header_source}"
+    )
+endforeach()
+
+set(agent_memory_header_self_sufficiency_main
+    "${agent_memory_header_self_sufficiency_dir}/main.cpp"
+)
+file(WRITE
+    "${agent_memory_header_self_sufficiency_main}"
+    "int main() { return 0; }\n"
+)
+
+add_executable(agent_memory_header_self_sufficiency_test
+    ${agent_memory_header_self_sufficiency_main}
+    ${agent_memory_header_self_sufficiency_sources}
+)
+
+target_link_libraries(agent_memory_header_self_sufficiency_test
+    PRIVATE
+        agent_memory::agent_memory
+)
+
+add_test(
+    NAME agent_memory_header_self_sufficiency_test
+    COMMAND agent_memory_header_self_sufficiency_test
+)
+
 add_executable(agent_memory_domain_primitives_test
     domain/domain_primitives_test.cpp
 )
