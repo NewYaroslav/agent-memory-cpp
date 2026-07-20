@@ -161,3 +161,196 @@ exact reranking, not direct binary ranking as the final answer.
 - Candidate recall as a function of Hamming radius or over-fetch size.
 - Bucket or multi-index hashing to avoid full-corpus scans.
 - The same candidate-filter pipeline on real embedding vectors and real qrels.
+
+## 2026-07-20 — PR #56 candidate over-fetch with exact rerank
+
+### What we checked
+
+PR #56 extends the same benchmark mode with candidate over-fetch followed by
+exact float reranking. The direct binary top-k result remains in the report, but
+the new `rerank` rows answer a more realistic question:
+
+1. retrieve `candidate_limit` chunks by binary Hamming distance;
+2. rerank those candidates by exact float dot product over the original
+   normalized dense vectors;
+3. measure how much of the exact-float top-10 is recovered.
+
+### Expected result
+
+We expected direct binary top-10 to remain weak, but over-fetch plus exact rerank
+to recover quality quickly while preserving part of the binary speed advantage.
+
+### Setup
+
+Local directional run:
+
+- build: MinGW Release;
+- corpus: deterministic clustered synthetic dense vectors;
+- documents: `20000`;
+- queries: `200`;
+- embedding dimension: `128`;
+- binary signature width: `256`;
+- final top-k: `10`;
+- candidate limits: `10`, `50`, `100`, `500`, `1000`, `2000`;
+- seed: `42`.
+
+### Results
+
+| Candidate limit | Exact top-10 candidate coverage | Reranked Recall@10 vs exact | Reranked top-1 agreement | Total speedup incl. encode/search/rerank |
+| ---: | ---: | ---: | ---: | ---: |
+| 10 | 0.1555 | 0.1555 | 0.275 | 1.99x |
+| 50 | 0.3520 | 0.3520 | 0.570 | 2.11x |
+| 100 | 0.4745 | 0.4745 | 0.705 | 2.12x |
+| 500 | 0.7900 | 0.7900 | 0.935 | 1.76x |
+| 1000 | 0.8880 | 0.8880 | 0.950 | 1.46x |
+| 2000 | 0.9520 | 0.9520 | 0.980 | 1.13x |
+
+### Interpretation
+
+The candidate-filter framing is much stronger than direct binary ranking. With
+`1000` candidates, the pipeline recovers about `0.888` of exact top-10 while
+remaining faster than exact flat search in this local run. With `2000`
+candidates, recall reaches about `0.952`, but most of the speed advantage is
+spent on candidate search and rerank.
+
+For this synthetic setup, candidate limits in the `500` to `1000` range look
+like the interesting next tuning band. The equal candidate and reranked
+Recall@10 values are expected: any exact top-10 document present in the
+candidate set is ranked above non-top-10 documents by the exact reranker.
+
+### Practical applicability
+
+The experiment supports a narrow but useful system shape:
+
+```text
+compact binary candidate index in RAM
++ original dense vectors available for rerank
++ exact rerank over a bounded candidate set
+```
+
+It does not support replacing float-vector search with direct binary top-k.
+Direct binary top-10 is too weak in this setup.
+
+Possible operating points:
+
+| Candidate limit | Possible use | Why |
+| ---: | --- | --- |
+| 50 | Very fast coarse routing or duplicate-probe stage | About `2x` speedup, but only `0.352` top-10 coverage. Useful when missing many secondary neighbours is acceptable. |
+| 100 | Fast top-1 oriented candidate generation | Top-1 agreement rises to `0.705` while speed remains about `2x`; still too low for high-recall context assembly. |
+| 500 | Top-1 heavy memory lookup, routing, or small-context preselection | Top-1 agreement is `0.935` and top-10 coverage is `0.790`; good when the first result matters more than complete top-10 recall. |
+| 1000 | Balanced candidate generation for semantic retrieval experiments | Top-10 coverage reaches `0.888` and speed remains `1.46x`; this is the most interesting next tuning band. |
+| 2000 | Near-exact quality reference point | Top-10 coverage reaches `0.952`, but speedup drops to `1.13x`; useful as a quality curve point, not an obvious production default. |
+
+The memory story is also nuanced. A reranked system still needs original dense
+vectors somewhere. The binary index can be compact and hot in RAM, while dense
+vectors may live in a slower store and be loaded only for selected candidates.
+Therefore the `16x` payload ratio applies to the candidate index payload, not
+to the complete two-stage retrieval system.
+
+The practical promise is lower hot-index memory and cheaper candidate
+generation, not deletion of the dense vector representation.
+
+### Limitations
+
+- Single local run; timings remain directional.
+- The vectors are synthetic and clustered, not real embedding model outputs.
+- The candidate generator is still flat Hamming scan, not a bucket or ANN index.
+- The experiment uses symmetric document/query vectors; asymmetric projection
+  policies are not covered.
+- One seed and one sequential candidate-limit order are not enough for a stable
+  production decision.
+
+### What to check next
+
+- Candidate over-fetch on real embedding vectors and qrels.
+- Hamming-radius candidate selection, not only top-N candidate selection.
+- Bucket or multi-index hashing to reduce candidate scan work before rerank.
+- Bit-count and seed sensitivity for the `500` to `1000` candidate band.
+- Multi-seed and repeated timing grid with randomized candidate-limit order,
+  warm-up, median, and p95.
+- Report `nDCG@10`, dense bytes read for rerank, and candidate storage I/O in
+  addition to Recall@10 and top-1 agreement.
+
+## 2026-07-20 — PR #56 compact bit-width grid
+
+### What we checked
+
+The first rerank result used only `256`-bit signatures. This follow-up grid
+checks whether the promising `500` to `1000` candidate band is specific to
+`256` bits or whether other signature widths offer a better quality/speed
+tradeoff.
+
+### Setup
+
+Local directional run:
+
+- build: MinGW Release;
+- documents: `20000`;
+- queries: `200`;
+- embedding dimension: `128`;
+- bit counts: `128`, `256`, `512`, `1024`;
+- final top-k: `10`;
+- candidate limits: `100`, `500`, `1000`, `2000`;
+- seed: `42`.
+
+### Results
+
+Each cell shows:
+
+```text
+exact top-10 candidate coverage / top-1 agreement / total speedup
+```
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.254 / 0.330 / 2.42x | 0.5195 / 0.670 / 2.00x | 0.674 / 0.795 / 1.65x | 0.8235 / 0.910 / 1.21x |
+| 256 | 0.4745 / 0.705 / 1.65x | 0.790 / 0.935 / 1.65x | 0.888 / 0.950 / 1.41x | 0.952 / 0.980 / 1.10x |
+| 512 | 0.7155 / 0.925 / 1.70x | 0.935 / 0.985 / 1.68x | 0.9785 / 1.000 / 1.39x | 0.9975 / 1.000 / 0.97x |
+| 1024 | 0.8905 / 0.990 / 1.49x | 0.996 / 1.000 / 1.27x | 0.999 / 1.000 / 1.16x | 0.9995 / 1.000 / 0.94x |
+
+Direct binary top-10 also improves with wider signatures, but remains weaker
+than reranked candidate search:
+
+| Bits | Direct Recall@10 vs exact | Direct top-1 agreement |
+| ---: | ---: | ---: |
+| 128 | 0.063 | 0.030 |
+| 256 | 0.1555 | 0.100 |
+| 512 | 0.2715 | 0.165 |
+| 1024 | 0.410 | 0.285 |
+
+### Interpretation
+
+The `256`-bit `1000`-candidate point is not uniquely best. Wider signatures can
+move the same quality target to a smaller candidate set:
+
+- `256 bits × 1000 candidates`: `0.888` coverage, `0.950` top-1, `1.41x`
+  speedup.
+- `512 bits × 500 candidates`: `0.935` coverage, `0.985` top-1, `1.68x`
+  speedup.
+- `1024 bits × 100 candidates`: `0.8905` coverage, `0.990` top-1, `1.49x`
+  speedup.
+- `1024 bits × 500 candidates`: `0.996` coverage, exact top-1, `1.27x`
+  speedup.
+
+For this synthetic setup, `512` and `1024` bits look more interesting than the
+original `256`-bit point. The extra Hamming and encoding cost can be offset by
+needing fewer rerank candidates.
+
+The most attractive follow-up bands are:
+
+- speed-oriented: `1024 bits × 100 candidates`;
+- balanced: `512 bits × 500 candidates`;
+- quality-oriented: `1024 bits × 500 candidates`.
+
+### Limitations
+
+This is still a single-seed, single-run, synthetic-vector grid. The numbers are
+useful for selecting the next experiment band, not for choosing production
+defaults.
+
+### What to check next
+
+- Repeat this grid across multiple seeds and randomized candidate-limit order.
+- Add `nDCG@10` and dense-vector bytes read for rerank.
+- Repeat the best bands on real embedding vectors and qrels.
+- Compare top-N candidate selection with Hamming-radius candidate selection.
