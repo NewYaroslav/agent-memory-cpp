@@ -13,7 +13,7 @@
   "encoder_families": [
     "random_hyperplane_rademacher",
     "coordinate_sign",
-    "orthogonal_tight_frame_projection"
+    "randomized_hadamard_projection"
   ],
   "repeat_count": 5,
   "exact_timing_repeat_count": 7,

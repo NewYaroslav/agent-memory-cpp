@@ -8,8 +8,8 @@
 #include <agent_memory/index/ExactVectorIndex.hpp>
 #include <agent_memory/index/FlatBinarySignatureIndex.hpp>
 #include <agent_memory/index/IBinarySignatureEncoder.hpp>
-#include <agent_memory/index/OrthogonalProjectionBinaryEncoder.hpp>
 #include <agent_memory/index/RandomHyperplaneBinaryEncoder.hpp>
+#include <agent_memory/index/RandomizedHadamardBinaryEncoder.hpp>
 #include <agent_memory/index/VectorSimilarityComputer.hpp>
 #include <agent_memory/retrieval/ExactLexicalRetriever.hpp>
 #include <agent_memory/retrieval/BowVectorRetriever.hpp>
@@ -65,8 +65,8 @@ namespace {
     constexpr std::string_view kEncoderFamilyRandomHyperplane =
         "random_hyperplane_rademacher";
     constexpr std::string_view kEncoderFamilyCoordinateSign = "coordinate_sign";
-    constexpr std::string_view kEncoderFamilyOrthogonalProjection =
-        "orthogonal_tight_frame_projection";
+    constexpr std::string_view kEncoderFamilyRandomizedHadamard =
+        "randomized_hadamard_projection";
 
     struct BenchmarkConfig final {
         std::string mode{kModeRandomExact};
@@ -164,8 +164,17 @@ namespace {
     };
 
     struct BinaryGridTask final {
+        std::size_t run_index = 0;
         std::size_t bit_count = 0;
         std::size_t repeat_index = 0;
+    };
+
+    struct BinaryGridRunState final {
+        std::string encoder_family;
+        std::uint32_t encoder_seed = 0;
+        nlohmann::json seed_run;
+        std::vector<std::vector<BinaryFlatVsFloatResult>> results_by_bit;
+        std::vector<std::vector<nlohmann::json>> reports_by_bit;
     };
 
     [[nodiscard]] double elapsed_ms(Clock::time_point start, Clock::time_point end) {
@@ -488,7 +497,7 @@ namespace {
     [[nodiscard]] bool is_supported_encoder_family(const std::string& family) noexcept {
         return family == kEncoderFamilyRandomHyperplane
             || family == kEncoderFamilyCoordinateSign
-            || family == kEncoderFamilyOrthogonalProjection;
+            || family == kEncoderFamilyRandomizedHadamard;
     }
 
     [[nodiscard]] bool encoder_family_uses_seed(const std::string& family) noexcept {
@@ -502,7 +511,7 @@ namespace {
         if(family == kEncoderFamilyCoordinateSign) {
             return 0x63D83595U;
         }
-        if(family == kEncoderFamilyOrthogonalProjection) {
+        if(family == kEncoderFamilyRandomizedHadamard) {
             return 0x9E3779B9U;
         }
         return 0x85EBCA6BU;
@@ -2149,12 +2158,12 @@ namespace {
                 agent_memory::CoordinateSignBinaryEncoderOptions{input_dimension}
             );
         }
-        if(family == kEncoderFamilyOrthogonalProjection) {
-            agent_memory::OrthogonalProjectionBinaryEncoderOptions options;
+        if(family == kEncoderFamilyRandomizedHadamard) {
+            agent_memory::RandomizedHadamardBinaryEncoderOptions options;
             options.input_dimension = input_dimension;
             options.bit_count = bit_count;
             options.seed = seed;
-            return std::make_unique<agent_memory::OrthogonalProjectionBinaryEncoder>(
+            return std::make_unique<agent_memory::RandomizedHadamardBinaryEncoder>(
                 options
             );
         }
@@ -2178,11 +2187,11 @@ namespace {
            != nullptr) {
             return "coordinate_sign";
         }
-        if(dynamic_cast<const agent_memory::OrthogonalProjectionBinaryEncoder*>(
+        if(dynamic_cast<const agent_memory::RandomizedHadamardBinaryEncoder*>(
                &encoder
            )
            != nullptr) {
-            return agent_memory::OrthogonalProjectionBinaryEncoder::compute_backend_name();
+            return agent_memory::RandomizedHadamardBinaryEncoder::compute_backend_name();
         }
         return "unknown";
     }
@@ -2707,24 +2716,31 @@ namespace {
                       << " contiguous_exact_ms="
                       << oracle.contiguous_exact_query.total_ms << '\n';
 
+            std::vector<BinaryGridRunState> run_states;
+            std::vector<BinaryGridTask> tasks;
+
             for(const auto& encoder_family : config.encoder_families) {
                 const std::vector<std::uint32_t> active_encoder_seeds =
                     encoder_family_uses_seed(encoder_family)
                         ? config.encoder_seeds
                         : std::vector<std::uint32_t>{0};
                 for(const auto encoder_seed : active_encoder_seeds) {
-                    nlohmann::json seed_run;
-                    seed_run["data_seed"] = data_seed;
-                    seed_run["encoder_family"] = encoder_family;
-                    seed_run["encoder_seed"] = encoder_seed;
-                    seed_run["common_exact"] = common_exact_oracle_to_json(
+                    BinaryGridRunState state;
+                    state.encoder_family = encoder_family;
+                    state.encoder_seed = encoder_seed;
+                    state.seed_run["data_seed"] = data_seed;
+                    state.seed_run["encoder_family"] = encoder_family;
+                    state.seed_run["encoder_seed"] = encoder_seed;
+                    state.seed_run["common_exact"] = common_exact_oracle_to_json(
                         data_config,
                         oracle
                     );
-                    seed_run["reports"] = nlohmann::json::array();
+                    state.seed_run["reports"] = nlohmann::json::array();
+                    state.results_by_bit.resize(config.bit_counts.size());
+                    state.reports_by_bit.resize(config.bit_counts.size());
 
-                    std::vector<BinaryGridTask> tasks;
-                    tasks.reserve(config.bit_counts.size() * config.repeat_count);
+                    const auto run_index = run_states.size();
+                    bool state_has_tasks = false;
                     for(const auto bit_count : config.bit_counts) {
                         if(!encoder_family_supports_bit_count(
                                encoder_family,
@@ -2733,143 +2749,145 @@ namespace {
                            )) {
                             continue;
                         }
-                        for(std::size_t repeat = 0; repeat < config.repeat_count;
-                            ++repeat) {
-                            tasks.push_back(BinaryGridTask{bit_count, repeat});
-                        }
-                    }
-                    if(tasks.empty()) {
-                        continue;
-                    }
-                    if(config.randomize_execution_order) {
-                        std::mt19937 generator{
-                            data_seed ^ (encoder_seed * 0x9E3779B9U)
-                            ^ encoder_family_salt(encoder_family)
-                            ^ static_cast<std::uint32_t>(config.bit_counts.size())
-                        };
-                        std::shuffle(tasks.begin(), tasks.end(), generator);
-                    }
-
-                    std::vector<std::vector<BinaryFlatVsFloatResult>> results_by_bit(
-                        config.bit_counts.size()
-                    );
-                    std::vector<std::vector<nlohmann::json>> reports_by_bit(
-                        config.bit_counts.size()
-                    );
-                    for(std::size_t bit_index = 0; bit_index < config.bit_counts.size();
-                        ++bit_index) {
-                        if(encoder_family_supports_bit_count(
-                               encoder_family,
-                               config.embedding_dimensions,
-                               config.bit_counts[bit_index]
-                           )) {
-                            results_by_bit[bit_index].resize(config.repeat_count);
-                            reports_by_bit[bit_index].resize(config.repeat_count);
-                        }
-                    }
-
-                    for(const auto& task : tasks) {
                         const auto bit_it = std::find(
                             config.bit_counts.begin(),
                             config.bit_counts.end(),
-                            task.bit_count
+                            bit_count
                         );
-                        if(bit_it == config.bit_counts.end()) {
-                            throw std::runtime_error("binary grid task has unknown bit_count");
-                        }
                         const auto bit_index = static_cast<std::size_t>(
                             std::distance(config.bit_counts.begin(), bit_it)
                         );
-
-                        BenchmarkConfig run_config = data_config;
-                        run_config.mode = std::string{kModeSyntheticBinaryFlatVsFloat};
-                        run_config.seed = encoder_seed;
-                        run_config.bit_count = task.bit_count;
-                        run_config.benchmark_name =
-                            config.benchmark_name + "_data" + std::to_string(data_seed)
-                            + "_" + encoder_family
-                            + "_encoder" + std::to_string(encoder_seed)
-                            + "_" + std::to_string(task.bit_count) + "b"
-                            + "_r" + std::to_string(task.repeat_index);
-                        run_config.rerank_candidate_limits = config.rerank_candidate_limits;
-                        if(config.randomize_execution_order) {
-                            std::mt19937 limit_generator{
-                                data_seed ^ (encoder_seed * 0x85EBCA6BU)
-                                ^ encoder_family_salt(encoder_family)
-                                ^ static_cast<std::uint32_t>(task.bit_count)
-                                ^ static_cast<std::uint32_t>(task.repeat_index)
-                            };
-                            std::shuffle(
-                                run_config.rerank_candidate_limits.begin(),
-                                run_config.rerank_candidate_limits.end(),
-                                limit_generator
-                            );
+                        state.results_by_bit[bit_index].resize(config.repeat_count);
+                        state.reports_by_bit[bit_index].resize(config.repeat_count);
+                        for(std::size_t repeat = 0; repeat < config.repeat_count;
+                            ++repeat) {
+                            tasks.push_back(BinaryGridTask{run_index, bit_count, repeat});
+                            state_has_tasks = true;
                         }
-
-                        const auto encoder = make_binary_encoder(
-                            encoder_family,
-                            run_config.embedding_dimensions,
-                            run_config.bit_count,
-                            encoder_seed
-                        );
-
-                        auto result = run_binary_flat_vs_float_benchmark_with_oracle(
-                            run_config,
-                            *encoder,
-                            oracle
-                        );
-                        sort_rerank_candidates_by_limit(result);
-                        results_by_bit[bit_index][task.repeat_index] = result;
-
-                        auto report = binary_flat_vs_float_report_to_json(
-                            run_config,
-                            encoder->info(),
-                            result
-                        );
-                        report["repeat_index"] = task.repeat_index;
-                        reports_by_bit[bit_index][task.repeat_index] =
-                            std::move(report);
                     }
-
-                    for(std::size_t bit_index = 0; bit_index < config.bit_counts.size();
-                        ++bit_index) {
-                        if(results_by_bit[bit_index].empty()) {
-                            continue;
-                        }
-                        const auto bit_count = config.bit_counts[bit_index];
-                        BenchmarkConfig summary_config = data_config;
-                        summary_config.seed = encoder_seed;
-                        summary_config.bit_count = bit_count;
-                        summary_config.rerank_candidate_limits =
-                            config.rerank_candidate_limits;
-
-                        nlohmann::json bit_report;
-                        bit_report["encoder_family"] = encoder_family;
-                        bit_report["bit_count"] = bit_count;
-                        bit_report["repeat_count"] = results_by_bit[bit_index].size();
-                        bit_report["summary"] = summarize_binary_grid_repeats(
-                            summary_config,
-                            results_by_bit[bit_index]
-                        );
-                        bit_report["repeats"] = reports_by_bit[bit_index];
-                        if(results_by_bit[bit_index].size() == 1) {
-                            bit_report["report"] = bit_report["repeats"].front();
-                        }
-                        seed_run["reports"].push_back(std::move(bit_report));
-
-                        const auto& last_result = results_by_bit[bit_index].back();
-                        std::cout << "  encoder_family=" << encoder_family
-                                  << " encoder_seed=" << encoder_seed
-                                  << " bits=" << bit_count
-                                  << " repeats=" << results_by_bit[bit_index].size()
-                                  << " direct_recall@k="
-                                  << last_result.mean_recall_at_k_vs_exact
-                                  << " direct_top1=" << last_result.top1_agreement
-                                  << '\n';
+                    if(state_has_tasks) {
+                        run_states.push_back(std::move(state));
                     }
-
-                    seed_runs.push_back(std::move(seed_run));
                 }
+            }
+
+            if(config.randomize_execution_order) {
+                std::mt19937 generator{
+                    data_seed ^ static_cast<std::uint32_t>(config.bit_counts.size())
+                    ^ static_cast<std::uint32_t>(config.encoder_families.size() << 8U)
+                    ^ static_cast<std::uint32_t>(config.encoder_seeds.size() << 16U)
+                };
+                std::shuffle(tasks.begin(), tasks.end(), generator);
+            }
+
+            for(const auto& task : tasks) {
+                auto& run_state = run_states[task.run_index];
+                const auto& encoder_family = run_state.encoder_family;
+                const auto encoder_seed = run_state.encoder_seed;
+
+                const auto bit_it = std::find(
+                    config.bit_counts.begin(),
+                    config.bit_counts.end(),
+                    task.bit_count
+                );
+                if(bit_it == config.bit_counts.end()) {
+                    throw std::runtime_error("binary grid task has unknown bit_count");
+                }
+                const auto bit_index = static_cast<std::size_t>(
+                    std::distance(config.bit_counts.begin(), bit_it)
+                );
+
+                BenchmarkConfig run_config = data_config;
+                run_config.mode = std::string{kModeSyntheticBinaryFlatVsFloat};
+                run_config.seed = encoder_seed;
+                run_config.bit_count = task.bit_count;
+                run_config.benchmark_name =
+                    config.benchmark_name + "_data" + std::to_string(data_seed)
+                    + "_" + encoder_family + "_encoder" + std::to_string(encoder_seed)
+                    + "_" + std::to_string(task.bit_count) + "b" + "_r"
+                    + std::to_string(task.repeat_index);
+                run_config.rerank_candidate_limits = config.rerank_candidate_limits;
+                if(config.randomize_execution_order) {
+                    std::mt19937 limit_generator{
+                        data_seed ^ (encoder_seed * 0x85EBCA6BU)
+                        ^ encoder_family_salt(encoder_family)
+                        ^ static_cast<std::uint32_t>(task.bit_count)
+                        ^ static_cast<std::uint32_t>(task.repeat_index)
+                    };
+                    std::shuffle(
+                        run_config.rerank_candidate_limits.begin(),
+                        run_config.rerank_candidate_limits.end(),
+                        limit_generator
+                    );
+                }
+
+                const auto encoder = make_binary_encoder(
+                    encoder_family,
+                    run_config.embedding_dimensions,
+                    run_config.bit_count,
+                    encoder_seed
+                );
+
+                auto result = run_binary_flat_vs_float_benchmark_with_oracle(
+                    run_config,
+                    *encoder,
+                    oracle
+                );
+                sort_rerank_candidates_by_limit(result);
+                run_state.results_by_bit[bit_index][task.repeat_index] = result;
+
+                auto report = binary_flat_vs_float_report_to_json(
+                    run_config,
+                    encoder->info(),
+                    result
+                );
+                report["repeat_index"] = task.repeat_index;
+                run_state.reports_by_bit[bit_index][task.repeat_index] =
+                    std::move(report);
+            }
+
+            for(auto& run_state : run_states) {
+                for(std::size_t bit_index = 0; bit_index < config.bit_counts.size();
+                    ++bit_index) {
+                    if(run_state.results_by_bit[bit_index].empty()) {
+                        continue;
+                    }
+                    const auto bit_count = config.bit_counts[bit_index];
+                    BenchmarkConfig summary_config = data_config;
+                    summary_config.seed = run_state.encoder_seed;
+                    summary_config.bit_count = bit_count;
+                    summary_config.rerank_candidate_limits =
+                        config.rerank_candidate_limits;
+
+                    nlohmann::json bit_report;
+                    bit_report["encoder_family"] = run_state.encoder_family;
+                    bit_report["bit_count"] = bit_count;
+                    bit_report["repeat_count"] =
+                        run_state.results_by_bit[bit_index].size();
+                    bit_report["summary"] = summarize_binary_grid_repeats(
+                        summary_config,
+                        run_state.results_by_bit[bit_index]
+                    );
+                    bit_report["repeats"] = run_state.reports_by_bit[bit_index];
+                    if(run_state.results_by_bit[bit_index].size() == 1) {
+                        bit_report["report"] = bit_report["repeats"].front();
+                    }
+                    run_state.seed_run["reports"].push_back(std::move(bit_report));
+
+                    const auto& last_result =
+                        run_state.results_by_bit[bit_index].back();
+                    std::cout << "  encoder_family=" << run_state.encoder_family
+                              << " encoder_seed=" << run_state.encoder_seed
+                              << " bits=" << bit_count
+                              << " repeats="
+                              << run_state.results_by_bit[bit_index].size()
+                              << " direct_recall@k="
+                              << last_result.mean_recall_at_k_vs_exact
+                              << " direct_top1=" << last_result.top1_agreement
+                              << '\n';
+                }
+
+                seed_runs.push_back(std::move(run_state.seed_run));
             }
         }
 

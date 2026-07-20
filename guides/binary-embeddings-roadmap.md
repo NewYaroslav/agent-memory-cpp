@@ -2,7 +2,7 @@
 
 > C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо `std::span` и явные конструкторы вместо designated initializers. Binary signatures (`BinarySignature`, `IBinarySignatureEncoder`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH`, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`) — это cache-friendly fingerprints для coarse filter (bucket index); binary embeddings — это semantic-preserving quantizers общего назначения. Этот гайд расширяет roadmap binary signatures до общего compression layer; cross-link с [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Signature Index Tasks" обязателен.
 
-> **Implementation status.** `BinarySignature`, width-aware batch Hamming kernels, binary-code health diagnostics, `IBinarySignatureEncoder`, the materialized/SIMD `RandomHyperplaneBinaryEncoder` v2, `CoordinateSignBinaryEncoder`, dependency-free `OrthogonalProjectionBinaryEncoder`, sparse and batch encoding, `BinarySignatureInfo`, `BinarySignatureEncoderRegistry`, optimized `FlatBinarySignatureIndex`, and experimental in-memory `MultiProbeHammingIndex` are implemented in `src/agent_memory/index/`. A synthetic 128-dimensional run found that the high-quality random-hyperplane `512-bit x 500-candidate` filter was `2.25x` faster than the current `ExactVectorIndex`, but only `1.12x` faster than a comparable contiguous exact scan; a later zero-training encoder grid found that orthogonal/tight-frame projection improved candidate coverage at the same bit budget. Both results are directional. Persisted `.bse` loading, production `binary_bucket_index`, dense-index integration, high-recall Hamming ANN, `AutoencoderBinarySignatureEncoder`, `IAutoencoderEncoder`, and `IAutoencoderDecoder` remain roadmap-only and require separate PRs.
+> **Implementation status.** `BinarySignature`, width-aware batch Hamming kernels, binary-code health diagnostics, `IBinarySignatureEncoder`, the materialized/SIMD `RandomHyperplaneBinaryEncoder` v2, `CoordinateSignBinaryEncoder`, dependency-free `RandomizedHadamardBinaryEncoder`, sparse and batch encoding, `BinarySignatureInfo`, `BinarySignatureEncoderRegistry`, optimized `FlatBinarySignatureIndex`, and experimental in-memory `MultiProbeHammingIndex` are implemented in `src/agent_memory/index/`. A synthetic 128-dimensional run found that the high-quality random-hyperplane `512-bit x 500-candidate` filter was `2.25x` faster than the current `ExactVectorIndex`, but only `1.12x` faster than a comparable contiguous exact scan; a later zero-training encoder grid found that randomized Hadamard projection improved candidate coverage at the same bit budget on the 128D power-of-two fixture. Both results are directional. Persisted `.bse` loading, production `binary_bucket_index`, dense-index integration, high-recall Hamming ANN, `AutoencoderBinarySignatureEncoder`, `IAutoencoderEncoder`, and `IAutoencoderDecoder` remain roadmap-only and require separate PRs.
 
 ## Source attribution policy
 
@@ -108,7 +108,7 @@ baseline, not as proof that random-hyperplane LSH is enough for our workload.
 |---|---:|---:|---|---|
 | Coordinate sign `sign(x)` | Yes | No | Cheapest diagnostic baseline | One bit per source coordinate; no projection cost, but naturally supports only `bit_count == input_dimension`. |
 | Random hyperplane `sign(Rx)` | Yes | No | Implemented baseline candidate filter | Good zero-training reference. PR #57 showed useful system speedups vs current `ExactVectorIndex`, but no decisive compute-only win vs contiguous exact scan at 128D. |
-| Orthogonal/tight-frame projection | Yes | No | Next zero-training baseline | Faiss-style improvement over independent projections; should be compared before learned encoders. |
+| Randomized Hadamard projection | Yes | No | Structured zero-training baseline | Faiss-inspired dependency-free baseline. For power-of-two input dimensions complete blocks use orthogonal Hadamard rows; for padded non-power-of-two dimensions partial row sets are not generally pairwise orthogonal. |
 | Global learned projection (ITQ-like) | Yes | Yes | Main learned-hashing candidate | One corpus/calibration-trained `R`; preserves comparability across all records. Requires train/validation split and bit-health diagnostics. |
 | Autoencoder binary encoder | Yes | Yes | Strong learned compression tier | More expressive than linear ITQ-like projection; requires training toolchain, persisted weights, and careful acceptance criteria. |
 | Cluster-local projection `R_c` | Within a routed cluster | Yes | Hierarchical candidate filter | Query must first route to a small set of clusters; codes across unrelated clusters are not directly comparable. |
@@ -125,7 +125,7 @@ Post-PR57 PR ladder:
 | PR | Scope | Success signal | Non-goal |
 |---|---|---|---|
 | PR #58 | Roadmap/taxonomy only: record the encoder families, Faiss-derived index lessons, and follow-up order. | Future agents can see that random hyperplane is only the baseline. | No code changes. |
-| PR #59 | Add coordinate-sign and orthogonal/tight-frame encoder baselines; run the existing binary-rerank grid against all zero-training encoders. | Orthogonal/tight-frame projection improves coverage at equal bit budgets in the synthetic 128D grid; coordinate sign is a cheap one-bit-per-dimension diagnostic baseline. | No learned training pipeline. |
+| PR #59 | Add coordinate-sign and randomized-Hadamard encoder baselines; run the existing binary-rerank grid against all zero-training encoders. | Randomized Hadamard projection improves coverage at equal bit budgets in the synthetic 128D power-of-two grid; coordinate sign is a cheap one-bit-per-dimension diagnostic baseline. | No learned training pipeline and no Faiss-compatible projector claim. |
 | PR #60 | Add a global learned projection prototype, ITQ-like if dependency-free enough, with train/validation split and persisted encoder identity. | Better candidate coverage at the same bit/candidate budget without validation leakage. | No per-document local matrices. |
 | PR #61 | Run high-dimensional and real-embedding benchmarks (384/768/1536D if fixtures are available), still with exact dense rerank as oracle. | Determine whether binary filtering starts winning against a contiguous exact baseline when dense dimension grows. | No production default switch. |
 | PR #62 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
@@ -139,9 +139,12 @@ Coordinate-sign benchmark contract for PR #59:
   padding or duplicated coordinates do not add information.
 - `bit_count < input_dimension` requires a separately named coordinate-subset
   policy and should not be presented as the default `sign(x)` baseline.
-- Orthogonal/tight-frame projection is the zero-training family that can cover
-  the full bit-width grid (`nbits <= d` via orthogonal/subspace projectors,
-  `nbits > d` via tight-frame-style projection).
+- Randomized Hadamard projection is the zero-training family that can cover the
+  full bit-width grid in this PR. It is a structured Hadamard projection, not a
+  byte-for-byte Faiss `IndexLSH` projector. For power-of-two input dimensions,
+  a complete block has orthogonal rows; for non-power-of-two dimensions,
+  zero-padding gives a complete-block tight frame over the original coordinates,
+  while partial row sets are not generally pairwise orthogonal.
 
 [Source: Faiss wiki, "Faiss indexes": <https://github.com/facebookresearch/faiss/wiki/Faiss-indexes>]
 <br>[Source: Charikar 2002, "Similarity Estimation Techniques from Rounding Algorithms": <https://www.cs.princeton.edu/courses/archive/spr04/cos598B/bib/CharikarEstim.pdf>]

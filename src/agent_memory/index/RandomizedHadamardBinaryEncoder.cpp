@@ -1,4 +1,4 @@
-#include "OrthogonalProjectionBinaryEncoder.hpp"
+#include "RandomizedHadamardBinaryEncoder.hpp"
 
 #include <algorithm>
 #include <array>
@@ -27,17 +27,17 @@ namespace agent_memory {
                 std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
             if(result.ec != std::errc{}) {
                 throw std::logic_error(
-                    "failed to format orthogonal projection encoder fingerprint"
+                    "failed to format randomized Hadamard encoder fingerprint"
                 );
             }
             output.append(buffer.data(), result.ptr);
         }
 
         [[nodiscard]] std::string make_config_fingerprint(
-            const OrthogonalProjectionBinaryEncoderOptions& options,
+            const RandomizedHadamardBinaryEncoderOptions& options,
             std::size_t padded_dimension
         ) {
-            std::string output = "orthogonal_tight_frame_projection_v1:dim=";
+            std::string output = "randomized_hadamard_projection_v1:dim=";
             append_integer(output, options.input_dimension);
             output += ":padded_dim=";
             append_integer(output, padded_dimension);
@@ -53,13 +53,13 @@ namespace agent_memory {
                 return 0;
             }
             if(value > (std::numeric_limits<std::size_t>::max() / 2U) + 1U) {
-                throw std::length_error("orthogonal projection padded dimension overflows");
+                throw std::length_error("randomized Hadamard padded dimension overflows");
             }
             std::size_t power = 1;
             while(power < value) {
                 if(power > std::numeric_limits<std::size_t>::max() / 2U) {
                     throw std::length_error(
-                        "orthogonal projection padded dimension overflows"
+                        "randomized Hadamard padded dimension overflows"
                     );
                 }
                 power *= 2U;
@@ -147,23 +147,23 @@ namespace agent_memory {
 
     } // namespace
 
-    OrthogonalProjectionBinaryEncoder::OrthogonalProjectionBinaryEncoder(
-        OrthogonalProjectionBinaryEncoderOptions options
+    RandomizedHadamardBinaryEncoder::RandomizedHadamardBinaryEncoder(
+        RandomizedHadamardBinaryEncoderOptions options
     )
         : m_options(options),
           m_padded_dimension(next_power_of_two(options.input_dimension)) {
         if(m_options.input_dimension == 0) {
             throw std::invalid_argument(
-                "orthogonal projection encoder input dimension must be positive"
+                "randomized Hadamard encoder input dimension must be positive"
             );
         }
         if(m_options.bit_count == 0) {
             throw std::invalid_argument(
-                "orthogonal projection encoder bit count must be positive"
+                "randomized Hadamard encoder bit count must be positive"
             );
         }
 
-        m_info.encoder_id = "orthogonal_tight_frame_projection";
+        m_info.encoder_id = "randomized_hadamard_projection";
         m_info.encoder_version = "v1";
         m_info.input_dimension = m_options.input_dimension;
         m_info.bit_count = m_options.bit_count;
@@ -172,12 +172,12 @@ namespace agent_memory {
             make_config_fingerprint(m_options, m_padded_dimension);
     }
 
-    const BinarySignatureEncoderInfo& OrthogonalProjectionBinaryEncoder::info()
+    const BinarySignatureEncoderInfo& RandomizedHadamardBinaryEncoder::info()
         const noexcept {
         return m_info;
     }
 
-    BinarySignature OrthogonalProjectionBinaryEncoder::encode(
+    BinarySignature RandomizedHadamardBinaryEncoder::encode(
         const Embedding& vector
     ) const {
         validate_input(vector);
@@ -185,7 +185,7 @@ namespace agent_memory {
         return encode_validated(vector, work);
     }
 
-    std::vector<BinarySignature> OrthogonalProjectionBinaryEncoder::encode_batch(
+    std::vector<BinarySignature> RandomizedHadamardBinaryEncoder::encode_batch(
         const std::vector<Embedding>& vectors
     ) const {
         for(const auto& vector : vectors) {
@@ -204,31 +204,31 @@ namespace agent_memory {
         return signatures;
     }
 
-    const char* OrthogonalProjectionBinaryEncoder::compute_backend_name() noexcept {
+    const char* RandomizedHadamardBinaryEncoder::compute_backend_name() noexcept {
         return "fwht_scalar";
     }
 
-    std::size_t OrthogonalProjectionBinaryEncoder::padded_dimension() const noexcept {
+    std::size_t RandomizedHadamardBinaryEncoder::padded_dimension() const noexcept {
         return m_padded_dimension;
     }
 
-    void OrthogonalProjectionBinaryEncoder::validate_input(const Embedding& vector) const {
+    void RandomizedHadamardBinaryEncoder::validate_input(const Embedding& vector) const {
         if(vector.dimension() != m_options.input_dimension) {
             throw std::invalid_argument(
-                "orthogonal projection encoder input dimension mismatch"
+                "randomized Hadamard encoder input dimension mismatch"
             );
         }
 
         for(const auto value : vector.values) {
             if(!std::isfinite(value)) {
                 throw std::invalid_argument(
-                    "orthogonal projection encoder input must be finite"
+                    "randomized Hadamard encoder input must be finite"
                 );
             }
         }
     }
 
-    BinarySignature OrthogonalProjectionBinaryEncoder::encode_validated(
+    BinarySignature RandomizedHadamardBinaryEncoder::encode_validated(
         const Embedding& vector,
         std::vector<float>& work
     ) const {

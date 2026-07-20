@@ -100,8 +100,8 @@ endif()
 set(saw_random_8 FALSE)
 set(saw_random_16 FALSE)
 set(saw_coordinate_8 FALSE)
-set(saw_orthogonal_8 FALSE)
-set(saw_orthogonal_16 FALSE)
+set(saw_hadamard_8 FALSE)
+set(saw_hadamard_16 FALSE)
 math(EXPR last_aggregate "${aggregate_count} - 1")
 foreach(aggregate_index RANGE 0 ${last_aggregate})
     string(JSON aggregate_encoder_family GET
@@ -111,7 +111,7 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
         "${grid_json}" aggregate_summary ${aggregate_index} bit_count
     )
     if(NOT aggregate_encoder_family MATCHES
-       "^(random_hyperplane_rademacher|coordinate_sign|orthogonal_tight_frame_projection)$")
+       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection)$")
         message(FATAL_ERROR
             "unexpected aggregate encoder_family: ${aggregate_encoder_family}"
         )
@@ -139,13 +139,13 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
         else()
             message(FATAL_ERROR "unexpected random aggregate bit_count")
         endif()
-    elseif(aggregate_encoder_family STREQUAL "orthogonal_tight_frame_projection")
+    elseif(aggregate_encoder_family STREQUAL "randomized_hadamard_projection")
         if(aggregate_bit_count EQUAL 8)
-            set(saw_orthogonal_8 TRUE)
+            set(saw_hadamard_8 TRUE)
         elseif(aggregate_bit_count EQUAL 16)
-            set(saw_orthogonal_16 TRUE)
+            set(saw_hadamard_16 TRUE)
         else()
-            message(FATAL_ERROR "unexpected orthogonal aggregate bit_count")
+            message(FATAL_ERROR "unexpected randomized Hadamard aggregate bit_count")
         endif()
     endif()
     if(NOT aggregate_quality_count EQUAL expected_quality_count)
@@ -189,7 +189,7 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
 endforeach()
 
 if(NOT saw_random_8 OR NOT saw_random_16 OR NOT saw_coordinate_8
-   OR NOT saw_orthogonal_8 OR NOT saw_orthogonal_16)
+   OR NOT saw_hadamard_8 OR NOT saw_hadamard_16)
     message(FATAL_ERROR "aggregate summary is missing an expected encoder/bit row")
 endif()
 
@@ -202,7 +202,7 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
         "${grid_json}" seed_runs ${seed_run_index} encoder_seed
     )
     if(NOT seed_encoder_family MATCHES
-       "^(random_hyperplane_rademacher|coordinate_sign|orthogonal_tight_frame_projection)$")
+       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection)$")
         message(FATAL_ERROR "unexpected seed_run encoder_family: ${seed_encoder_family}")
     endif()
     if(seed_encoder_family STREQUAL "coordinate_sign"

@@ -90,12 +90,15 @@ encoders participate in the grid. Supported values are:
 
 - `random_hyperplane_rademacher`;
 - `coordinate_sign`;
-- `orthogonal_tight_frame_projection`.
+- `randomized_hadamard_projection`.
 
 If omitted, the grid keeps the historical random-hyperplane-only behavior.
 `coordinate_sign` is unseeded and emits exactly `embedding_dimensions` bits, so
 the runner skips other `bit_counts` for that family. The random-hyperplane and
-orthogonal/tight-frame families use every configured `encoder_seed`.
+randomized-Hadamard families use every configured `encoder_seed`. With
+`randomize_execution_order=true`, the runner shuffles the full
+`encoder_family x encoder_seed x bit_count x repeat` task list for each data
+seed; JSON reports remain grouped by family and encoder seed for readability.
 
 The two exact baselines answer different questions:
 

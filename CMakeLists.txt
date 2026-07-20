@@ -52,7 +52,7 @@ add_library(agent_memory STATIC
     src/agent_memory/index/IBinarySignatureIndex.cpp
     src/agent_memory/index/IVectorIndex.cpp
     src/agent_memory/index/MultiProbeHammingIndex.cpp
-    src/agent_memory/index/OrthogonalProjectionBinaryEncoder.cpp
+    src/agent_memory/index/RandomizedHadamardBinaryEncoder.cpp
     src/agent_memory/index/RandomHyperplaneBinaryEncoder.cpp
     src/agent_memory/index/VectorSimilarityComputer.cpp
     src/agent_memory/index/VectorIndex.cpp

@@ -19,8 +19,8 @@
 #include "index/IBinarySignatureIndex.hpp"
 #include "index/IVectorIndex.hpp"
 #include "index/MultiProbeHammingIndex.hpp"
-#include "index/OrthogonalProjectionBinaryEncoder.hpp"
 #include "index/RandomHyperplaneBinaryEncoder.hpp"
+#include "index/RandomizedHadamardBinaryEncoder.hpp"
 #include "index/VectorSimilarityComputer.hpp"
 #include "index/VectorIndex.hpp"
 

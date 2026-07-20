@@ -755,9 +755,10 @@ family. PR #59 adds two additional baselines:
 
 - `coordinate_sign`: `bit_i = sign(x_i)`, exactly one bit per source
   coordinate;
-- `orthogonal_tight_frame_projection`: a dependency-free randomized
-  Walsh-Hadamard orthogonal/tight-frame-style projection inspired by the
-  Faiss `IndexLSH` direction.
+- `randomized_hadamard_projection`: a dependency-free randomized
+  Walsh-Hadamard structured projection inspired by the Faiss `IndexLSH`
+  direction, but not a Faiss-compatible orthogonal/tight-frame implementation
+  for arbitrary dimensions.
 
 The question is whether the promising `500-1000` candidate band was specific
 to random hyperplanes or whether a more structured zero-training projection
@@ -767,9 +768,10 @@ improves exact-top-k candidate coverage at the same bit budget.
 
 Coordinate sign was expected to be very cheap and useful mostly as a diagnostic
 baseline, because it preserves only source-coordinate polarity and cannot
-change the bit budget. Orthogonal/tight-frame projection was expected to beat
-independent random hyperplanes on coverage at equal bit counts, especially at
-smaller candidate limits, while keeping similar Hamming-search costs.
+change the bit budget. Randomized Hadamard projection was expected to beat
+independent random hyperplanes on coverage at equal bit counts in this 128D
+power-of-two fixture, especially at smaller candidate limits, while keeping
+similar Hamming-search costs.
 
 ### Configuration
 
@@ -779,14 +781,14 @@ smaller candidate limits, while keeping similar Hamming-search costs.
   ```bash
   ./build-codex-pr59/tools/agent-memory-bench/agent-memory-bench \
       tools/agent-memory-bench/synthetic-binary-rerank-grid.example.json \
-      tmp/synthetic-binary-rerank-grid-pr59.json
+      tmp/synthetic-binary-rerank-grid-pr59-fixed.json
   ```
 
 - 10,000 documents and 100 queries;
 - 128-dimensional clustered normalized vectors;
 - data seed `42`;
 - encoder families: `random_hyperplane_rademacher`, `coordinate_sign`,
-  `orthogonal_tight_frame_projection`;
+  `randomized_hadamard_projection`;
 - encoder seeds `1001` and `1002` for seedable families;
 - signature widths `128`, `256`, `512`, and `1024` bits;
 - candidate limits `100`, `500`, `1000`, and `2000`;
@@ -800,8 +802,8 @@ the other bit counts by contract.
 
 | Baseline | Median for 100 queries | Samples, ms |
 | --- | ---: | --- |
-| Current `ExactVectorIndex` | 60.1205 ms | 59.8424, 61.0171, 60.1205, 61.4917, 59.0232, 62.3097, 59.5565 |
-| Contiguous exact cosine | 29.0857 ms | 29.1971, 28.7174, 28.9308, 28.7336, 29.0857, 29.2629, 29.8658 |
+| Current `ExactVectorIndex` | 58.0553 ms | 57.7324, 58.1823, 57.2652, 58.0553, 58.1381, 58.4762, 57.4997 |
+| Contiguous exact cosine | 27.9438 ms | 27.9525, 27.7392, 28.2203, 27.5157, 27.9438, 27.4866, 28.1706 |
 
 Each cell below is
 `exact-top-k coverage / top-1 agreement / speedup vs current index / speedup vs contiguous exact`.
@@ -810,25 +812,25 @@ Each cell below is
 
 | Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
 | ---: | --- | --- | --- | --- |
-| 128 | 0.3200 / 0.395 / 6.90x / 3.34x | 0.6260 / 0.685 / 2.80x / 1.36x | 0.7795 / 0.850 / 1.61x / 0.78x | 0.9035 / 0.955 / 0.86x / 0.41x |
-| 256 | 0.5065 / 0.665 / 5.61x / 2.71x | 0.8260 / 0.890 / 2.66x / 1.29x | 0.9265 / 0.955 / 1.60x / 0.77x | 0.9780 / 0.990 / 0.86x / 0.42x |
-| 512 | 0.7435 / 0.895 / 4.18x / 2.02x | 0.9595 / 1.000 / 2.30x / 1.11x | 0.9895 / 1.000 / 1.49x / 0.72x | 0.9990 / 1.000 / 0.85x / 0.41x |
-| 1024 | 0.9010 / 1.000 / 2.30x / 1.11x | 0.9960 / 1.000 / 1.63x / 0.79x | 1.0000 / 1.000 / 1.17x / 0.57x | 1.0000 / 1.000 / 0.76x / 0.37x |
+| 128 | 0.3200 / 0.395 / 6.64x / 3.20x | 0.6260 / 0.685 / 2.70x / 1.30x | 0.7795 / 0.850 / 1.49x / 0.72x | 0.9035 / 0.955 / 0.81x / 0.39x |
+| 256 | 0.5065 / 0.665 / 5.38x / 2.59x | 0.8260 / 0.890 / 2.49x / 1.20x | 0.9265 / 0.955 / 1.51x / 0.73x | 0.9780 / 0.990 / 0.82x / 0.40x |
+| 512 | 0.7435 / 0.895 / 3.94x / 1.90x | 0.9595 / 1.000 / 2.23x / 1.07x | 0.9895 / 1.000 / 1.41x / 0.68x | 0.9990 / 1.000 / 0.79x / 0.38x |
+| 1024 | 0.9010 / 1.000 / 2.19x / 1.05x | 0.9960 / 1.000 / 1.51x / 0.73x | 1.0000 / 1.000 / 1.11x / 0.53x | 1.0000 / 1.000 / 0.71x / 0.34x |
 
 ### Coordinate sign baseline
 
 | Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
 | ---: | --- | --- | --- | --- |
-| 128 | 0.4500 / 0.640 / 6.96x / 3.37x | 0.7800 / 0.910 / 2.77x / 1.34x | 0.8800 / 0.960 / 1.55x / 0.75x | 0.9590 / 0.970 / 0.86x / 0.41x |
+| 128 | 0.4500 / 0.640 / 6.75x / 3.25x | 0.7800 / 0.910 / 2.76x / 1.33x | 0.8800 / 0.960 / 1.50x / 0.72x | 0.9590 / 0.970 / 0.83x / 0.40x |
 
-### Orthogonal/tight-frame baseline
+### Randomized Hadamard baseline
 
 | Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
 | ---: | --- | --- | --- | --- |
-| 128 | 0.4660 / 0.655 / 6.75x / 3.27x | 0.7860 / 0.890 / 2.74x / 1.32x | 0.8965 / 0.955 / 1.52x / 0.74x | 0.9590 / 0.995 / 0.87x / 0.42x |
-| 256 | 0.6980 / 0.900 / 6.06x / 2.93x | 0.9390 / 0.970 / 2.70x / 1.31x | 0.9790 / 1.000 / 1.57x / 0.76x | 0.9930 / 1.000 / 0.85x / 0.41x |
-| 512 | 0.8735 / 0.975 / 4.53x / 2.19x | 0.9895 / 1.000 / 2.46x / 1.19x | 0.9990 / 1.000 / 1.52x / 0.73x | 1.0000 / 1.000 / 0.85x / 0.41x |
-| 1024 | 0.9805 / 1.000 / 2.49x / 1.20x | 0.9995 / 1.000 / 1.71x / 0.83x | 1.0000 / 1.000 / 1.21x / 0.59x | 1.0000 / 1.000 / 0.76x / 0.37x |
+| 128 | 0.4660 / 0.655 / 6.54x / 3.15x | 0.7860 / 0.890 / 2.61x / 1.26x | 0.8965 / 0.955 / 1.46x / 0.70x | 0.9590 / 0.995 / 0.81x / 0.39x |
+| 256 | 0.6980 / 0.900 / 5.74x / 2.76x | 0.9390 / 0.970 / 2.61x / 1.26x | 0.9790 / 1.000 / 1.49x / 0.72x | 0.9930 / 1.000 / 0.81x / 0.39x |
+| 512 | 0.8735 / 0.975 / 4.27x / 2.05x | 0.9895 / 1.000 / 2.31x / 1.11x | 0.9990 / 1.000 / 1.45x / 0.70x | 1.0000 / 1.000 / 0.81x / 0.39x |
+| 1024 | 0.9805 / 1.000 / 2.38x / 1.15x | 0.9995 / 1.000 / 1.61x / 0.77x | 1.0000 / 1.000 / 1.15x / 0.55x | 1.0000 / 1.000 / 0.72x / 0.35x |
 
 ### Interpretation
 
@@ -836,14 +838,14 @@ The structured zero-training encoder is better than the independent random
 hyperplane baseline in this synthetic 128D fixture. The clearest practical
 points are:
 
-- `orthogonal_tight_frame_projection 256 bits x 500 candidates` reaches
-  `0.9390` exact-top-k coverage at `2.70x` vs current exact and `1.31x` vs
+- `randomized_hadamard_projection 256 bits x 500 candidates` reaches
+  `0.9390` exact-top-k coverage at `2.61x` vs current exact and `1.26x` vs
   contiguous exact;
-- `orthogonal_tight_frame_projection 512 bits x 500 candidates` reaches
+- `randomized_hadamard_projection 512 bits x 500 candidates` reaches
   `0.9895` coverage with perfect top-1 agreement and still keeps a small
-  `1.19x` compute-oriented speedup;
-- `orthogonal_tight_frame_projection 1024 bits x 100 candidates` reaches
-  `0.9805` coverage and `1.20x` vs contiguous exact, suggesting that a wider
+  `1.11x` compute-oriented speedup;
+- `randomized_hadamard_projection 1024 bits x 100 candidates` reaches
+  `0.9805` coverage and `1.15x` vs contiguous exact, suggesting that a wider
   code with a smaller candidate set can be competitive;
 - `coordinate_sign 128 bits` beats random hyperplanes at 128 bits in this
   fixture, but it is not a general bit-budget mechanism: it is tied to source
@@ -862,8 +864,11 @@ excellent.
 - In-memory flat Hamming scan, not a production sub-linear binary index.
 - Dense vectors are still available in memory for rerank; persisted-vector
   fetch cost is not measured.
-- The orthogonal implementation is dependency-free and Faiss-inspired, not a
-  byte-for-byte Faiss `IndexLSH` port.
+- The randomized Hadamard implementation is dependency-free and Faiss-inspired,
+  not a byte-for-byte Faiss `IndexLSH` port. This experiment uses 128 source
+  dimensions, so complete Hadamard blocks are orthogonal in the tested fixture;
+  the result must not be generalized to padded non-power-of-two dimensions
+  without rerunning the benchmark.
 
 ### Follow-up experiments
 
