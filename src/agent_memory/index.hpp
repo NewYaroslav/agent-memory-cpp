@@ -18,6 +18,7 @@
 #include "index/IBinarySignatureEncoder.hpp"
 #include "index/IBinarySignatureIndex.hpp"
 #include "index/IVectorIndex.hpp"
+#include "index/LearnedProjectionBinaryEncoder.hpp"
 #include "index/MultiProbeHammingIndex.hpp"
 #include "index/RandomHyperplaneBinaryEncoder.hpp"
 #include "index/RandomizedHadamardBinaryEncoder.hpp"

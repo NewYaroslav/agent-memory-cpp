@@ -1,5 +1,6 @@
 #include <agent_memory.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -48,6 +49,23 @@ namespace {
         options.bit_count = bit_count;
         options.seed = seed;
         return options;
+    }
+
+    agent_memory::LearnedProjectionTrainingOptions make_learned_options(
+        std::size_t input_dimension,
+        std::size_t bit_count,
+        std::uint64_t seed
+    ) {
+        agent_memory::LearnedProjectionTrainingOptions options;
+        options.input_dimension = input_dimension;
+        options.bit_count = bit_count;
+        options.seed = seed;
+        options.max_training_vectors = 0;
+        return options;
+    }
+
+    bool almost_equal(double lhs, double rhs, double epsilon = 1.0e-5) {
+        return std::fabs(lhs - rhs) <= epsilon;
     }
 
     std::vector<std::vector<int>> materialize_effective_rows(
@@ -414,6 +432,163 @@ int main() {
            }});
        })) {
         return fail("randomized Hadamard encoder must reject non-finite input values");
+    }
+
+    const std::vector<agent_memory::Embedding> learned_training{
+        agent_memory::Embedding{{1.0F, 0.0F}},
+        agent_memory::Embedding{{0.0F, 1.0F}},
+        agent_memory::Embedding{{-1.0F, 0.0F}},
+        agent_memory::Embedding{{0.0F, -1.0F}},
+    };
+    const auto learned_artifact = agent_memory::train_learned_projection_encoder(
+        learned_training,
+        make_learned_options(2, 8, 123)
+    );
+    if(learned_artifact.input_dimension != 2
+       || learned_artifact.bit_count != 8
+       || learned_artifact.seed != 123
+       || learned_artifact.training_vector_count != learned_training.size()
+       || learned_artifact.projection_rows.size() != 16
+       || learned_artifact.thresholds.size() != 8) {
+        return fail("learned projection training must produce a complete artifact");
+    }
+    for(std::size_t bit = 0; bit < learned_artifact.bit_count; ++bit) {
+        const auto row = learned_artifact.projection_rows.data()
+            + bit * learned_artifact.input_dimension;
+        const auto norm =
+            std::sqrt(static_cast<double>(row[0]) * row[0]
+                      + static_cast<double>(row[1]) * row[1]);
+        if(!almost_equal(norm, 1.0)) {
+            return fail("learned projection rows must be normalized");
+        }
+        if(!std::isfinite(learned_artifact.thresholds[bit])) {
+            return fail("learned projection thresholds must be finite");
+        }
+    }
+
+    const agent_memory::LearnedProjectionBinaryEncoder learned_encoder(
+        learned_artifact
+    );
+    const auto& learned_info = learned_encoder.info();
+    if(learned_info.encoder_id != "learned_pair_difference_projection"
+       || learned_info.encoder_version != "v1"
+       || learned_info.input_dimension != 2
+       || learned_info.bit_count != 8
+       || learned_info.seed != 123) {
+        return fail("learned projection encoder info must mirror the artifact");
+    }
+    const std::string learned_prefix =
+        "learned_pair_difference_projection_v1:dim=2:bits=8:seed=123:train=4:artifact=";
+    if(learned_info.config_fingerprint.compare(
+           0,
+           learned_prefix.size(),
+           learned_prefix
+       ) != 0
+       || learned_info.config_fingerprint.size() != learned_prefix.size() + 16U) {
+        return fail("learned projection fingerprint must include artifact identity");
+    }
+
+    const auto learned_signature =
+        learned_encoder.encode(agent_memory::Embedding{{0.75F, -0.25F}});
+    if(learned_signature !=
+       learned_encoder.encode(agent_memory::Embedding{{0.75F, -0.25F}})) {
+        return fail("learned projection encoder must be deterministic");
+    }
+    if(learned_signature.bit_count() != 8 || learned_signature.word_count() != 1) {
+        return fail("learned projection signature must use the configured width");
+    }
+    const auto learned_batch = learned_encoder.encode_batch({
+        agent_memory::Embedding{{0.75F, -0.25F}},
+        agent_memory::Embedding{{-0.75F, 0.25F}},
+    });
+    if(learned_batch.size() != 2 || learned_batch.front() != learned_signature) {
+        return fail("learned projection batch encoding must match single encode");
+    }
+
+    const auto learned_seed_variant = agent_memory::train_learned_projection_encoder(
+        learned_training,
+        make_learned_options(2, 8, 124)
+    );
+    const agent_memory::LearnedProjectionBinaryEncoder learned_variant_encoder(
+        learned_seed_variant
+    );
+    if(learned_variant_encoder.info().config_fingerprint
+       == learned_encoder.info().config_fingerprint) {
+        return fail("learned projection seed must affect artifact identity");
+    }
+
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::train_learned_projection_encoder(
+               std::vector<agent_memory::Embedding>{
+                   agent_memory::Embedding{{1.0F, 0.0F}},
+               },
+               make_learned_options(2, 8, 123)
+           );
+       })) {
+        return fail("learned projection training must reject fewer than two vectors");
+    }
+    if(!throws_invalid_argument([&] {
+           auto limited_options = make_learned_options(2, 8, 123);
+           limited_options.max_training_vectors = 1;
+           (void)agent_memory::train_learned_projection_encoder(
+               learned_training,
+               limited_options
+           );
+       })) {
+        return fail("learned projection training must reject one-vector samples");
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::train_learned_projection_encoder(
+               std::vector<agent_memory::Embedding>{
+                   agent_memory::Embedding{{1.0F, 0.0F}},
+                   agent_memory::Embedding{{1.0F}},
+               },
+               make_learned_options(2, 8, 123)
+           );
+       })) {
+        return fail("learned projection training must reject dimension mismatches");
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::train_learned_projection_encoder(
+               std::vector<agent_memory::Embedding>{
+                   agent_memory::Embedding{{1.0F, 0.0F}},
+                   agent_memory::Embedding{{
+                       0.0F,
+                       std::numeric_limits<float>::quiet_NaN(),
+                   }},
+               },
+               make_learned_options(2, 8, 123)
+           );
+       })) {
+        return fail("learned projection training must reject non-finite values");
+    }
+    if(!throws_invalid_argument([&] {
+           auto invalid_artifact = learned_artifact;
+           invalid_artifact.projection_rows.pop_back();
+           (void)agent_memory::LearnedProjectionBinaryEncoder(invalid_artifact);
+       })) {
+        return fail("learned projection encoder must reject matrix size mismatch");
+    }
+    if(!throws_invalid_argument([&] {
+           auto invalid_artifact = learned_artifact;
+           invalid_artifact.thresholds.front() =
+               std::numeric_limits<float>::infinity();
+           (void)agent_memory::LearnedProjectionBinaryEncoder(invalid_artifact);
+       })) {
+        return fail("learned projection encoder must reject non-finite thresholds");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)learned_encoder.encode(agent_memory::Embedding{{1.0F, 2.0F, 3.0F}});
+       })) {
+        return fail("learned projection encoder must reject dimension mismatches");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)learned_encoder.encode(agent_memory::Embedding{{
+               1.0F,
+               std::numeric_limits<float>::quiet_NaN(),
+           }});
+       })) {
+        return fail("learned projection encoder must reject NaN input values");
     }
 
     return 0;

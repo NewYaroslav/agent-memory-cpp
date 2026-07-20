@@ -85,20 +85,26 @@ controls repeated timing of two common exact baselines. Quality is sampled once
 per data/encoder seed pair; timing repeats are not treated as independent
 quality observations.
 
-The optional `encoder_families` list selects which zero-training binary
-encoders participate in the grid. Supported values are:
+The optional `encoder_families` list selects which binary encoders participate
+in the grid. Supported values are:
 
 - `random_hyperplane_rademacher`;
 - `coordinate_sign`;
-- `randomized_hadamard_projection`.
+- `randomized_hadamard_projection`;
+- `learned_pair_difference_projection`.
 
 If omitted, the grid keeps the historical random-hyperplane-only behavior.
 `coordinate_sign` is unseeded and emits exactly `embedding_dimensions` bits, so
 the runner skips other `bit_counts` for that family. The random-hyperplane and
-randomized-Hadamard families use every configured `encoder_seed`. With
-`randomize_execution_order=true`, the runner shuffles the full
-`encoder_family x encoder_seed x bit_count x repeat` task list for each data
-seed; JSON reports remain grouped by family and encoder seed for readability.
+randomized-Hadamard families use every configured `encoder_seed`.
+`learned_pair_difference_projection` trains a deterministic global artifact
+from the current data seed's document vectors only; evaluation queries are not
+training input. Encoder artifacts are cached per family/seed/bit inside one
+data-seed run, so `repeat_count` repeats binary materialization/search timing
+without retraining the same artifact. With `randomize_execution_order=true`,
+the runner shuffles the full `encoder_family x encoder_seed x bit_count x
+repeat` task list for each data seed; JSON reports remain grouped by family and
+encoder seed for readability.
 
 The two exact baselines answer different questions:
 

@@ -86,14 +86,14 @@ if(NOT mode STREQUAL "synthetic_binary_rerank_grid")
 endif()
 
 string(JSON seed_run_count LENGTH "${grid_json}" seed_runs)
-if(NOT seed_run_count EQUAL 5)
-    message(FATAL_ERROR "expected 5 seed_runs, got ${seed_run_count}")
+if(NOT seed_run_count EQUAL 7)
+    message(FATAL_ERROR "expected 7 seed_runs, got ${seed_run_count}")
 endif()
 
 string(JSON aggregate_count LENGTH "${grid_json}" aggregate_summary)
-if(NOT aggregate_count EQUAL 5)
+if(NOT aggregate_count EQUAL 7)
     message(FATAL_ERROR
-        "expected 5 aggregate encoder/bit summaries, got ${aggregate_count}"
+        "expected 7 aggregate encoder/bit summaries, got ${aggregate_count}"
     )
 endif()
 
@@ -102,6 +102,8 @@ set(saw_random_16 FALSE)
 set(saw_coordinate_8 FALSE)
 set(saw_hadamard_8 FALSE)
 set(saw_hadamard_16 FALSE)
+set(saw_learned_8 FALSE)
+set(saw_learned_16 FALSE)
 math(EXPR last_aggregate "${aggregate_count} - 1")
 foreach(aggregate_index RANGE 0 ${last_aggregate})
     string(JSON aggregate_encoder_family GET
@@ -111,7 +113,7 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
         "${grid_json}" aggregate_summary ${aggregate_index} bit_count
     )
     if(NOT aggregate_encoder_family MATCHES
-       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection)$")
+       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection|learned_pair_difference_projection)$")
         message(FATAL_ERROR
             "unexpected aggregate encoder_family: ${aggregate_encoder_family}"
         )
@@ -146,6 +148,14 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
             set(saw_hadamard_16 TRUE)
         else()
             message(FATAL_ERROR "unexpected randomized Hadamard aggregate bit_count")
+        endif()
+    elseif(aggregate_encoder_family STREQUAL "learned_pair_difference_projection")
+        if(aggregate_bit_count EQUAL 8)
+            set(saw_learned_8 TRUE)
+        elseif(aggregate_bit_count EQUAL 16)
+            set(saw_learned_16 TRUE)
+        else()
+            message(FATAL_ERROR "unexpected learned projection aggregate bit_count")
         endif()
     endif()
     if(NOT aggregate_quality_count EQUAL expected_quality_count)
@@ -189,7 +199,8 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
 endforeach()
 
 if(NOT saw_random_8 OR NOT saw_random_16 OR NOT saw_coordinate_8
-   OR NOT saw_hadamard_8 OR NOT saw_hadamard_16)
+   OR NOT saw_hadamard_8 OR NOT saw_hadamard_16
+   OR NOT saw_learned_8 OR NOT saw_learned_16)
     message(FATAL_ERROR "aggregate summary is missing an expected encoder/bit row")
 endif()
 
@@ -202,7 +213,7 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
         "${grid_json}" seed_runs ${seed_run_index} encoder_seed
     )
     if(NOT seed_encoder_family MATCHES
-       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection)$")
+       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection|learned_pair_difference_projection)$")
         message(FATAL_ERROR "unexpected seed_run encoder_family: ${seed_encoder_family}")
     endif()
     if(seed_encoder_family STREQUAL "coordinate_sign"

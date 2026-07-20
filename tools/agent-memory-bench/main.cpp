@@ -8,6 +8,7 @@
 #include <agent_memory/index/ExactVectorIndex.hpp>
 #include <agent_memory/index/FlatBinarySignatureIndex.hpp>
 #include <agent_memory/index/IBinarySignatureEncoder.hpp>
+#include <agent_memory/index/LearnedProjectionBinaryEncoder.hpp>
 #include <agent_memory/index/RandomHyperplaneBinaryEncoder.hpp>
 #include <agent_memory/index/RandomizedHadamardBinaryEncoder.hpp>
 #include <agent_memory/index/VectorSimilarityComputer.hpp>
@@ -67,6 +68,8 @@ namespace {
     constexpr std::string_view kEncoderFamilyCoordinateSign = "coordinate_sign";
     constexpr std::string_view kEncoderFamilyRandomizedHadamard =
         "randomized_hadamard_projection";
+    constexpr std::string_view kEncoderFamilyLearnedPairDifference =
+        "learned_pair_difference_projection";
 
     struct BenchmarkConfig final {
         std::string mode{kModeRandomExact};
@@ -175,6 +178,8 @@ namespace {
         nlohmann::json seed_run;
         std::vector<std::vector<BinaryFlatVsFloatResult>> results_by_bit;
         std::vector<std::vector<nlohmann::json>> reports_by_bit;
+        std::vector<std::unique_ptr<agent_memory::IBinarySignatureEncoder>>
+            encoders_by_bit;
     };
 
     [[nodiscard]] double elapsed_ms(Clock::time_point start, Clock::time_point end) {
@@ -497,7 +502,8 @@ namespace {
     [[nodiscard]] bool is_supported_encoder_family(const std::string& family) noexcept {
         return family == kEncoderFamilyRandomHyperplane
             || family == kEncoderFamilyCoordinateSign
-            || family == kEncoderFamilyRandomizedHadamard;
+            || family == kEncoderFamilyRandomizedHadamard
+            || family == kEncoderFamilyLearnedPairDifference;
     }
 
     [[nodiscard]] bool encoder_family_uses_seed(const std::string& family) noexcept {
@@ -513,6 +519,9 @@ namespace {
         }
         if(family == kEncoderFamilyRandomizedHadamard) {
             return 0x9E3779B9U;
+        }
+        if(family == kEncoderFamilyLearnedPairDifference) {
+            return 0xC2B2AE35U;
         }
         return 0x85EBCA6BU;
     }
@@ -2137,7 +2146,8 @@ namespace {
         const std::string& family,
         std::size_t input_dimension,
         std::size_t bit_count,
-        std::uint64_t seed
+        std::uint64_t seed,
+        const std::vector<agent_memory::Embedding>& training_vectors
     ) {
         if(family == kEncoderFamilyRandomHyperplane) {
             agent_memory::RandomHyperplaneBinaryEncoderOptions options;
@@ -2167,6 +2177,19 @@ namespace {
                 options
             );
         }
+        if(family == kEncoderFamilyLearnedPairDifference) {
+            agent_memory::LearnedProjectionTrainingOptions options;
+            options.input_dimension = input_dimension;
+            options.bit_count = bit_count;
+            options.seed = seed;
+            auto artifact = agent_memory::train_learned_projection_encoder(
+                training_vectors,
+                options
+            );
+            return std::make_unique<agent_memory::LearnedProjectionBinaryEncoder>(
+                std::move(artifact)
+            );
+        }
         throw std::runtime_error("unsupported binary encoder family: " + family);
     }
 
@@ -2192,6 +2215,16 @@ namespace {
            )
            != nullptr) {
             return agent_memory::RandomizedHadamardBinaryEncoder::compute_backend_name();
+        }
+        if(const auto* learned =
+               dynamic_cast<const agent_memory::LearnedProjectionBinaryEncoder*>(
+                   &encoder
+               )) {
+            return std::string{
+                agent_memory::vector_similarity_backend_name(
+                    learned->similarity_backend()
+                )
+            };
         }
         return "unknown";
     }
@@ -2692,6 +2725,7 @@ namespace {
         document["notes"] = nlohmann::json::array({
             "Synthetic binary rerank grid reuses one exact oracle per data seed across all bit widths.",
             "data_seeds control synthetic data; encoder_seeds control seedable encoder families.",
+            "learned_pair_difference_projection trains only on document vectors for the current data_seed; evaluation queries are not training input.",
             "coordinate_sign emits only embedding_dimensions bits and is skipped for other bit_counts.",
             "repeat_count repeats binary timings; quality is sampled once per data/encoder seed pair.",
             "Current ExactVectorIndex and contiguous exact timing use separate repeated medians.",
@@ -2738,6 +2772,7 @@ namespace {
                     state.seed_run["reports"] = nlohmann::json::array();
                     state.results_by_bit.resize(config.bit_counts.size());
                     state.reports_by_bit.resize(config.bit_counts.size());
+                    state.encoders_by_bit.resize(config.bit_counts.size());
 
                     const auto run_index = run_states.size();
                     bool state_has_tasks = false;
@@ -2821,12 +2856,16 @@ namespace {
                     );
                 }
 
-                const auto encoder = make_binary_encoder(
-                    encoder_family,
-                    run_config.embedding_dimensions,
-                    run_config.bit_count,
-                    encoder_seed
-                );
+                auto& encoder = run_state.encoders_by_bit[bit_index];
+                if(!encoder) {
+                    encoder = make_binary_encoder(
+                        encoder_family,
+                        run_config.embedding_dimensions,
+                        run_config.bit_count,
+                        encoder_seed,
+                        oracle.data.documents
+                    );
+                }
 
                 auto result = run_binary_flat_vs_float_benchmark_with_oracle(
                     run_config,
