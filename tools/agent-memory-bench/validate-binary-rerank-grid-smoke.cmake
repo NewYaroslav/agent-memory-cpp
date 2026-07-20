@@ -47,6 +47,22 @@ expect_benchmark_config_failure("binary-grid-invalid-bool-seed" "${invalid_bool_
 string(JSON invalid_string_seed_json SET "${valid_config_json}" encoder_seeds "[\"bad\"]")
 expect_benchmark_config_failure("binary-grid-invalid-string-seed" "${invalid_string_seed_json}")
 
+string(JSON invalid_encoder_family_json SET
+    "${valid_config_json}" encoder_families "[\"unknown_encoder\"]"
+)
+expect_benchmark_config_failure(
+    "binary-grid-invalid-encoder-family"
+    "${invalid_encoder_family_json}"
+)
+
+string(JSON invalid_coordinate_bits_json SET
+    "${valid_config_json}" bit_counts "[16]"
+)
+expect_benchmark_config_failure(
+    "binary-grid-invalid-coordinate-bit-counts"
+    "${invalid_coordinate_bits_json}"
+)
+
 execute_process(
     COMMAND
         "${AGENT_MEMORY_BENCH_EXE}"
@@ -70,28 +86,34 @@ if(NOT mode STREQUAL "synthetic_binary_rerank_grid")
 endif()
 
 string(JSON seed_run_count LENGTH "${grid_json}" seed_runs)
-if(NOT seed_run_count EQUAL 2)
-    message(FATAL_ERROR "expected 2 seed_runs, got ${seed_run_count}")
+if(NOT seed_run_count EQUAL 5)
+    message(FATAL_ERROR "expected 5 seed_runs, got ${seed_run_count}")
 endif()
 
 string(JSON aggregate_count LENGTH "${grid_json}" aggregate_summary)
-if(NOT aggregate_count EQUAL 2)
-    message(FATAL_ERROR "expected 2 aggregate bit summaries, got ${aggregate_count}")
+if(NOT aggregate_count EQUAL 5)
+    message(FATAL_ERROR
+        "expected 5 aggregate encoder/bit summaries, got ${aggregate_count}"
+    )
 endif()
 
+set(saw_random_8 FALSE)
+set(saw_random_16 FALSE)
+set(saw_coordinate_8 FALSE)
+set(saw_orthogonal_8 FALSE)
+set(saw_orthogonal_16 FALSE)
 math(EXPR last_aggregate "${aggregate_count} - 1")
 foreach(aggregate_index RANGE 0 ${last_aggregate})
+    string(JSON aggregate_encoder_family GET
+        "${grid_json}" aggregate_summary ${aggregate_index} encoder_family
+    )
     string(JSON aggregate_bit_count GET
         "${grid_json}" aggregate_summary ${aggregate_index} bit_count
     )
-    if(aggregate_index EQUAL 0 AND NOT aggregate_bit_count EQUAL 8)
+    if(NOT aggregate_encoder_family MATCHES
+       "^(random_hyperplane_rademacher|coordinate_sign|orthogonal_tight_frame_projection)$")
         message(FATAL_ERROR
-            "expected first aggregate bit_count 8, got ${aggregate_bit_count}"
-        )
-    endif()
-    if(aggregate_index EQUAL 1 AND NOT aggregate_bit_count EQUAL 16)
-        message(FATAL_ERROR
-            "expected second aggregate bit_count 16, got ${aggregate_bit_count}"
+            "unexpected aggregate encoder_family: ${aggregate_encoder_family}"
         )
     endif()
     string(JSON aggregate_quality_count GET
@@ -100,15 +122,37 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
     string(JSON aggregate_timing_count GET
         "${grid_json}" aggregate_summary ${aggregate_index} timing_sample_count
     )
-    if(NOT aggregate_quality_count EQUAL 2)
-        message(FATAL_ERROR
-            "expected aggregate quality_sample_count 2, got ${aggregate_quality_count}"
-        )
+    set(expected_quality_count 2)
+    set(expected_timing_count 4)
+    if(aggregate_encoder_family STREQUAL "coordinate_sign")
+        set(expected_quality_count 1)
+        set(expected_timing_count 2)
+        if(NOT aggregate_bit_count EQUAL 8)
+            message(FATAL_ERROR "coordinate_sign must only report the 8-bit dim")
+        endif()
+        set(saw_coordinate_8 TRUE)
+    elseif(aggregate_encoder_family STREQUAL "random_hyperplane_rademacher")
+        if(aggregate_bit_count EQUAL 8)
+            set(saw_random_8 TRUE)
+        elseif(aggregate_bit_count EQUAL 16)
+            set(saw_random_16 TRUE)
+        else()
+            message(FATAL_ERROR "unexpected random aggregate bit_count")
+        endif()
+    elseif(aggregate_encoder_family STREQUAL "orthogonal_tight_frame_projection")
+        if(aggregate_bit_count EQUAL 8)
+            set(saw_orthogonal_8 TRUE)
+        elseif(aggregate_bit_count EQUAL 16)
+            set(saw_orthogonal_16 TRUE)
+        else()
+            message(FATAL_ERROR "unexpected orthogonal aggregate bit_count")
+        endif()
     endif()
-    if(NOT aggregate_timing_count EQUAL 4)
-        message(FATAL_ERROR
-            "expected aggregate timing_sample_count 4, got ${aggregate_timing_count}"
-        )
+    if(NOT aggregate_quality_count EQUAL expected_quality_count)
+        message(FATAL_ERROR "aggregate quality_sample_count is inconsistent")
+    endif()
+    if(NOT aggregate_timing_count EQUAL expected_timing_count)
+        message(FATAL_ERROR "aggregate timing_sample_count is inconsistent")
     endif()
 
     string(JSON quality_stat_count GET
@@ -131,9 +175,10 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
         "${grid_json}" aggregate_summary ${aggregate_index} speed
         binary_total_speedup_vs_contiguous_exact_including_encode sample_count
     )
-    if(NOT quality_stat_count EQUAL 2 OR NOT timing_stat_count EQUAL 4
-       OR NOT current_speedup_count EQUAL 4
-       OR NOT contiguous_speedup_count EQUAL 4)
+    if(NOT quality_stat_count EQUAL expected_quality_count
+       OR NOT timing_stat_count EQUAL expected_timing_count
+       OR NOT current_speedup_count EQUAL expected_timing_count
+       OR NOT contiguous_speedup_count EQUAL expected_timing_count)
         message(FATAL_ERROR
             "aggregate nested quality/timing sample counts are inconsistent"
         )
@@ -143,8 +188,27 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
     endif()
 endforeach()
 
+if(NOT saw_random_8 OR NOT saw_random_16 OR NOT saw_coordinate_8
+   OR NOT saw_orthogonal_8 OR NOT saw_orthogonal_16)
+    message(FATAL_ERROR "aggregate summary is missing an expected encoder/bit row")
+endif()
+
 math(EXPR last_seed_run "${seed_run_count} - 1")
 foreach(seed_run_index RANGE 0 ${last_seed_run})
+    string(JSON seed_encoder_family GET
+        "${grid_json}" seed_runs ${seed_run_index} encoder_family
+    )
+    string(JSON seed_encoder_seed GET
+        "${grid_json}" seed_runs ${seed_run_index} encoder_seed
+    )
+    if(NOT seed_encoder_family MATCHES
+       "^(random_hyperplane_rademacher|coordinate_sign|orthogonal_tight_frame_projection)$")
+        message(FATAL_ERROR "unexpected seed_run encoder_family: ${seed_encoder_family}")
+    endif()
+    if(seed_encoder_family STREQUAL "coordinate_sign"
+       AND NOT seed_encoder_seed EQUAL 0)
+        message(FATAL_ERROR "coordinate_sign seed_run must use synthetic encoder_seed 0")
+    endif()
     string(JSON current_exact_total_ms GET
         "${grid_json}" seed_runs ${seed_run_index} common_exact
         current_exact_index_query_total_ms
@@ -221,22 +285,40 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
     endif()
 
     string(JSON report_count LENGTH "${grid_json}" seed_runs ${seed_run_index} reports)
-    if(NOT report_count EQUAL 2)
+    set(expected_report_count 2)
+    if(seed_encoder_family STREQUAL "coordinate_sign")
+        set(expected_report_count 1)
+    endif()
+    if(NOT report_count EQUAL expected_report_count)
         message(FATAL_ERROR
-            "expected 2 bit reports for seed_run ${seed_run_index}, got ${report_count}"
+            "unexpected bit report count for seed_run ${seed_run_index}: "
+            "${report_count}"
         )
     endif()
 
     math(EXPR last_report "${report_count} - 1")
     foreach(report_index RANGE 0 ${last_report})
+        string(JSON report_encoder_family GET
+            "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+            encoder_family
+        )
+        if(NOT report_encoder_family STREQUAL seed_encoder_family)
+            message(FATAL_ERROR "bit report encoder_family must match seed_run")
+        endif()
         string(JSON report_bit_count GET
             "${grid_json}" seed_runs ${seed_run_index} reports ${report_index} bit_count
         )
-        if(report_index EQUAL 0 AND NOT report_bit_count EQUAL 8)
-            message(FATAL_ERROR "expected first report bit_count 8")
-        endif()
-        if(report_index EQUAL 1 AND NOT report_bit_count EQUAL 16)
-            message(FATAL_ERROR "expected second report bit_count 16")
+        if(seed_encoder_family STREQUAL "coordinate_sign")
+            if(NOT report_bit_count EQUAL 8)
+                message(FATAL_ERROR "coordinate_sign report must use bit_count 8")
+            endif()
+        else()
+            if(report_index EQUAL 0 AND NOT report_bit_count EQUAL 8)
+                message(FATAL_ERROR "expected first report bit_count 8")
+            endif()
+            if(report_index EQUAL 1 AND NOT report_bit_count EQUAL 16)
+                message(FATAL_ERROR "expected second report bit_count 16")
+            endif()
         endif()
         string(JSON summary_quality_count GET
             "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
@@ -282,7 +364,7 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
             if(NOT hamming_backend MATCHES "^(lookup_table|hardware_popcount|avx2_simd)$")
                 message(FATAL_ERROR "unexpected Hamming backend: ${hamming_backend}")
             endif()
-            if(NOT encoder_backend MATCHES "^(scalar|sse2|avx2)$")
+            if(NOT encoder_backend MATCHES "^(scalar|sse2|avx2|coordinate_sign|fwht_scalar)$")
                 message(FATAL_ERROR "unexpected encoder vector backend: ${encoder_backend}")
             endif()
             string(JSON current_direct_speedup GET

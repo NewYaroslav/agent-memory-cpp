@@ -37,6 +37,18 @@ namespace {
         return options;
     }
 
+    agent_memory::OrthogonalProjectionBinaryEncoderOptions make_orthogonal_options(
+        std::size_t input_dimension,
+        std::size_t bit_count,
+        std::uint64_t seed
+    ) {
+        agent_memory::OrthogonalProjectionBinaryEncoderOptions options;
+        options.input_dimension = input_dimension;
+        options.bit_count = bit_count;
+        options.seed = seed;
+        return options;
+    }
+
     class GroupedNumpunct final : public std::numpunct<char> {
     protected:
         [[nodiscard]] char do_thousands_sep() const override {
@@ -178,6 +190,125 @@ int main() {
                .encode_sparse(3, {{1, 1.0F}, {1, 2.0F}});
        })) {
         return fail("sparse encoding must reject duplicate indices");
+    }
+
+    const agent_memory::CoordinateSignBinaryEncoder coordinate_encoder(
+        agent_memory::CoordinateSignBinaryEncoderOptions{4}
+    );
+    const auto& coordinate_info = coordinate_encoder.info();
+    if(coordinate_info.encoder_id != "coordinate_sign"
+       || coordinate_info.encoder_version != "v1"
+       || coordinate_info.input_dimension != 4
+       || coordinate_info.bit_count != 4
+       || coordinate_info.seed != 0
+       || coordinate_info.config_fingerprint != "coordinate_sign_v1:dim=4") {
+        return fail("coordinate-sign encoder info must expose its fixed-width contract");
+    }
+    const auto coordinate_signature =
+        coordinate_encoder.encode(agent_memory::Embedding{{1.0F, -2.0F, 0.0F, 3.0F}});
+    if(coordinate_signature.bit_count() != 4
+       || coordinate_signature.words().front() != 0x9ULL) {
+        return fail("coordinate-sign encoder must set only strictly positive coordinate bits");
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::CoordinateSignBinaryEncoder(
+               agent_memory::CoordinateSignBinaryEncoderOptions{0}
+           );
+       })) {
+        return fail("coordinate-sign encoder construction must reject zero dimension");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)coordinate_encoder.encode(agent_memory::Embedding{{1.0F, 2.0F}});
+       })) {
+        return fail("coordinate-sign encoder must reject dimension mismatches");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)coordinate_encoder.encode(agent_memory::Embedding{{
+               1.0F,
+               std::numeric_limits<float>::quiet_NaN(),
+               0.0F,
+               3.0F,
+           }});
+       })) {
+        return fail("coordinate-sign encoder must reject NaN input values");
+    }
+
+    const agent_memory::OrthogonalProjectionBinaryEncoder orthogonal_encoder(
+        make_orthogonal_options(3, 10, 7)
+    );
+    const auto& orthogonal_info = orthogonal_encoder.info();
+    if(orthogonal_info.encoder_id != "orthogonal_tight_frame_projection"
+       || orthogonal_info.encoder_version != "v1"
+       || orthogonal_info.input_dimension != 3
+       || orthogonal_info.bit_count != 10
+       || orthogonal_info.seed != 7
+       || orthogonal_info.config_fingerprint !=
+           "orthogonal_tight_frame_projection_v1:dim=3:padded_dim=4:bits=10:seed=7") {
+        return fail("orthogonal projection encoder info must expose its projection contract");
+    }
+    if(orthogonal_encoder.padded_dimension() != 4
+       || std::string_view{
+              agent_memory::OrthogonalProjectionBinaryEncoder::compute_backend_name()
+          } != "fwht_scalar") {
+        return fail("orthogonal projection encoder must expose its padded transform backend");
+    }
+    const auto orthogonal_signature = orthogonal_encoder.encode(vector);
+    const auto orthogonal_repeated = orthogonal_encoder.encode(vector);
+    if(orthogonal_signature != orthogonal_repeated) {
+        return fail("orthogonal projection encoder must be deterministic");
+    }
+    if(orthogonal_signature.bit_count() != 10 || orthogonal_signature.word_count() != 1) {
+        return fail("orthogonal projection encoder must use the configured bit count");
+    }
+    const auto orthogonal_prefix =
+        agent_memory::OrthogonalProjectionBinaryEncoder(
+            make_orthogonal_options(3, 8, 7)
+        ).encode(vector);
+    if((orthogonal_signature.words().front() & 0xFFULL)
+       != orthogonal_prefix.words().front()) {
+        return fail("orthogonal projection shorter signatures must be prefix-stable");
+    }
+    const auto orthogonal_zero = orthogonal_encoder.encode(zero_vector);
+    if(orthogonal_zero.words().front() != 0ULL) {
+        return fail("orthogonal projection zero-vector ties must encode as zero bits");
+    }
+    const auto orthogonal_wide =
+        agent_memory::OrthogonalProjectionBinaryEncoder(
+            make_orthogonal_options(3, 70, 7)
+        ).encode(vector);
+    if(orthogonal_wide.bit_count() != 70 || orthogonal_wide.word_count() != 2) {
+        return fail("orthogonal projection wide signatures must expose packed storage");
+    }
+    if((orthogonal_wide.words().back() & ~meaningful_tail_mask) != 0ULL) {
+        return fail("orthogonal projection signatures must keep unused tail bits cleared");
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::OrthogonalProjectionBinaryEncoder(
+               make_orthogonal_options(0, 16, 7)
+           );
+       })) {
+        return fail("orthogonal projection construction must reject zero dimension");
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::OrthogonalProjectionBinaryEncoder(
+               make_orthogonal_options(3, 0, 7)
+           );
+       })) {
+        return fail("orthogonal projection construction must reject zero bit count");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)orthogonal_encoder.encode(agent_memory::Embedding{{1.0F, 2.0F}});
+       })) {
+        return fail("orthogonal projection encoder must reject dimension mismatches");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)orthogonal_encoder.encode(agent_memory::Embedding{{
+               1.0F,
+               -2.0F,
+               std::numeric_limits<float>::infinity(),
+           }});
+       })) {
+        return fail("orthogonal projection encoder must reject non-finite input values");
     }
 
     return 0;

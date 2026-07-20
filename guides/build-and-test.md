@@ -85,6 +85,18 @@ controls repeated timing of two common exact baselines. Quality is sampled once
 per data/encoder seed pair; timing repeats are not treated as independent
 quality observations.
 
+The optional `encoder_families` list selects which zero-training binary
+encoders participate in the grid. Supported values are:
+
+- `random_hyperplane_rademacher`;
+- `coordinate_sign`;
+- `orthogonal_tight_frame_projection`.
+
+If omitted, the grid keeps the historical random-hyperplane-only behavior.
+`coordinate_sign` is unseeded and emits exactly `embedding_dimensions` bits, so
+the runner skips other `bit_counts` for that family. The random-hyperplane and
+orthogonal/tight-frame families use every configured `encoder_seed`.
+
 The two exact baselines answer different questions:
 
 - `current_exact_index` measures the existing `ExactVectorIndex`, including its

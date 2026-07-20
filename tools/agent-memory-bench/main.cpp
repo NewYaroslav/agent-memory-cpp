@@ -4,8 +4,11 @@
 #include <agent_memory/eval/IRetrieverAdapter.hpp>
 #include <agent_memory/eval/RetrievalEvalRunner.hpp>
 #include <agent_memory/index/BinarySignatureInfo.hpp>
+#include <agent_memory/index/CoordinateSignBinaryEncoder.hpp>
 #include <agent_memory/index/ExactVectorIndex.hpp>
 #include <agent_memory/index/FlatBinarySignatureIndex.hpp>
+#include <agent_memory/index/IBinarySignatureEncoder.hpp>
+#include <agent_memory/index/OrthogonalProjectionBinaryEncoder.hpp>
 #include <agent_memory/index/RandomHyperplaneBinaryEncoder.hpp>
 #include <agent_memory/index/VectorSimilarityComputer.hpp>
 #include <agent_memory/retrieval/ExactLexicalRetriever.hpp>
@@ -25,6 +28,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <random>
 #include <set>
@@ -58,6 +62,11 @@ namespace {
     constexpr std::string_view kModeSyntheticBinaryRerankGrid =
         "synthetic_binary_rerank_grid";
     constexpr std::string_view kBaselineNameBm25Exact = "bm25_exact";
+    constexpr std::string_view kEncoderFamilyRandomHyperplane =
+        "random_hyperplane_rademacher";
+    constexpr std::string_view kEncoderFamilyCoordinateSign = "coordinate_sign";
+    constexpr std::string_view kEncoderFamilyOrthogonalProjection =
+        "orthogonal_tight_frame_projection";
 
     struct BenchmarkConfig final {
         std::string mode{kModeRandomExact};
@@ -78,6 +87,7 @@ namespace {
         std::vector<std::uint32_t> seeds;
         std::vector<std::uint32_t> data_seeds;
         std::vector<std::uint32_t> encoder_seeds;
+        std::vector<std::string> encoder_families;
         std::size_t repeat_count = 1;
         std::size_t exact_timing_repeat_count = 1;
         bool randomize_execution_order = false;
@@ -315,6 +325,49 @@ namespace {
         return baselines;
     }
 
+    [[nodiscard]] std::vector<std::string> read_optional_string_list(
+        const nlohmann::json& document,
+        std::string_view field
+    ) {
+        const auto* node = find_optional(document, field);
+        if(node == nullptr) {
+            return {};
+        }
+        if(!node->is_array() || node->empty()) {
+            throw std::runtime_error(
+                "config field '" + std::string{field}
+                + "' must be a non-empty string array"
+            );
+        }
+
+        std::vector<std::string> values;
+        values.reserve(node->size());
+        std::set<std::string> seen;
+        for(const auto& entry : *node) {
+            if(!entry.is_string()) {
+                throw std::runtime_error(
+                    "config field '" + std::string{field}
+                    + "' entries must be strings"
+                );
+            }
+            auto value = entry.get<std::string>();
+            if(value.empty()) {
+                throw std::runtime_error(
+                    "config field '" + std::string{field}
+                    + "' entries must not be empty"
+                );
+            }
+            if(!seen.insert(value).second) {
+                throw std::runtime_error(
+                    "config field '" + std::string{field}
+                    + "' must not contain duplicate values"
+                );
+            }
+            values.push_back(std::move(value));
+        }
+        return values;
+    }
+
     [[nodiscard]] std::vector<std::size_t> read_optional_size_list(
         const nlohmann::json& document,
         std::string_view field
@@ -427,6 +480,61 @@ namespace {
             if(limit > config.document_count) {
                 throw std::runtime_error(
                     "config field 'rerank_candidate_limits' entries must not exceed document_count"
+                );
+            }
+        }
+    }
+
+    [[nodiscard]] bool is_supported_encoder_family(const std::string& family) noexcept {
+        return family == kEncoderFamilyRandomHyperplane
+            || family == kEncoderFamilyCoordinateSign
+            || family == kEncoderFamilyOrthogonalProjection;
+    }
+
+    [[nodiscard]] bool encoder_family_uses_seed(const std::string& family) noexcept {
+        return family != kEncoderFamilyCoordinateSign;
+    }
+
+    [[nodiscard]] std::uint32_t encoder_family_salt(const std::string& family) noexcept {
+        if(family == kEncoderFamilyRandomHyperplane) {
+            return 0xA511E9B3U;
+        }
+        if(family == kEncoderFamilyCoordinateSign) {
+            return 0x63D83595U;
+        }
+        if(family == kEncoderFamilyOrthogonalProjection) {
+            return 0x9E3779B9U;
+        }
+        return 0x85EBCA6BU;
+    }
+
+    [[nodiscard]] bool encoder_family_supports_bit_count(
+        const std::string& family,
+        std::size_t input_dimension,
+        std::size_t bit_count
+    ) noexcept {
+        if(family == kEncoderFamilyCoordinateSign) {
+            return bit_count == input_dimension;
+        }
+        return true;
+    }
+
+    void validate_encoder_families(const BenchmarkConfig& config) {
+        for(const auto& family : config.encoder_families) {
+            if(!is_supported_encoder_family(family)) {
+                throw std::runtime_error(
+                    "unsupported binary encoder family: " + family
+                );
+            }
+            if(family == kEncoderFamilyCoordinateSign
+               && std::find(
+                   config.bit_counts.begin(),
+                   config.bit_counts.end(),
+                   config.embedding_dimensions
+               ) == config.bit_counts.end()) {
+                throw std::runtime_error(
+                    "coordinate_sign encoder family requires bit_counts to include "
+                    "embedding_dimensions"
                 );
             }
         }
@@ -574,6 +682,14 @@ namespace {
                 "randomize_execution_order",
                 false
             );
+            config.encoder_families = read_optional_string_list(
+                document,
+                "encoder_families"
+            );
+            if(config.encoder_families.empty()) {
+                config.encoder_families = {std::string{kEncoderFamilyRandomHyperplane}};
+            }
+            validate_encoder_families(config);
         }
         if(binary_flat_vs_float || binary_rerank_grid) {
             if(config.rerank_candidate_limits.empty()) {
@@ -1508,100 +1624,58 @@ namespace {
         const std::vector<nlohmann::json>& seed_runs
     ) {
         nlohmann::json aggregate = nlohmann::json::array();
-        for(const auto bit_count : config.bit_counts) {
-            std::vector<double> direct_recall;
-            std::vector<double> top1;
-            std::vector<double> binary_total_ms;
-            std::vector<double> direct_current_exact_speedup;
-            std::vector<double> direct_contiguous_exact_speedup;
-            std::vector<std::vector<double>> coverage_by_candidate(
-                config.rerank_candidate_limits.size()
-            );
-            std::vector<std::vector<double>> reranked_recall_by_candidate(
-                config.rerank_candidate_limits.size()
-            );
-            std::vector<std::vector<double>> reranked_top1_by_candidate(
-                config.rerank_candidate_limits.size()
-            );
-            std::vector<std::vector<double>> total_ms_by_candidate(
-                config.rerank_candidate_limits.size()
-            );
-            std::vector<std::vector<double>> current_exact_speedup_by_candidate(
-                config.rerank_candidate_limits.size()
-            );
-            std::vector<std::vector<double>> contiguous_exact_speedup_by_candidate(
-                config.rerank_candidate_limits.size()
-            );
+        for(const auto& encoder_family : config.encoder_families) {
+            for(const auto bit_count : config.bit_counts) {
+                std::vector<double> direct_recall;
+                std::vector<double> top1;
+                std::vector<double> binary_total_ms;
+                std::vector<double> direct_current_exact_speedup;
+                std::vector<double> direct_contiguous_exact_speedup;
+                std::vector<std::vector<double>> coverage_by_candidate(
+                    config.rerank_candidate_limits.size()
+                );
+                std::vector<std::vector<double>> reranked_recall_by_candidate(
+                    config.rerank_candidate_limits.size()
+                );
+                std::vector<std::vector<double>> reranked_top1_by_candidate(
+                    config.rerank_candidate_limits.size()
+                );
+                std::vector<std::vector<double>> total_ms_by_candidate(
+                    config.rerank_candidate_limits.size()
+                );
+                std::vector<std::vector<double>> current_exact_speedup_by_candidate(
+                    config.rerank_candidate_limits.size()
+                );
+                std::vector<std::vector<double>> contiguous_exact_speedup_by_candidate(
+                    config.rerank_candidate_limits.size()
+                );
 
-            for(const auto& seed_run : seed_runs) {
-                for(const auto& bit_report : seed_run.at("reports")) {
-                    if(bit_report.at("bit_count").get<std::size_t>() != bit_count) {
+                for(const auto& seed_run : seed_runs) {
+                    if(seed_run.at("encoder_family").get<std::string>()
+                       != encoder_family) {
                         continue;
                     }
-                    const auto& repeats = bit_report.at("repeats");
-                    if(repeats.empty()) {
-                        throw std::runtime_error(
-                            "binary grid aggregate found an empty repeat collection"
-                        );
-                    }
-                    const auto& quality_report = repeats.front();
-                    direct_recall.push_back(
-                        quality_report.at("quality")
-                            .at("mean_recall_at_k_vs_exact")
-                            .get<double>()
-                    );
-                    top1.push_back(
-                        quality_report.at("quality").at("top1_agreement").get<double>()
-                    );
-                    for(const auto& rerank : quality_report.at("rerank")) {
-                        const auto candidate_limit =
-                            rerank.at("candidate_limit").get<std::size_t>();
-                        const auto limit_it = std::find(
-                            config.rerank_candidate_limits.begin(),
-                            config.rerank_candidate_limits.end(),
-                            candidate_limit
-                        );
-                        if(limit_it == config.rerank_candidate_limits.end()) {
+                    for(const auto& bit_report : seed_run.at("reports")) {
+                        if(bit_report.at("bit_count").get<std::size_t>() != bit_count) {
+                            continue;
+                        }
+                        const auto& repeats = bit_report.at("repeats");
+                        if(repeats.empty()) {
                             throw std::runtime_error(
-                                "binary grid aggregate found unknown candidate_limit"
+                                "binary grid aggregate found an empty repeat collection"
                             );
                         }
-                        const auto candidate_index = static_cast<std::size_t>(
-                            std::distance(config.rerank_candidate_limits.begin(), limit_it)
-                        );
-                        coverage_by_candidate[candidate_index].push_back(
-                            rerank.at("exact_top_k_candidate_coverage").get<double>()
-                        );
-                        reranked_recall_by_candidate[candidate_index].push_back(
-                            rerank.at("reranked_recall_at_k_vs_exact").get<double>()
-                        );
-                        reranked_top1_by_candidate[candidate_index].push_back(
-                            rerank.at("reranked_top1_agreement").get<double>()
-                        );
-                    }
-
-                    for(const auto& repeat_report : repeats) {
-                        binary_total_ms.push_back(
-                            repeat_report.at("speed")
-                                .at("binary_query_total_ms")
+                        const auto& quality_report = repeats.front();
+                        direct_recall.push_back(
+                            quality_report.at("quality")
+                                .at("mean_recall_at_k_vs_exact")
                                 .get<double>()
                         );
-                        direct_current_exact_speedup.push_back(
-                            repeat_report.at("speed")
-                                .at(
-                                    "binary_total_speedup_vs_current_exact_index_including_encode"
-                                )
+                        top1.push_back(
+                            quality_report.at("quality").at("top1_agreement")
                                 .get<double>()
                         );
-                        direct_contiguous_exact_speedup.push_back(
-                            repeat_report.at("speed")
-                                .at(
-                                    "binary_total_speedup_vs_contiguous_exact_including_encode"
-                                )
-                                .get<double>()
-                        );
-
-                        for(const auto& rerank : repeat_report.at("rerank")) {
+                        for(const auto& rerank : quality_report.at("rerank")) {
                             const auto candidate_limit =
                                 rerank.at("candidate_limit").get<std::size_t>();
                             const auto limit_it = std::find(
@@ -1620,60 +1694,119 @@ namespace {
                                     limit_it
                                 )
                             );
-                            total_ms_by_candidate[candidate_index].push_back(
-                                rerank.at("total_ms").get<double>()
+                            coverage_by_candidate[candidate_index].push_back(
+                                rerank.at("exact_top_k_candidate_coverage").get<double>()
                             );
-                            current_exact_speedup_by_candidate[candidate_index].push_back(
-                                rerank.at("total_speedup_vs_current_exact_index")
+                            reranked_recall_by_candidate[candidate_index].push_back(
+                                rerank.at("reranked_recall_at_k_vs_exact").get<double>()
+                            );
+                            reranked_top1_by_candidate[candidate_index].push_back(
+                                rerank.at("reranked_top1_agreement").get<double>()
+                            );
+                        }
+
+                        for(const auto& repeat_report : repeats) {
+                            binary_total_ms.push_back(
+                                repeat_report.at("speed")
+                                    .at("binary_query_total_ms")
                                     .get<double>()
                             );
-                            contiguous_exact_speedup_by_candidate[candidate_index].push_back(
-                                rerank.at("total_speedup_vs_contiguous_exact")
+                            direct_current_exact_speedup.push_back(
+                                repeat_report.at("speed")
+                                    .at(
+                                        "binary_total_speedup_vs_current_exact_index_including_encode"
+                                    )
                                     .get<double>()
                             );
+                            direct_contiguous_exact_speedup.push_back(
+                                repeat_report.at("speed")
+                                    .at(
+                                        "binary_total_speedup_vs_contiguous_exact_including_encode"
+                                    )
+                                    .get<double>()
+                            );
+
+                            for(const auto& rerank : repeat_report.at("rerank")) {
+                                const auto candidate_limit =
+                                    rerank.at("candidate_limit").get<std::size_t>();
+                                const auto limit_it = std::find(
+                                    config.rerank_candidate_limits.begin(),
+                                    config.rerank_candidate_limits.end(),
+                                    candidate_limit
+                                );
+                                if(limit_it == config.rerank_candidate_limits.end()) {
+                                    throw std::runtime_error(
+                                        "binary grid aggregate found unknown candidate_limit"
+                                    );
+                                }
+                                const auto candidate_index = static_cast<std::size_t>(
+                                    std::distance(
+                                        config.rerank_candidate_limits.begin(),
+                                        limit_it
+                                    )
+                                );
+                                total_ms_by_candidate[candidate_index].push_back(
+                                    rerank.at("total_ms").get<double>()
+                                );
+                                current_exact_speedup_by_candidate[candidate_index]
+                                    .push_back(
+                                        rerank.at("total_speedup_vs_current_exact_index")
+                                            .get<double>()
+                                    );
+                                contiguous_exact_speedup_by_candidate[candidate_index]
+                                    .push_back(
+                                        rerank.at("total_speedup_vs_contiguous_exact")
+                                            .get<double>()
+                                    );
+                            }
                         }
                     }
                 }
-            }
 
-            nlohmann::json bit_summary;
-            bit_summary["bit_count"] = bit_count;
-            bit_summary["quality_sample_count"] = direct_recall.size();
-            bit_summary["timing_sample_count"] = binary_total_ms.size();
-            bit_summary["quality"] = {
-                {"mean_recall_at_k_vs_exact", samples_to_stats_json(direct_recall)},
-                {"top1_agreement", samples_to_stats_json(top1)}
-            };
-            bit_summary["speed"] = {
-                {"binary_query_total_ms", samples_to_stats_json(binary_total_ms)},
-                {"binary_total_speedup_vs_current_exact_index_including_encode",
-                    samples_to_stats_json(direct_current_exact_speedup)},
-                {"binary_total_speedup_vs_contiguous_exact_including_encode",
-                    samples_to_stats_json(direct_contiguous_exact_speedup)}
-            };
-            bit_summary["rerank"] = nlohmann::json::array();
-            for(std::size_t index = 0; index < config.rerank_candidate_limits.size();
-                ++index) {
-                bit_summary["rerank"].push_back({
-                    {"candidate_limit", config.rerank_candidate_limits[index]},
-                    {"exact_top_k_candidate_coverage",
-                        samples_to_stats_json(coverage_by_candidate[index])},
-                    {"reranked_recall_at_k_vs_exact",
-                        samples_to_stats_json(reranked_recall_by_candidate[index])},
-                    {"reranked_top1_agreement",
-                        samples_to_stats_json(reranked_top1_by_candidate[index])},
-                    {"total_ms", samples_to_stats_json(total_ms_by_candidate[index])},
-                    {"total_speedup_vs_current_exact_index",
-                        samples_to_stats_json(
-                            current_exact_speedup_by_candidate[index]
-                        )},
-                    {"total_speedup_vs_contiguous_exact",
-                        samples_to_stats_json(
-                            contiguous_exact_speedup_by_candidate[index]
-                        )}
-                });
+                if(direct_recall.empty()) {
+                    continue;
+                }
+
+                nlohmann::json bit_summary;
+                bit_summary["encoder_family"] = encoder_family;
+                bit_summary["bit_count"] = bit_count;
+                bit_summary["quality_sample_count"] = direct_recall.size();
+                bit_summary["timing_sample_count"] = binary_total_ms.size();
+                bit_summary["quality"] = {
+                    {"mean_recall_at_k_vs_exact", samples_to_stats_json(direct_recall)},
+                    {"top1_agreement", samples_to_stats_json(top1)}
+                };
+                bit_summary["speed"] = {
+                    {"binary_query_total_ms", samples_to_stats_json(binary_total_ms)},
+                    {"binary_total_speedup_vs_current_exact_index_including_encode",
+                        samples_to_stats_json(direct_current_exact_speedup)},
+                    {"binary_total_speedup_vs_contiguous_exact_including_encode",
+                        samples_to_stats_json(direct_contiguous_exact_speedup)}
+                };
+                bit_summary["rerank"] = nlohmann::json::array();
+                for(std::size_t index = 0; index < config.rerank_candidate_limits.size();
+                    ++index) {
+                    bit_summary["rerank"].push_back({
+                        {"candidate_limit", config.rerank_candidate_limits[index]},
+                        {"exact_top_k_candidate_coverage",
+                            samples_to_stats_json(coverage_by_candidate[index])},
+                        {"reranked_recall_at_k_vs_exact",
+                            samples_to_stats_json(reranked_recall_by_candidate[index])},
+                        {"reranked_top1_agreement",
+                            samples_to_stats_json(reranked_top1_by_candidate[index])},
+                        {"total_ms", samples_to_stats_json(total_ms_by_candidate[index])},
+                        {"total_speedup_vs_current_exact_index",
+                            samples_to_stats_json(
+                                current_exact_speedup_by_candidate[index]
+                            )},
+                        {"total_speedup_vs_contiguous_exact",
+                            samples_to_stats_json(
+                                contiguous_exact_speedup_by_candidate[index]
+                            )}
+                    });
+                }
+                aggregate.push_back(std::move(bit_summary));
             }
-            aggregate.push_back(std::move(bit_summary));
         }
         return aggregate;
     }
@@ -1991,9 +2124,72 @@ namespace {
         return oracle;
     }
 
+    [[nodiscard]] std::unique_ptr<agent_memory::IBinarySignatureEncoder> make_binary_encoder(
+        const std::string& family,
+        std::size_t input_dimension,
+        std::size_t bit_count,
+        std::uint64_t seed
+    ) {
+        if(family == kEncoderFamilyRandomHyperplane) {
+            agent_memory::RandomHyperplaneBinaryEncoderOptions options;
+            options.input_dimension = input_dimension;
+            options.bit_count = bit_count;
+            options.seed = seed;
+            return std::make_unique<agent_memory::RandomHyperplaneBinaryEncoder>(
+                options
+            );
+        }
+        if(family == kEncoderFamilyCoordinateSign) {
+            if(bit_count != input_dimension) {
+                throw std::runtime_error(
+                    "coordinate_sign encoder supports only bit_count == embedding_dimensions"
+                );
+            }
+            return std::make_unique<agent_memory::CoordinateSignBinaryEncoder>(
+                agent_memory::CoordinateSignBinaryEncoderOptions{input_dimension}
+            );
+        }
+        if(family == kEncoderFamilyOrthogonalProjection) {
+            agent_memory::OrthogonalProjectionBinaryEncoderOptions options;
+            options.input_dimension = input_dimension;
+            options.bit_count = bit_count;
+            options.seed = seed;
+            return std::make_unique<agent_memory::OrthogonalProjectionBinaryEncoder>(
+                options
+            );
+        }
+        throw std::runtime_error("unsupported binary encoder family: " + family);
+    }
+
+    [[nodiscard]] std::string binary_encoder_compute_backend_name(
+        const agent_memory::IBinarySignatureEncoder& encoder
+    ) {
+        if(const auto* random =
+               dynamic_cast<const agent_memory::RandomHyperplaneBinaryEncoder*>(
+                   &encoder
+               )) {
+            return std::string{
+                agent_memory::vector_similarity_backend_name(
+                    random->similarity_backend()
+                )
+            };
+        }
+        if(dynamic_cast<const agent_memory::CoordinateSignBinaryEncoder*>(&encoder)
+           != nullptr) {
+            return "coordinate_sign";
+        }
+        if(dynamic_cast<const agent_memory::OrthogonalProjectionBinaryEncoder*>(
+               &encoder
+           )
+           != nullptr) {
+            return agent_memory::OrthogonalProjectionBinaryEncoder::compute_backend_name();
+        }
+        return "unknown";
+    }
+
     [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark_with_oracle(
         const BenchmarkConfig& config,
-        const agent_memory::RandomHyperplaneBinaryEncoder& encoder,
+        const agent_memory::IBinarySignatureEncoder& encoder,
         const BinaryBenchmarkOracle& oracle
     ) {
         const auto signature_info = agent_memory::make_binary_signature_info(
@@ -2029,9 +2225,8 @@ namespace {
         result.binary_hamming_backend = std::string(
             agent_memory::hamming_distance_backend_name(*binary_index.hamming_backend())
         );
-        result.binary_encoder_similarity_backend = std::string(
-            agent_memory::vector_similarity_backend_name(encoder.similarity_backend())
-        );
+        result.binary_encoder_similarity_backend =
+            binary_encoder_compute_backend_name(encoder);
         result.current_exact_query = oracle.current_exact_query;
         result.current_exact_query_total_ms_samples =
             oracle.current_exact_query_total_ms_samples;
@@ -2179,7 +2374,7 @@ namespace {
 
     [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark(
         const BenchmarkConfig& config,
-        const agent_memory::RandomHyperplaneBinaryEncoder& encoder
+        const agent_memory::IBinarySignatureEncoder& encoder
     ) {
         const auto oracle = prepare_binary_benchmark_oracle(config);
         return run_binary_flat_vs_float_benchmark_with_oracle(config, encoder, oracle);
@@ -2470,6 +2665,7 @@ namespace {
         document["seeds"] = config.seeds;
         document["data_seeds"] = config.data_seeds;
         document["encoder_seeds"] = config.encoder_seeds;
+        document["encoder_families"] = config.encoder_families;
         document["repeat_count"] = config.repeat_count;
         document["exact_timing_repeat_count"] = config.exact_timing_repeat_count;
         document["randomize_execution_order"] = config.randomize_execution_order;
@@ -2486,7 +2682,8 @@ namespace {
         }
         document["notes"] = nlohmann::json::array({
             "Synthetic binary rerank grid reuses one exact oracle per data seed across all bit widths.",
-            "data_seeds control synthetic data; encoder_seeds control random hyperplanes.",
+            "data_seeds control synthetic data; encoder_seeds control seedable encoder families.",
+            "coordinate_sign emits only embedding_dimensions bits and is skipped for other bit_counts.",
             "repeat_count repeats binary timings; quality is sampled once per data/encoder seed pair.",
             "Current ExactVectorIndex and contiguous exact timing use separate repeated medians.",
             "Timing statistics are still local in-process measurements.",
@@ -2510,137 +2707,169 @@ namespace {
                       << " contiguous_exact_ms="
                       << oracle.contiguous_exact_query.total_ms << '\n';
 
-            for(const auto encoder_seed : config.encoder_seeds) {
-                nlohmann::json seed_run;
-                seed_run["data_seed"] = data_seed;
-                seed_run["encoder_seed"] = encoder_seed;
-                seed_run["common_exact"] = common_exact_oracle_to_json(
-                    data_config,
-                    oracle
-                );
-                seed_run["reports"] = nlohmann::json::array();
-
-                std::vector<BinaryGridTask> tasks;
-                tasks.reserve(config.bit_counts.size() * config.repeat_count);
-                for(const auto bit_count : config.bit_counts) {
-                    for(std::size_t repeat = 0; repeat < config.repeat_count; ++repeat) {
-                        tasks.push_back(BinaryGridTask{bit_count, repeat});
-                    }
-                }
-                if(config.randomize_execution_order) {
-                    std::mt19937 generator{
-                        data_seed ^ (encoder_seed * 0x9E3779B9U)
-                        ^ static_cast<std::uint32_t>(config.bit_counts.size())
-                    };
-                    std::shuffle(tasks.begin(), tasks.end(), generator);
-                }
-
-                std::vector<std::vector<BinaryFlatVsFloatResult>> results_by_bit(
-                    config.bit_counts.size()
-                );
-                std::vector<std::vector<nlohmann::json>> reports_by_bit(
-                    config.bit_counts.size()
-                );
-                for(std::size_t bit_index = 0; bit_index < config.bit_counts.size();
-                    ++bit_index) {
-                    results_by_bit[bit_index].resize(config.repeat_count);
-                    reports_by_bit[bit_index].resize(config.repeat_count);
-                }
-
-                for(const auto& task : tasks) {
-                    const auto bit_it = std::find(
-                        config.bit_counts.begin(),
-                        config.bit_counts.end(),
-                        task.bit_count
-                    );
-                    if(bit_it == config.bit_counts.end()) {
-                        throw std::runtime_error("binary grid task has unknown bit_count");
-                    }
-                    const auto bit_index = static_cast<std::size_t>(
-                        std::distance(config.bit_counts.begin(), bit_it)
-                    );
-
-                    BenchmarkConfig run_config = data_config;
-                    run_config.mode = std::string{kModeSyntheticBinaryFlatVsFloat};
-                    run_config.seed = encoder_seed;
-                    run_config.bit_count = task.bit_count;
-                    run_config.benchmark_name =
-                        config.benchmark_name + "_data" + std::to_string(data_seed)
-                        + "_encoder" + std::to_string(encoder_seed)
-                        + "_" + std::to_string(task.bit_count) + "b"
-                        + "_r" + std::to_string(task.repeat_index);
-                    run_config.rerank_candidate_limits = config.rerank_candidate_limits;
-                    if(config.randomize_execution_order) {
-                        std::mt19937 limit_generator{
-                            data_seed ^ (encoder_seed * 0x85EBCA6BU)
-                            ^ static_cast<std::uint32_t>(task.bit_count)
-                            ^ static_cast<std::uint32_t>(task.repeat_index)
-                        };
-                        std::shuffle(
-                            run_config.rerank_candidate_limits.begin(),
-                            run_config.rerank_candidate_limits.end(),
-                            limit_generator
-                        );
-                    }
-
-                    agent_memory::RandomHyperplaneBinaryEncoderOptions encoder_options;
-                    encoder_options.input_dimension = run_config.embedding_dimensions;
-                    encoder_options.bit_count = run_config.bit_count;
-                    encoder_options.seed = encoder_seed;
-                    const agent_memory::RandomHyperplaneBinaryEncoder encoder(
-                        encoder_options
-                    );
-
-                    auto result = run_binary_flat_vs_float_benchmark_with_oracle(
-                        run_config,
-                        encoder,
+            for(const auto& encoder_family : config.encoder_families) {
+                const std::vector<std::uint32_t> active_encoder_seeds =
+                    encoder_family_uses_seed(encoder_family)
+                        ? config.encoder_seeds
+                        : std::vector<std::uint32_t>{0};
+                for(const auto encoder_seed : active_encoder_seeds) {
+                    nlohmann::json seed_run;
+                    seed_run["data_seed"] = data_seed;
+                    seed_run["encoder_family"] = encoder_family;
+                    seed_run["encoder_seed"] = encoder_seed;
+                    seed_run["common_exact"] = common_exact_oracle_to_json(
+                        data_config,
                         oracle
                     );
-                    sort_rerank_candidates_by_limit(result);
-                    results_by_bit[bit_index][task.repeat_index] = result;
+                    seed_run["reports"] = nlohmann::json::array();
 
-                    auto report = binary_flat_vs_float_report_to_json(
-                        run_config,
-                        encoder.info(),
-                        result
-                    );
-                    report["repeat_index"] = task.repeat_index;
-                    reports_by_bit[bit_index][task.repeat_index] = std::move(report);
-                }
-
-                for(std::size_t bit_index = 0; bit_index < config.bit_counts.size();
-                    ++bit_index) {
-                    const auto bit_count = config.bit_counts[bit_index];
-                    BenchmarkConfig summary_config = data_config;
-                    summary_config.seed = encoder_seed;
-                    summary_config.bit_count = bit_count;
-                    summary_config.rerank_candidate_limits =
-                        config.rerank_candidate_limits;
-
-                    nlohmann::json bit_report;
-                    bit_report["bit_count"] = bit_count;
-                    bit_report["repeat_count"] = results_by_bit[bit_index].size();
-                    bit_report["summary"] = summarize_binary_grid_repeats(
-                        summary_config,
-                        results_by_bit[bit_index]
-                    );
-                    bit_report["repeats"] = reports_by_bit[bit_index];
-                    if(results_by_bit[bit_index].size() == 1) {
-                        bit_report["report"] = bit_report["repeats"].front();
+                    std::vector<BinaryGridTask> tasks;
+                    tasks.reserve(config.bit_counts.size() * config.repeat_count);
+                    for(const auto bit_count : config.bit_counts) {
+                        if(!encoder_family_supports_bit_count(
+                               encoder_family,
+                               config.embedding_dimensions,
+                               bit_count
+                           )) {
+                            continue;
+                        }
+                        for(std::size_t repeat = 0; repeat < config.repeat_count;
+                            ++repeat) {
+                            tasks.push_back(BinaryGridTask{bit_count, repeat});
+                        }
                     }
-                    seed_run["reports"].push_back(std::move(bit_report));
+                    if(tasks.empty()) {
+                        continue;
+                    }
+                    if(config.randomize_execution_order) {
+                        std::mt19937 generator{
+                            data_seed ^ (encoder_seed * 0x9E3779B9U)
+                            ^ encoder_family_salt(encoder_family)
+                            ^ static_cast<std::uint32_t>(config.bit_counts.size())
+                        };
+                        std::shuffle(tasks.begin(), tasks.end(), generator);
+                    }
 
-                    const auto& last_result = results_by_bit[bit_index].back();
-                    std::cout << "  encoder_seed=" << encoder_seed
-                              << " bits=" << bit_count
-                              << " repeats=" << results_by_bit[bit_index].size()
-                              << " direct_recall@k="
-                              << last_result.mean_recall_at_k_vs_exact
-                              << " direct_top1=" << last_result.top1_agreement
-                              << '\n';
+                    std::vector<std::vector<BinaryFlatVsFloatResult>> results_by_bit(
+                        config.bit_counts.size()
+                    );
+                    std::vector<std::vector<nlohmann::json>> reports_by_bit(
+                        config.bit_counts.size()
+                    );
+                    for(std::size_t bit_index = 0; bit_index < config.bit_counts.size();
+                        ++bit_index) {
+                        if(encoder_family_supports_bit_count(
+                               encoder_family,
+                               config.embedding_dimensions,
+                               config.bit_counts[bit_index]
+                           )) {
+                            results_by_bit[bit_index].resize(config.repeat_count);
+                            reports_by_bit[bit_index].resize(config.repeat_count);
+                        }
+                    }
+
+                    for(const auto& task : tasks) {
+                        const auto bit_it = std::find(
+                            config.bit_counts.begin(),
+                            config.bit_counts.end(),
+                            task.bit_count
+                        );
+                        if(bit_it == config.bit_counts.end()) {
+                            throw std::runtime_error("binary grid task has unknown bit_count");
+                        }
+                        const auto bit_index = static_cast<std::size_t>(
+                            std::distance(config.bit_counts.begin(), bit_it)
+                        );
+
+                        BenchmarkConfig run_config = data_config;
+                        run_config.mode = std::string{kModeSyntheticBinaryFlatVsFloat};
+                        run_config.seed = encoder_seed;
+                        run_config.bit_count = task.bit_count;
+                        run_config.benchmark_name =
+                            config.benchmark_name + "_data" + std::to_string(data_seed)
+                            + "_" + encoder_family
+                            + "_encoder" + std::to_string(encoder_seed)
+                            + "_" + std::to_string(task.bit_count) + "b"
+                            + "_r" + std::to_string(task.repeat_index);
+                        run_config.rerank_candidate_limits = config.rerank_candidate_limits;
+                        if(config.randomize_execution_order) {
+                            std::mt19937 limit_generator{
+                                data_seed ^ (encoder_seed * 0x85EBCA6BU)
+                                ^ encoder_family_salt(encoder_family)
+                                ^ static_cast<std::uint32_t>(task.bit_count)
+                                ^ static_cast<std::uint32_t>(task.repeat_index)
+                            };
+                            std::shuffle(
+                                run_config.rerank_candidate_limits.begin(),
+                                run_config.rerank_candidate_limits.end(),
+                                limit_generator
+                            );
+                        }
+
+                        const auto encoder = make_binary_encoder(
+                            encoder_family,
+                            run_config.embedding_dimensions,
+                            run_config.bit_count,
+                            encoder_seed
+                        );
+
+                        auto result = run_binary_flat_vs_float_benchmark_with_oracle(
+                            run_config,
+                            *encoder,
+                            oracle
+                        );
+                        sort_rerank_candidates_by_limit(result);
+                        results_by_bit[bit_index][task.repeat_index] = result;
+
+                        auto report = binary_flat_vs_float_report_to_json(
+                            run_config,
+                            encoder->info(),
+                            result
+                        );
+                        report["repeat_index"] = task.repeat_index;
+                        reports_by_bit[bit_index][task.repeat_index] =
+                            std::move(report);
+                    }
+
+                    for(std::size_t bit_index = 0; bit_index < config.bit_counts.size();
+                        ++bit_index) {
+                        if(results_by_bit[bit_index].empty()) {
+                            continue;
+                        }
+                        const auto bit_count = config.bit_counts[bit_index];
+                        BenchmarkConfig summary_config = data_config;
+                        summary_config.seed = encoder_seed;
+                        summary_config.bit_count = bit_count;
+                        summary_config.rerank_candidate_limits =
+                            config.rerank_candidate_limits;
+
+                        nlohmann::json bit_report;
+                        bit_report["encoder_family"] = encoder_family;
+                        bit_report["bit_count"] = bit_count;
+                        bit_report["repeat_count"] = results_by_bit[bit_index].size();
+                        bit_report["summary"] = summarize_binary_grid_repeats(
+                            summary_config,
+                            results_by_bit[bit_index]
+                        );
+                        bit_report["repeats"] = reports_by_bit[bit_index];
+                        if(results_by_bit[bit_index].size() == 1) {
+                            bit_report["report"] = bit_report["repeats"].front();
+                        }
+                        seed_run["reports"].push_back(std::move(bit_report));
+
+                        const auto& last_result = results_by_bit[bit_index].back();
+                        std::cout << "  encoder_family=" << encoder_family
+                                  << " encoder_seed=" << encoder_seed
+                                  << " bits=" << bit_count
+                                  << " repeats=" << results_by_bit[bit_index].size()
+                                  << " direct_recall@k="
+                                  << last_result.mean_recall_at_k_vs_exact
+                                  << " direct_top1=" << last_result.top1_agreement
+                                  << '\n';
+                    }
+
+                    seed_runs.push_back(std::move(seed_run));
                 }
-
-                seed_runs.push_back(std::move(seed_run));
             }
         }
 
