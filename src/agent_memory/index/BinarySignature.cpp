@@ -1,6 +1,7 @@
 #include "BinarySignature.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -9,10 +10,44 @@
 #include <stdexcept>
 #include <utility>
 
+#if (defined(__GNUC__) || defined(__clang__)) && \
+    (defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86))
+#include <immintrin.h>
+#define AGENT_MEMORY_HAS_GNU_X86_INTRINSICS 1
+#else
+#define AGENT_MEMORY_HAS_GNU_X86_INTRINSICS 0
+#endif
+
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <intrin.h>
+#define AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS 1
+#else
+#define AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS 0
+#endif
+
 namespace agent_memory {
     namespace {
 
         constexpr std::size_t kBitsPerWord = 64;
+
+        [[nodiscard]] constexpr std::array<std::uint8_t, 256>
+        make_byte_popcount_table() noexcept {
+            std::array<std::uint8_t, 256> table{};
+            for(std::size_t value = 1; value < table.size(); ++value) {
+                table[value] = static_cast<std::uint8_t>(
+                    table[value >> 1U] + (value & std::size_t{1})
+                );
+            }
+            return table;
+        }
+
+        constexpr auto kBytePopcount = make_byte_popcount_table();
+
+        enum class HammingDistanceBackend {
+            LookupTable,
+            HardwarePopcount,
+            Avx2Simd
+        };
 
         [[nodiscard]] std::uint64_t valid_tail_mask(std::size_t bit_count) noexcept {
             const auto remainder = bit_count % kBitsPerWord;
@@ -22,13 +57,166 @@ namespace agent_memory {
             return (std::uint64_t{1} << remainder) - std::uint64_t{1};
         }
 
-        [[nodiscard]] std::size_t popcount64(std::uint64_t value) noexcept {
+        [[nodiscard]] std::size_t popcount64_lookup(std::uint64_t value) noexcept {
             std::size_t count = 0;
-            while(value != 0) {
-                value &= value - std::uint64_t{1};
-                ++count;
+            for(std::size_t byte = 0; byte < sizeof(value); ++byte) {
+                count += kBytePopcount[value & std::uint64_t{0xFF}];
+                value >>= 8U;
             }
             return count;
+        }
+
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
+        [[nodiscard]] bool runtime_supports_avx2() noexcept {
+            __builtin_cpu_init();
+            return __builtin_cpu_supports("avx2") != 0;
+        }
+
+        [[nodiscard]] bool runtime_supports_popcnt() noexcept {
+            __builtin_cpu_init();
+            return __builtin_cpu_supports("popcnt") != 0;
+        }
+
+        [[nodiscard]] __attribute__((target("popcnt"))) std::size_t
+        popcount64_hardware(std::uint64_t value) noexcept {
+            return static_cast<std::size_t>(
+                __builtin_popcountll(static_cast<unsigned long long>(value))
+            );
+        }
+
+        [[nodiscard]] __attribute__((target("avx2"))) std::size_t
+        hamming_distance_words_avx2(
+            const std::uint64_t* lhs,
+            const std::uint64_t* rhs,
+            std::size_t word_count
+        ) noexcept {
+            const auto low_nibble_mask = _mm256_set1_epi8(0x0F);
+            const auto nibble_popcount = _mm256_setr_epi8(
+                0, 1, 1, 2, 1, 2, 2, 3,
+                1, 2, 2, 3, 2, 3, 3, 4,
+                0, 1, 1, 2, 1, 2, 2, 3,
+                1, 2, 2, 3, 2, 3, 3, 4
+            );
+            const auto zero = _mm256_setzero_si256();
+
+            std::size_t distance = 0;
+            std::size_t word = 0;
+            for(; word + 4 <= word_count; word += 4) {
+                const auto lhs_words = _mm256_loadu_si256(
+                    reinterpret_cast<const __m256i*>(lhs + word)
+                );
+                const auto rhs_words = _mm256_loadu_si256(
+                    reinterpret_cast<const __m256i*>(rhs + word)
+                );
+                const auto xored = _mm256_xor_si256(lhs_words, rhs_words);
+                const auto low_nibbles = _mm256_and_si256(xored, low_nibble_mask);
+                const auto high_nibbles = _mm256_and_si256(
+                    _mm256_srli_epi16(xored, 4),
+                    low_nibble_mask
+                );
+                const auto low_counts = _mm256_shuffle_epi8(
+                    nibble_popcount,
+                    low_nibbles
+                );
+                const auto high_counts = _mm256_shuffle_epi8(
+                    nibble_popcount,
+                    high_nibbles
+                );
+                const auto byte_counts = _mm256_add_epi8(low_counts, high_counts);
+                const auto partial_sums = _mm256_sad_epu8(byte_counts, zero);
+
+                alignas(32) std::uint64_t lanes[4]{};
+                _mm256_store_si256(
+                    reinterpret_cast<__m256i*>(lanes),
+                    partial_sums
+                );
+                distance += static_cast<std::size_t>(
+                    lanes[0] + lanes[1] + lanes[2] + lanes[3]
+                );
+            }
+            for(; word < word_count; ++word) {
+                distance += popcount64_lookup(lhs[word] ^ rhs[word]);
+            }
+            return distance;
+        }
+#elif AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
+        [[nodiscard]] bool runtime_supports_popcnt() noexcept {
+            int registers[4]{};
+            __cpuid(registers, 1);
+            constexpr int kPopcntFeatureBit = 1 << 23;
+            return (registers[2] & kPopcntFeatureBit) != 0;
+        }
+
+        [[nodiscard]] std::size_t popcount64_hardware(std::uint64_t value) noexcept {
+#if defined(_M_X64)
+            return static_cast<std::size_t>(__popcnt64(value));
+#else
+            return static_cast<std::size_t>(
+                __popcnt(static_cast<unsigned int>(value)) +
+                __popcnt(static_cast<unsigned int>(value >> 32U))
+            );
+#endif
+        }
+#endif
+
+        [[nodiscard]] std::size_t hamming_distance_words_lookup(
+            const std::uint64_t* lhs,
+            const std::uint64_t* rhs,
+            std::size_t word_count
+        ) noexcept {
+            std::size_t distance = 0;
+            for(std::size_t word = 0; word < word_count; ++word) {
+                distance += popcount64_lookup(lhs[word] ^ rhs[word]);
+            }
+            return distance;
+        }
+
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
+        [[nodiscard]] std::size_t hamming_distance_words_popcnt(
+            const std::uint64_t* lhs,
+            const std::uint64_t* rhs,
+            std::size_t word_count
+        ) noexcept {
+            std::size_t distance = 0;
+            for(std::size_t word = 0; word < word_count; ++word) {
+                distance += popcount64_hardware(lhs[word] ^ rhs[word]);
+            }
+            return distance;
+        }
+#endif
+
+        [[nodiscard]] HammingDistanceBackend select_hamming_distance_backend() noexcept {
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
+            if(runtime_supports_avx2()) {
+                return HammingDistanceBackend::Avx2Simd;
+            }
+#endif
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
+            if(runtime_supports_popcnt()) {
+                return HammingDistanceBackend::HardwarePopcount;
+            }
+#endif
+            return HammingDistanceBackend::LookupTable;
+        }
+
+        [[nodiscard]] std::size_t hamming_distance_words(
+            const std::uint64_t* lhs,
+            const std::uint64_t* rhs,
+            std::size_t word_count
+        ) noexcept {
+            static const auto backend = select_hamming_distance_backend();
+
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
+            if(backend == HammingDistanceBackend::Avx2Simd) {
+                return hamming_distance_words_avx2(lhs, rhs, word_count);
+            }
+#endif
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
+            if(backend == HammingDistanceBackend::HardwarePopcount) {
+                return hamming_distance_words_popcnt(lhs, rhs, word_count);
+            }
+#endif
+            return hamming_distance_words_lookup(lhs, rhs, word_count);
         }
 
         [[nodiscard]] double bit_entropy(double probability_one) noexcept {
@@ -204,11 +392,11 @@ namespace agent_memory {
             throw std::invalid_argument("Hamming distance requires equal-width signatures");
         }
 
-        std::size_t distance = 0;
-        for(std::size_t i = 0; i < lhs.words().size(); ++i) {
-            distance += popcount64(lhs.words()[i] ^ rhs.words()[i]);
-        }
-        return distance;
+        return hamming_distance_words(
+            lhs.words().data(),
+            rhs.words().data(),
+            lhs.words().size()
+        );
     }
 
     BinaryCodeHealthMetrics analyze_binary_code_health(

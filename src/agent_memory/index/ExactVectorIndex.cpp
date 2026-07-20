@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <stdexcept>
 #include <utility>
 
@@ -57,6 +58,16 @@ namespace agent_memory {
                     return negative_squared_distance(query, candidate);
             }
             return 0.0F;
+        }
+
+        [[nodiscard]] bool better_vector_result(
+            const VectorSearchResult& lhs,
+            const VectorSearchResult& rhs
+        ) noexcept {
+            if(lhs.score == rhs.score) {
+                return lhs.chunk_id < rhs.chunk_id;
+            }
+            return lhs.score > rhs.score;
         }
 
     } // namespace
@@ -117,19 +128,16 @@ namespace agent_memory {
             });
         }
 
-        std::sort(
-            results.begin(),
-            results.end(),
-            [](const auto& lhs, const auto& rhs) {
-                if(lhs.score == rhs.score) {
-                    return lhs.chunk_id < rhs.chunk_id;
-                }
-                return lhs.score > rhs.score;
-            }
-        );
-
         if(results.size() > query.limit) {
+            std::partial_sort(
+                results.begin(),
+                results.begin() + static_cast<std::ptrdiff_t>(query.limit),
+                results.end(),
+                better_vector_result
+            );
             results.resize(query.limit);
+        } else {
+            std::sort(results.begin(), results.end(), better_vector_result);
         }
         return results;
     }

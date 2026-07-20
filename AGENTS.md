@@ -22,6 +22,8 @@ agent framework.
   map and extension points.
 - [Build and test](guides/build-and-test.md) - CMake options, local checks, and
   CI expectations.
+- [Experiment notes](guides/experiments/README.md) - how to record hypothesis
+  checks, benchmark evidence, and exploratory results.
 - [Dependencies](guides/dependencies.md) - flat `external/` submodules and
   optional dependency wiring.
 - [Embeddings](guides/embedding.md) - embedding contracts and backend adapter
