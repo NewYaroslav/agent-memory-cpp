@@ -1,0 +1,23 @@
+{
+  "mode": "synthetic_binary_rerank_grid",
+  "benchmark_name": "synthetic_binary_rerank_grid_highdim_384d",
+  "dataset_name": "synthetic_clustered_dense_v1_highdim_384d",
+  "document_count": 5000,
+  "query_count": 50,
+  "embedding_dimensions": 384,
+  "bit_counts": [256, 384, 512, 1024],
+  "result_limit": 10,
+  "rerank_candidate_limits": [100, 500, 1000],
+  "data_seeds": [42],
+  "encoder_seeds": [1001],
+  "encoder_families": [
+    "random_hyperplane_rademacher",
+    "coordinate_sign",
+    "randomized_hadamard_projection",
+    "learned_pair_difference_projection"
+  ],
+  "repeat_count": 3,
+  "exact_timing_repeat_count": 5,
+  "randomize_execution_order": true,
+  "output_path": "tmp/synthetic-binary-rerank-grid-highdim-384-report.json"
+}
