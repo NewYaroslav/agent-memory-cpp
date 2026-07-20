@@ -371,11 +371,17 @@ experiment harness:
 - `data_seeds` and `encoder_seeds` are separate;
 - each data seed builds one common exact oracle reused across encoder seeds,
   bit widths, and repeats;
-- `repeat_count` records repeated binary measurements over the same oracle;
+- `repeat_count` records repeated binary timings over the same oracle without
+  treating deterministic repeats as new quality observations;
+- `exact_timing_repeat_count` measures the shared exact baseline repeatedly,
+  and speedups use its median query time as their denominator;
 - optional `randomize_execution_order` shuffles bit/repeat tasks and candidate
-  limit execution while keeping JSON output sorted;
+  limit execution while keeping bit, repeat, and candidate JSON output sorted;
 - each bit-width report includes repeat-level raw reports and summary statistics;
-- the top-level report includes `aggregate_summary` across seed runs and repeats.
+- the top-level report includes `aggregate_summary` with separate quality and
+  timing sample counts;
+- summary `median` is the conventional median, while `p95_nearest_rank` names
+  the percentile method explicitly.
 
 ### Hypothesis
 
@@ -398,6 +404,7 @@ Local directional run:
 - data seeds: `42`;
 - encoder seeds: `1001`, `1002`;
 - repeats per data/encoder/bit: `2`;
+- exact timing repeats per data seed: `5`;
 - randomized execution order: enabled.
 
 ### Aggregate results
@@ -408,14 +415,23 @@ Each cell shows:
 coverage mean / top-1 mean / median total speedup
 ```
 
-The sample count per cell is `4`: two encoder seeds times two repeats.
+Each quality cell has `2` samples: one per encoder seed. Each timing cell has
+`4` measurements: two encoder seeds times two repeats. The common exact
+baseline has `5` timing measurements:
 
-| Bits | 100 candidates | 500 candidates | 1000 candidates |
-| ---: | --- | --- | --- |
-| 128 | 0.3200 / 0.395 / 1.93x | 0.6260 / 0.685 / 1.44x | 0.7795 / 0.850 / 1.12x |
-| 256 | 0.5065 / 0.665 / 1.65x | 0.8260 / 0.890 / 1.30x | 0.9265 / 0.955 / 1.08x |
-| 512 | 0.7435 / 0.895 / 1.41x | 0.9595 / 1.000 / 1.13x | 0.9895 / 1.000 / 0.96x |
-| 1024 | 0.9010 / 1.000 / 1.15x | 0.9960 / 1.000 / 1.15x | 1.0000 / 1.000 / 0.90x |
+```text
+362.368, 421.191, 360.403, 342.740, 335.916 ms
+```
+
+Its conventional median, `360.403 ms`, is the denominator for every speedup in
+the table.
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 2.53x | 0.6260 / 0.685 / 1.88x | 0.7795 / 0.850 / 1.47x | 0.9035 / 0.955 / 0.97x |
+| 256 | 0.5065 / 0.665 / 1.87x | 0.8260 / 0.890 / 1.48x | 0.9265 / 0.955 / 1.22x | 0.9780 / 0.990 / 0.93x |
+| 512 | 0.7435 / 0.895 / 2.03x | 0.9595 / 1.000 / 1.58x | 0.9895 / 1.000 / 1.25x | 0.9990 / 1.000 / 0.95x |
+| 1024 | 0.9010 / 1.000 / 1.34x | 0.9960 / 1.000 / 1.05x | 1.0000 / 1.000 / 0.96x | 1.0000 / 1.000 / 0.71x |
 
 ### Interpretation
 
@@ -429,19 +445,24 @@ The broad shape from PR #56 remains:
 The practical candidate bands are now slightly clearer:
 
 - `1024 bits × 100 candidates`: strong top-1/routing candidate with high
-  coverage and still-positive median speedup;
-- `512 bits × 500 candidates`: balanced quality candidate, but speedup is
-  modest and needs larger repeated runs;
+  coverage and a `1.34x` median speedup;
+- `512 bits × 500 candidates`: the strongest balanced candidate in this run,
+  with `0.9595` coverage, perfect top-1 agreement, and a `1.58x` median speedup;
 - `1024 bits × 500 candidates`: quality-oriented candidate with near-exact
-  coverage, but not clearly faster than `512 × 500` in this small local run.
+  coverage, but its `1.05x` median speedup is too small to treat as robust;
+- `128 bits × 100 candidates` is fast at `2.53x`, but its `0.3200` coverage is
+  only suitable for coarse routing where that loss is acceptable.
 
 ### Limitations
 
 This is still not a production benchmark:
 
 - only one data seed was used;
-- only two encoder seeds and two repeats were used;
+- only two encoder seeds, two binary timing repeats, and five exact timing
+  repeats were used;
 - timings are local in-process measurements;
+- four binary timing measurements are not enough for stable tail statistics or
+  confidence intervals; `p95_nearest_rank` is diagnostic only at this scale;
 - candidate order is randomized, but the machine still has cache, allocator, and
   CPU frequency effects;
 - the corpus is synthetic clustered dense vectors, not real embeddings with qrels.

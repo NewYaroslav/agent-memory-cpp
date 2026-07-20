@@ -79,6 +79,12 @@ Run the binary rerank statistical grid fixture:
     tmp/synthetic-binary-rerank-grid-report.json
 ```
 
+The grid separates `data_seeds` from `encoder_seeds`. `repeat_count` controls
+binary timing measurements, while `exact_timing_repeat_count` independently
+controls repeated timing of the common exact baseline. Quality is sampled once
+per data/encoder seed pair; timing repeats are not treated as independent
+quality observations.
+
 Run the deterministic staircase sweep helper:
 
 ```bash

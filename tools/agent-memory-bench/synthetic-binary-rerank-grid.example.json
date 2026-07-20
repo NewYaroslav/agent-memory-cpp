@@ -11,6 +11,7 @@
   "data_seeds": [42],
   "encoder_seeds": [1001, 1002],
   "repeat_count": 2,
+  "exact_timing_repeat_count": 5,
   "randomize_execution_order": true,
   "output_path": "tmp/synthetic-binary-rerank-grid-report.json"
 }
