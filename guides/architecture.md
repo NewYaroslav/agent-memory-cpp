@@ -464,7 +464,10 @@ but `Embedding` must remain a `std::vector<float>` value type in the public API.
 Binary signature and bucket indexes are approximate candidate filters. They
 must be benchmarked against exact float search by recall@K, latency, candidate
 count, storage size, read amplification, and decompression time before being
-treated as production defaults.
+treated as production defaults. Latency reports must distinguish the current
+public exact-index implementation from a contiguous compute-oriented exact
+baseline; otherwise container layout and result-materialization overhead can be
+mistaken for an arithmetic advantage of binary search.
 
 The knowledge base layers (lexical field postings, graph edges, temporal
 events, metadata filters) share a common primary-table-plus-secondary-index

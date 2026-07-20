@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -94,6 +95,20 @@ int main() {
             return fail(
                 "forced vector dot-product backends must share the eight-lane contract"
             );
+        }
+        std::vector<float> row_major;
+        row_major.insert(row_major.end(), rhs.values.begin(), rhs.values.end());
+        row_major.insert(row_major.end(), lhs.values.begin(), lhs.values.end());
+        std::array<float, 2> batch{};
+        forced.dot_products(
+            lhs.values.data(),
+            row_major.data(),
+            batch.size(),
+            lhs.values.size(),
+            batch.data()
+        );
+        if(batch[0] != expected_dot || batch[1] != expected_norm) {
+            return fail("forced vector batch backends must match single dot products");
         }
         if(!almost_equal(
                forced.negative_squared_distance(lhs, rhs),

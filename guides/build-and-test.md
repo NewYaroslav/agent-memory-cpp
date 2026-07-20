@@ -81,9 +81,23 @@ Run the binary rerank statistical grid fixture:
 
 The grid separates `data_seeds` from `encoder_seeds`. `repeat_count` controls
 binary timing measurements, while `exact_timing_repeat_count` independently
-controls repeated timing of the common exact baseline. Quality is sampled once
+controls repeated timing of two common exact baselines. Quality is sampled once
 per data/encoder seed pair; timing repeats are not treated as independent
 quality observations.
+
+The two exact baselines answer different questions:
+
+- `current_exact_index` measures the existing `ExactVectorIndex`, including its
+  public index data structures and result construction;
+- `contiguous_exact` stores normalized source vectors row-major, dispatches the
+  SIMD dot-product kernel once per batch, reuses scoring workspaces, and returns
+  lightweight positions. It is the compute-oriented denominator for deciding
+  whether binary filtering beats a well-laid-out exact scan.
+
+Both baselines must return exactly the same top-k for every query. Their timing
+samples and median speedup denominators are reported separately; do not describe
+a speedup against `current_exact_index` as a speedup against contiguous exact
+vector arithmetic.
 
 Binary grid reports also record `exact_vector_similarity_backend`. GNU/Clang
 x86 builds select AVX2 at runtime, fall back to SSE2 when available, and

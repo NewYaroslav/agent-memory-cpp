@@ -1822,8 +1822,12 @@ storage estimates, quality targets и per-stack defaults).
 > implemented dependency-free with runtime fallbacks. The experimental
 > `MultiProbeHammingIndex` is not yet the planned production high-recall bucket
 > backend: at useful recall it did not beat the optimized flat scan in the first
-> directional experiment. AVX-512 and persisted bucket integration remain
-> planned.
+> directional experiment. A later comparable-baseline run showed that the
+> high-quality `512-bit x 500-candidate` flat filter was only `1.12x` faster
+> than a contiguous exact cosine scan at 128 source dimensions in one local
+> run, despite remaining `2.25x` faster than the current `ExactVectorIndex`.
+> Treat this as directional evidence, not a production default. AVX-512 and
+> persisted bucket integration remain planned.
 
 26. **Step 26 (M2): SIMD abstraction layer.**
     - `simd::popcount64()` — cross-platform wrapper (MSVC / GCC / Clang /
@@ -1846,6 +1850,22 @@ storage estimates, quality targets и per-stack defaults).
       dispatch).
     - Benchmark-driven выбор kernel (НЕ преждевременная оптимизация);
       см. §"Benchmark Tasks" выше.
+
+    Additional measured follow-ups before promotion:
+    - Compare cross-record SIMD or Harley-Seal carry-save accumulation with
+      the current per-signature kernel for wide codes and large batches.
+    - Reuse query-scoped distance/top-k workspaces and consider compact
+      `uint16_t` distances when `bit_count <= 65535`.
+    - Provide a lightweight candidate-position API for no-metadata hot paths;
+      materialize public records only after selection.
+    - Benchmark a compact row-major or blocked dense rerank store, ordered for
+      candidate locality, against both `ExactVectorIndex` and a contiguous
+      compute-oriented exact oracle.
+    - Evaluate int8 intermediate reranking and adaptive per-query candidate
+      budgets only after exact float rerank remains the quality oracle.
+    - Extend code-health diagnostics with sampled inter-bit correlation,
+      effective rank, and mutual information with relevance outcomes before
+      promoting learned or hand-tuned projections.
 
 28. **Step 28 (M3): Eigen encoder optional adapter.**
     - `IAutoencoderEncoder` interface в core (dependency-free contract).

@@ -56,6 +56,18 @@ namespace agent_memory {
             std::size_t size
         ) const noexcept;
 
+        /// \brief Computes dot products against contiguous row-major vectors.
+        /// \param query Query vector containing `row_width` values.
+        /// \param rows `row_count` consecutive vectors of `row_width` values.
+        /// \param output Output array containing at least `row_count` values.
+        void dot_products(
+            const float* query,
+            const float* rows,
+            std::size_t row_count,
+            std::size_t row_width,
+            float* output
+        ) const noexcept;
+
         /// \brief Computes the squared L2 norm of an embedding.
         [[nodiscard]] float squared_norm(const Embedding& embedding) const noexcept;
 

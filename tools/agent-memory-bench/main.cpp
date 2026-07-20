@@ -117,13 +117,17 @@ namespace {
 
     struct BinaryFlatVsFloatResult final {
         double data_generation_ms = 0.0;
-        double exact_build_ms = 0.0;
+        double current_exact_build_ms = 0.0;
+        double contiguous_exact_build_ms = 0.0;
         double binary_build_ms = 0.0;
-        std::string exact_similarity_backend;
+        std::string current_exact_similarity_backend;
+        std::string contiguous_exact_similarity_backend;
         std::string binary_hamming_backend;
         std::string binary_encoder_similarity_backend;
-        SearchTiming exact_query;
-        std::vector<double> exact_query_total_ms_samples;
+        SearchTiming current_exact_query;
+        std::vector<double> current_exact_query_total_ms_samples;
+        SearchTiming contiguous_exact_query;
+        std::vector<double> contiguous_exact_query_total_ms_samples;
         SearchTiming binary_query;
         std::vector<BinaryRerankCandidateResult> rerank_candidates;
         double mean_recall_at_k_vs_exact = 0.0;
@@ -136,10 +140,14 @@ namespace {
     struct BinaryBenchmarkOracle final {
         SyntheticDenseData data;
         double data_generation_ms = 0.0;
-        double exact_build_ms = 0.0;
-        std::string exact_similarity_backend;
-        SearchTiming exact_query;
-        std::vector<double> exact_query_total_ms_samples;
+        double current_exact_build_ms = 0.0;
+        double contiguous_exact_build_ms = 0.0;
+        std::string current_exact_similarity_backend;
+        std::string contiguous_exact_similarity_backend;
+        SearchTiming current_exact_query;
+        std::vector<double> current_exact_query_total_ms_samples;
+        SearchTiming contiguous_exact_query;
+        std::vector<double> contiguous_exact_query_total_ms_samples;
         std::vector<std::vector<std::string>> exact_top_k;
         std::vector<std::unordered_set<std::string>> exact_top_k_sets;
         std::uint64_t exact_payload_bytes = 0;
@@ -721,6 +729,113 @@ namespace {
         return agent_memory::ChunkId{"doc:" + std::to_string(index)};
     }
 
+    /// Benchmark-local exact baseline with contiguous storage and no metadata layer.
+    class ContiguousDenseExactBaseline final {
+    public:
+        ContiguousDenseExactBaseline(
+            const std::vector<agent_memory::Embedding>& documents,
+            std::size_t dimension
+        )
+            : m_dimension(dimension) {
+            if(dimension != 0
+               && documents.size()
+                   > std::numeric_limits<std::size_t>::max() / dimension) {
+                throw std::length_error(
+                    "contiguous exact baseline payload size overflows size_t"
+                );
+            }
+            m_values.reserve(documents.size() * dimension);
+            m_inverse_norms.reserve(documents.size());
+            for(const auto& document : documents) {
+                if(document.dimension() != dimension) {
+                    throw std::invalid_argument(
+                        "contiguous exact baseline document dimension mismatch"
+                    );
+                }
+                m_values.insert(
+                    m_values.end(),
+                    document.values.begin(),
+                    document.values.end()
+                );
+                const auto squared_norm = m_similarity.squared_norm(document);
+                m_inverse_norms.push_back(
+                    squared_norm > 0.0F ? 1.0F / std::sqrt(squared_norm) : 0.0F
+                );
+            }
+        }
+
+        [[nodiscard]] agent_memory::VectorSimilarityBackend backend() const noexcept {
+            return m_similarity.backend();
+        }
+
+        [[nodiscard]] std::vector<std::size_t> search(
+            const agent_memory::Embedding& query,
+            std::size_t limit
+        ) {
+            if(query.dimension() != m_dimension) {
+                throw std::invalid_argument(
+                    "contiguous exact baseline query dimension mismatch"
+                );
+            }
+            if(limit == 0 || m_inverse_norms.empty()) {
+                return {};
+            }
+
+            m_dot_products.resize(m_inverse_norms.size());
+            m_similarity.dot_products(
+                query.values.data(),
+                m_values.data(),
+                m_inverse_norms.size(),
+                m_dimension,
+                m_dot_products.data()
+            );
+            const auto query_squared_norm = m_similarity.squared_norm(query);
+            const auto query_inverse_norm = query_squared_norm > 0.0F
+                ? 1.0F / std::sqrt(query_squared_norm)
+                : 0.0F;
+
+            m_scored.resize(m_inverse_norms.size());
+            for(std::size_t index = 0; index < m_scored.size(); ++index) {
+                m_scored[index] = ScoredDocument{
+                    index,
+                    m_dot_products[index] * query_inverse_norm * m_inverse_norms[index]
+                };
+            }
+            const auto better = [](const ScoredDocument& lhs, const ScoredDocument& rhs) {
+                if(lhs.score == rhs.score) {
+                    return lhs.index < rhs.index;
+                }
+                return lhs.score > rhs.score;
+            };
+            const auto result_count = std::min(limit, m_scored.size());
+            if(m_scored.size() > result_count) {
+                std::partial_sort(
+                    m_scored.begin(),
+                    m_scored.begin() + static_cast<std::ptrdiff_t>(result_count),
+                    m_scored.end(),
+                    better
+                );
+            } else {
+                std::sort(m_scored.begin(), m_scored.end(), better);
+            }
+
+            std::vector<std::size_t> positions;
+            positions.reserve(result_count);
+            for(std::size_t index = 0; index < result_count; ++index) {
+                positions.push_back(m_scored[index].index);
+            }
+            return positions;
+        }
+
+    private:
+        std::size_t m_dimension = 0;
+        agent_memory::VectorSimilarityComputer m_similarity;
+        std::vector<float> m_values;
+        std::vector<float> m_inverse_norms;
+        std::vector<float> m_dot_products;
+        std::vector<ScoredDocument> m_scored;
+    };
+
     [[nodiscard]] std::optional<std::size_t> parse_prefixed_index(
         std::string_view text,
         std::string_view prefix
@@ -1298,22 +1413,30 @@ namespace {
         std::vector<double> top1;
         std::vector<double> binary_total_ms;
         std::vector<double> binary_search_ms;
-        std::vector<double> direct_total_speedup;
+        std::vector<double> direct_current_exact_speedup;
+        std::vector<double> direct_contiguous_exact_speedup;
         direct_recall.reserve(1);
         top1.reserve(1);
         binary_total_ms.reserve(repeats.size());
         binary_search_ms.reserve(repeats.size());
-        direct_total_speedup.reserve(repeats.size());
+        direct_current_exact_speedup.reserve(repeats.size());
+        direct_contiguous_exact_speedup.reserve(repeats.size());
 
         direct_recall.push_back(repeats.front().mean_recall_at_k_vs_exact);
         top1.push_back(repeats.front().top1_agreement);
         for(const auto& result : repeats) {
             binary_total_ms.push_back(result.binary_query.total_ms);
             binary_search_ms.push_back(result.binary_query.search_ms);
-            direct_total_speedup.push_back(
+            direct_current_exact_speedup.push_back(
                 result.binary_query.total_ms <= 0.0
                     ? 0.0
-                    : result.exact_query.total_ms / result.binary_query.total_ms
+                    : result.current_exact_query.total_ms / result.binary_query.total_ms
+            );
+            direct_contiguous_exact_speedup.push_back(
+                result.binary_query.total_ms <= 0.0
+                    ? 0.0
+                    : result.contiguous_exact_query.total_ms
+                        / result.binary_query.total_ms
             );
         }
 
@@ -1328,8 +1451,10 @@ namespace {
         summary["speed"] = {
             {"binary_query_search_ms", samples_to_stats_json(binary_search_ms)},
             {"binary_query_total_ms", samples_to_stats_json(binary_total_ms)},
-            {"binary_total_speedup_vs_exact_search_including_encode",
-                samples_to_stats_json(direct_total_speedup)}
+            {"binary_total_speedup_vs_current_exact_index_including_encode",
+                samples_to_stats_json(direct_current_exact_speedup)},
+            {"binary_total_speedup_vs_contiguous_exact_including_encode",
+                samples_to_stats_json(direct_contiguous_exact_speedup)}
         };
 
         summary["rerank"] = nlohmann::json::array();
@@ -1338,7 +1463,8 @@ namespace {
             std::vector<double> reranked_recall;
             std::vector<double> reranked_top1;
             std::vector<double> total_ms;
-            std::vector<double> speedup;
+            std::vector<double> current_exact_speedup;
+            std::vector<double> contiguous_exact_speedup;
 
             const auto& quality_candidate = require_rerank_candidate(
                 repeats.front(),
@@ -1350,10 +1476,15 @@ namespace {
             for(const auto& result : repeats) {
                 const auto& candidate = require_rerank_candidate(result, candidate_limit);
                 total_ms.push_back(candidate.total_ms);
-                speedup.push_back(
+                current_exact_speedup.push_back(
                     candidate.total_ms <= 0.0
                         ? 0.0
-                        : result.exact_query.total_ms / candidate.total_ms
+                        : result.current_exact_query.total_ms / candidate.total_ms
+                );
+                contiguous_exact_speedup.push_back(
+                    candidate.total_ms <= 0.0
+                        ? 0.0
+                        : result.contiguous_exact_query.total_ms / candidate.total_ms
                 );
             }
 
@@ -1363,7 +1494,10 @@ namespace {
                 {"reranked_recall_at_k_vs_exact", samples_to_stats_json(reranked_recall)},
                 {"reranked_top1_agreement", samples_to_stats_json(reranked_top1)},
                 {"total_ms", samples_to_stats_json(total_ms)},
-                {"total_speedup_vs_exact_search", samples_to_stats_json(speedup)}
+                {"total_speedup_vs_current_exact_index",
+                    samples_to_stats_json(current_exact_speedup)},
+                {"total_speedup_vs_contiguous_exact",
+                    samples_to_stats_json(contiguous_exact_speedup)}
             });
         }
         return summary;
@@ -1378,7 +1512,8 @@ namespace {
             std::vector<double> direct_recall;
             std::vector<double> top1;
             std::vector<double> binary_total_ms;
-            std::vector<double> direct_total_speedup;
+            std::vector<double> direct_current_exact_speedup;
+            std::vector<double> direct_contiguous_exact_speedup;
             std::vector<std::vector<double>> coverage_by_candidate(
                 config.rerank_candidate_limits.size()
             );
@@ -1391,7 +1526,10 @@ namespace {
             std::vector<std::vector<double>> total_ms_by_candidate(
                 config.rerank_candidate_limits.size()
             );
-            std::vector<std::vector<double>> speedup_by_candidate(
+            std::vector<std::vector<double>> current_exact_speedup_by_candidate(
+                config.rerank_candidate_limits.size()
+            );
+            std::vector<std::vector<double>> contiguous_exact_speedup_by_candidate(
                 config.rerank_candidate_limits.size()
             );
 
@@ -1448,9 +1586,18 @@ namespace {
                                 .at("binary_query_total_ms")
                                 .get<double>()
                         );
-                        direct_total_speedup.push_back(
+                        direct_current_exact_speedup.push_back(
                             repeat_report.at("speed")
-                                .at("binary_total_speedup_vs_exact_search_including_encode")
+                                .at(
+                                    "binary_total_speedup_vs_current_exact_index_including_encode"
+                                )
+                                .get<double>()
+                        );
+                        direct_contiguous_exact_speedup.push_back(
+                            repeat_report.at("speed")
+                                .at(
+                                    "binary_total_speedup_vs_contiguous_exact_including_encode"
+                                )
                                 .get<double>()
                         );
 
@@ -1476,8 +1623,13 @@ namespace {
                             total_ms_by_candidate[candidate_index].push_back(
                                 rerank.at("total_ms").get<double>()
                             );
-                            speedup_by_candidate[candidate_index].push_back(
-                                rerank.at("total_speedup_vs_exact_search").get<double>()
+                            current_exact_speedup_by_candidate[candidate_index].push_back(
+                                rerank.at("total_speedup_vs_current_exact_index")
+                                    .get<double>()
+                            );
+                            contiguous_exact_speedup_by_candidate[candidate_index].push_back(
+                                rerank.at("total_speedup_vs_contiguous_exact")
+                                    .get<double>()
                             );
                         }
                     }
@@ -1494,8 +1646,10 @@ namespace {
             };
             bit_summary["speed"] = {
                 {"binary_query_total_ms", samples_to_stats_json(binary_total_ms)},
-                {"binary_total_speedup_vs_exact_search_including_encode",
-                    samples_to_stats_json(direct_total_speedup)}
+                {"binary_total_speedup_vs_current_exact_index_including_encode",
+                    samples_to_stats_json(direct_current_exact_speedup)},
+                {"binary_total_speedup_vs_contiguous_exact_including_encode",
+                    samples_to_stats_json(direct_contiguous_exact_speedup)}
             };
             bit_summary["rerank"] = nlohmann::json::array();
             for(std::size_t index = 0; index < config.rerank_candidate_limits.size();
@@ -1509,8 +1663,14 @@ namespace {
                     {"reranked_top1_agreement",
                         samples_to_stats_json(reranked_top1_by_candidate[index])},
                     {"total_ms", samples_to_stats_json(total_ms_by_candidate[index])},
-                    {"total_speedup_vs_exact_search",
-                        samples_to_stats_json(speedup_by_candidate[index])}
+                    {"total_speedup_vs_current_exact_index",
+                        samples_to_stats_json(
+                            current_exact_speedup_by_candidate[index]
+                        )},
+                    {"total_speedup_vs_contiguous_exact",
+                        samples_to_stats_json(
+                            contiguous_exact_speedup_by_candidate[index]
+                        )}
                 });
             }
             aggregate.push_back(std::move(bit_summary));
@@ -1558,31 +1718,52 @@ namespace {
             {"config_fingerprint", encoder_info.config_fingerprint}
         };
         document["quality"] = {
-            {"reference_baseline", "exact_float_flat"},
+            {"reference_baseline", "exact_cosine_top_k"},
             {"candidate_baseline", "flat_binary_hamming"},
             {"mean_recall_at_k_vs_exact", result.mean_recall_at_k_vs_exact},
             {"top1_agreement", result.top1_agreement}
         };
         document["speed"] = {
             {"data_generation_ms", result.data_generation_ms},
-            {"exact_float_build_ms", result.exact_build_ms},
-            {"exact_vector_similarity_backend", result.exact_similarity_backend},
+            {"current_exact_index_build_ms", result.current_exact_build_ms},
+            {"contiguous_exact_build_ms", result.contiguous_exact_build_ms},
+            {"current_exact_index_similarity_backend",
+                result.current_exact_similarity_backend},
+            {"contiguous_exact_similarity_backend",
+                result.contiguous_exact_similarity_backend},
             {"binary_hamming_backend", result.binary_hamming_backend},
             {"binary_encoder_similarity_backend", result.binary_encoder_similarity_backend},
             {"binary_encode_and_build_ms", result.binary_build_ms},
-            {"exact_float_query_search_ms", result.exact_query.search_ms},
-            {"exact_float_query_total_ms", result.exact_query.total_ms},
-            {"exact_float_query_timing_repeat_count",
-                result.exact_query_total_ms_samples.size()},
-            {"exact_float_query_total_ms_stats",
-                samples_to_stats_json(result.exact_query_total_ms_samples)},
-            {"speedup_denominator", "median_exact_float_query_total_ms"},
-            {"exact_float_mean_query_ms", per_query_ms(
-                result.exact_query.total_ms,
+            {"current_exact_index_query_total_ms",
+                result.current_exact_query.total_ms},
+            {"current_exact_index_query_timing_repeat_count",
+                result.current_exact_query_total_ms_samples.size()},
+            {"current_exact_index_query_total_ms_stats",
+                samples_to_stats_json(result.current_exact_query_total_ms_samples)},
+            {"contiguous_exact_query_total_ms",
+                result.contiguous_exact_query.total_ms},
+            {"contiguous_exact_query_timing_repeat_count",
+                result.contiguous_exact_query_total_ms_samples.size()},
+            {"contiguous_exact_query_total_ms_stats",
+                samples_to_stats_json(result.contiguous_exact_query_total_ms_samples)},
+            {"speedup_denominators", {
+                {"current_exact_index", "median_current_exact_index_query_total_ms"},
+                {"contiguous_exact", "median_contiguous_exact_query_total_ms"}
+            }},
+            {"current_exact_index_mean_query_ms", per_query_ms(
+                result.current_exact_query.total_ms,
                 config.query_count
             )},
-            {"exact_float_queries_per_second", queries_per_second(
-                result.exact_query.total_ms,
+            {"current_exact_index_queries_per_second", queries_per_second(
+                result.current_exact_query.total_ms,
+                config.query_count
+            )},
+            {"contiguous_exact_mean_query_ms", per_query_ms(
+                result.contiguous_exact_query.total_ms,
+                config.query_count
+            )},
+            {"contiguous_exact_queries_per_second", queries_per_second(
+                result.contiguous_exact_query.total_ms,
                 config.query_count
             )},
             {"binary_query_encode_ms", result.binary_query.encode_ms},
@@ -1596,14 +1777,24 @@ namespace {
                 result.binary_query.total_ms,
                 config.query_count
             )},
-            {"binary_search_speedup_vs_exact_search",
+            {"binary_search_speedup_vs_current_exact_index",
                 result.binary_query.search_ms <= 0.0
                 ? 0.0
-                : result.exact_query.search_ms / result.binary_query.search_ms},
-            {"binary_total_speedup_vs_exact_search_including_encode",
+                : result.current_exact_query.search_ms / result.binary_query.search_ms},
+            {"binary_search_speedup_vs_contiguous_exact",
+                result.binary_query.search_ms <= 0.0
+                ? 0.0
+                : result.contiguous_exact_query.search_ms
+                    / result.binary_query.search_ms},
+            {"binary_total_speedup_vs_current_exact_index_including_encode",
                 result.binary_query.total_ms <= 0.0
                 ? 0.0
-                : result.exact_query.total_ms / result.binary_query.total_ms}
+                : result.current_exact_query.total_ms / result.binary_query.total_ms},
+            {"binary_total_speedup_vs_contiguous_exact_including_encode",
+                result.binary_query.total_ms <= 0.0
+                ? 0.0
+                : result.contiguous_exact_query.total_ms
+                    / result.binary_query.total_ms}
         };
         document["rerank"] = nlohmann::json::array();
         for(const auto& candidate : result.rerank_candidates) {
@@ -1625,10 +1816,14 @@ namespace {
                     candidate.total_ms,
                     config.query_count
                 )},
-                {"total_speedup_vs_exact_search",
+                {"total_speedup_vs_current_exact_index",
                     candidate.total_ms <= 0.0
                     ? 0.0
-                    : result.exact_query.total_ms / candidate.total_ms}
+                    : result.current_exact_query.total_ms / candidate.total_ms},
+                {"total_speedup_vs_contiguous_exact",
+                    candidate.total_ms <= 0.0
+                    ? 0.0
+                    : result.contiguous_exact_query.total_ms / candidate.total_ms}
             });
         }
         document["index"] = {
@@ -1644,10 +1839,11 @@ namespace {
             {"peak_resident_set_bytes", result.process_peak_resident_set_bytes}
         };
         document["notes"] = nlohmann::json::array({
-            "Synthetic clustered dense vectors; exact_float_flat top-k is the oracle.",
+            "Synthetic clustered dense vectors; both exact implementations must return identical top-k.",
             "Timing is local and in-process; samples remain directional, not production-stable.",
-            "Exact query totals and speedup denominators use the median exact timing sample.",
-            "Exact search timing excludes quality-bookkeeping ID extraction.",
+            "Current ExactVectorIndex and contiguous exact denominators use separate median timing samples.",
+            "Current-index and contiguous-baseline speedups are reported separately.",
+            "Exact search timing excludes quality-bookkeeping ID extraction and comparison.",
             "Binary total timing is query signature encoding plus exact flat Hamming scan.",
             "Rerank rows measure binary candidate over-fetch followed by exact float rerank.",
             "Process peak RSS is a whole benchmark-process high-water mark, not per-index memory."
@@ -1669,13 +1865,13 @@ namespace {
             config.embedding_dimensions,
             agent_memory::SimilarityMetric::Cosine
         });
-        oracle.exact_similarity_backend = std::string{
+        oracle.current_exact_similarity_backend = std::string{
             agent_memory::vector_similarity_backend_name(
                 exact_index.similarity_backend()
             )
         };
 
-        const auto exact_build_start = Clock::now();
+        const auto current_exact_build_start = Clock::now();
         for(std::size_t index = 0; index < oracle.data.documents.size(); ++index) {
             exact_index.upsert(agent_memory::VectorRecord{
                 make_chunk_id(index),
@@ -1683,8 +1879,25 @@ namespace {
                 {}
             });
         }
-        const auto exact_build_end = Clock::now();
-        oracle.exact_build_ms = elapsed_ms(exact_build_start, exact_build_end);
+        const auto current_exact_build_end = Clock::now();
+        oracle.current_exact_build_ms = elapsed_ms(
+            current_exact_build_start,
+            current_exact_build_end
+        );
+
+        const auto contiguous_exact_build_start = Clock::now();
+        ContiguousDenseExactBaseline contiguous_exact(
+            oracle.data.documents,
+            config.embedding_dimensions
+        );
+        const auto contiguous_exact_build_end = Clock::now();
+        oracle.contiguous_exact_build_ms = elapsed_ms(
+            contiguous_exact_build_start,
+            contiguous_exact_build_end
+        );
+        oracle.contiguous_exact_similarity_backend = std::string{
+            agent_memory::vector_similarity_backend_name(contiguous_exact.backend())
+        };
 
         oracle.exact_payload_bytes = checked_payload_bytes(
             config.document_count,
@@ -1693,34 +1906,83 @@ namespace {
         );
 
         oracle.exact_top_k.reserve(oracle.data.queries.size());
-        oracle.exact_query_total_ms_samples.reserve(config.exact_timing_repeat_count);
+        oracle.current_exact_query_total_ms_samples.reserve(
+            config.exact_timing_repeat_count
+        );
+        oracle.contiguous_exact_query_total_ms_samples.reserve(
+            config.exact_timing_repeat_count
+        );
         for(std::size_t timing_repeat = 0;
             timing_repeat < config.exact_timing_repeat_count;
             ++timing_repeat) {
-            double exact_search_ms = 0.0;
-            for(const auto& query_embedding : oracle.data.queries) {
-                const auto search_start = Clock::now();
-                const auto hits = exact_index.search(agent_memory::VectorSearchQuery{
-                    query_embedding,
-                    config.result_limit,
-                    {}
-                });
-                const auto search_end = Clock::now();
-                exact_search_ms += elapsed_ms(search_start, search_end);
+            const auto measure_current_exact = [&] {
+                double search_ms = 0.0;
+                for(const auto& query_embedding : oracle.data.queries) {
+                    const auto search_start = Clock::now();
+                    const auto hits = exact_index.search(agent_memory::VectorSearchQuery{
+                        query_embedding,
+                        config.result_limit,
+                        {}
+                    });
+                    const auto search_end = Clock::now();
+                    search_ms += elapsed_ms(search_start, search_end);
 
-                if(timing_repeat == 0) {
-                    std::vector<std::string> ids;
-                    ids.reserve(hits.size());
-                    for(const auto& hit : hits) {
-                        ids.push_back(hit.chunk_id.value());
+                    if(timing_repeat == 0) {
+                        std::vector<std::string> ids;
+                        ids.reserve(hits.size());
+                        for(const auto& hit : hits) {
+                            ids.push_back(hit.chunk_id.value());
+                        }
+                        oracle.exact_top_k.push_back(std::move(ids));
                     }
-                    oracle.exact_top_k.push_back(std::move(ids));
                 }
+                oracle.current_exact_query_total_ms_samples.push_back(search_ms);
+            };
+            const auto measure_contiguous_exact = [&] {
+                double search_ms = 0.0;
+                std::size_t query_index = 0;
+                for(const auto& query_embedding : oracle.data.queries) {
+                    const auto search_start = Clock::now();
+                    const auto positions = contiguous_exact.search(
+                        query_embedding,
+                        config.result_limit
+                    );
+                    const auto search_end = Clock::now();
+                    search_ms += elapsed_ms(search_start, search_end);
+
+                    if(timing_repeat == 0) {
+                        std::vector<std::string> ids;
+                        ids.reserve(positions.size());
+                        for(const auto position : positions) {
+                            ids.push_back("doc:" + std::to_string(position));
+                        }
+                        if(ids != oracle.exact_top_k.at(query_index)) {
+                            throw std::runtime_error(
+                                "contiguous exact baseline disagrees with ExactVectorIndex"
+                            );
+                        }
+                    }
+                    ++query_index;
+                }
+                oracle.contiguous_exact_query_total_ms_samples.push_back(search_ms);
+            };
+
+            if((timing_repeat % 2U) == 0U) {
+                measure_current_exact();
+                measure_contiguous_exact();
+            } else {
+                measure_contiguous_exact();
+                measure_current_exact();
             }
-            oracle.exact_query_total_ms_samples.push_back(exact_search_ms);
         }
-        oracle.exact_query.search_ms = median_value(oracle.exact_query_total_ms_samples);
-        oracle.exact_query.total_ms = oracle.exact_query.search_ms;
+        oracle.current_exact_query.search_ms = median_value(
+            oracle.current_exact_query_total_ms_samples
+        );
+        oracle.current_exact_query.total_ms = oracle.current_exact_query.search_ms;
+        oracle.contiguous_exact_query.search_ms = median_value(
+            oracle.contiguous_exact_query_total_ms_samples
+        );
+        oracle.contiguous_exact_query.total_ms = oracle.contiguous_exact_query.search_ms;
 
         oracle.exact_top_k_sets.reserve(oracle.exact_top_k.size());
         for(const auto& ids : oracle.exact_top_k) {
@@ -1757,17 +2019,25 @@ namespace {
 
         BinaryFlatVsFloatResult result;
         result.data_generation_ms = oracle.data_generation_ms;
-        result.exact_build_ms = oracle.exact_build_ms;
+        result.current_exact_build_ms = oracle.current_exact_build_ms;
+        result.contiguous_exact_build_ms = oracle.contiguous_exact_build_ms;
         result.binary_build_ms = elapsed_ms(binary_build_start, binary_build_end);
-        result.exact_similarity_backend = oracle.exact_similarity_backend;
+        result.current_exact_similarity_backend =
+            oracle.current_exact_similarity_backend;
+        result.contiguous_exact_similarity_backend =
+            oracle.contiguous_exact_similarity_backend;
         result.binary_hamming_backend = std::string(
             agent_memory::hamming_distance_backend_name(*binary_index.hamming_backend())
         );
         result.binary_encoder_similarity_backend = std::string(
             agent_memory::vector_similarity_backend_name(encoder.similarity_backend())
         );
-        result.exact_query = oracle.exact_query;
-        result.exact_query_total_ms_samples = oracle.exact_query_total_ms_samples;
+        result.current_exact_query = oracle.current_exact_query;
+        result.current_exact_query_total_ms_samples =
+            oracle.current_exact_query_total_ms_samples;
+        result.contiguous_exact_query = oracle.contiguous_exact_query;
+        result.contiguous_exact_query_total_ms_samples =
+            oracle.contiguous_exact_query_total_ms_samples;
         result.exact_payload_bytes = oracle.exact_payload_bytes;
         result.binary_payload_bytes = checked_payload_bytes(
             config.document_count,
@@ -2069,9 +2339,16 @@ namespace {
         std::cout << "Quality vs exact float: recall@k="
                   << result.mean_recall_at_k_vs_exact
                   << " top1_agreement=" << result.top1_agreement << '\n';
-        std::cout << "Exact float query total ms: " << result.exact_query.total_ms
+        std::cout << "Current ExactVectorIndex query total ms: "
+                  << result.current_exact_query.total_ms
                   << " qps=" << queries_per_second(
-                      result.exact_query.total_ms,
+                      result.current_exact_query.total_ms,
+                      config.query_count
+                  ) << '\n';
+        std::cout << "Contiguous exact query total ms: "
+                  << result.contiguous_exact_query.total_ms
+                  << " qps=" << queries_per_second(
+                      result.contiguous_exact_query.total_ms,
                       config.query_count
                   ) << '\n';
         std::cout << "Binary query total ms: " << result.binary_query.total_ms
@@ -2079,15 +2356,23 @@ namespace {
                       result.binary_query.total_ms,
                       config.query_count
                   ) << '\n';
-        std::cout << "Binary search speedup vs exact search: "
+        std::cout << "Binary search speedup vs current ExactVectorIndex: "
                   << (result.binary_query.search_ms <= 0.0
                       ? 0.0
-                      : result.exact_query.search_ms / result.binary_query.search_ms)
+                      : result.current_exact_query.search_ms
+                          / result.binary_query.search_ms)
                   << '\n';
-        std::cout << "Binary total speedup vs exact search including encode: "
+        std::cout << "Binary total speedup vs current ExactVectorIndex including encode: "
                   << (result.binary_query.total_ms <= 0.0
                       ? 0.0
-                      : result.exact_query.total_ms / result.binary_query.total_ms)
+                      : result.current_exact_query.total_ms
+                          / result.binary_query.total_ms)
+                  << '\n';
+        std::cout << "Binary total speedup vs contiguous exact including encode: "
+                  << (result.binary_query.total_ms <= 0.0
+                      ? 0.0
+                      : result.contiguous_exact_query.total_ms
+                          / result.binary_query.total_ms)
                   << '\n';
         for(const auto& candidate : result.rerank_candidates) {
             std::cout << "Rerank candidates=" << candidate.candidate_limit
@@ -2097,10 +2382,15 @@ namespace {
                       << candidate.reranked_recall_at_k_vs_exact
                       << " top1_agreement="
                       << candidate.reranked_top1_agreement
-                      << " total_speedup="
+                      << " total_speedup_current/contiguous="
                       << (candidate.total_ms <= 0.0
                           ? 0.0
-                          : result.exact_query.total_ms / candidate.total_ms)
+                          : result.current_exact_query.total_ms / candidate.total_ms)
+                      << '/'
+                      << (candidate.total_ms <= 0.0
+                          ? 0.0
+                          : result.contiguous_exact_query.total_ms
+                              / candidate.total_ms)
                       << '\n';
         }
         std::cout << "Payload bytes exact/binary: " << result.exact_payload_bytes
@@ -2115,21 +2405,48 @@ namespace {
     ) {
         return {
             {"data_generation_ms", oracle.data_generation_ms},
-            {"exact_float_build_ms", oracle.exact_build_ms},
-            {"exact_vector_similarity_backend", oracle.exact_similarity_backend},
-            {"exact_timing_repeat_count", oracle.exact_query_total_ms_samples.size()},
-            {"exact_float_query_total_ms_samples", oracle.exact_query_total_ms_samples},
-            {"exact_float_query_total_ms_stats",
-                samples_to_stats_json(oracle.exact_query_total_ms_samples)},
-            {"speedup_denominator", "median_exact_float_query_total_ms"},
-            {"exact_float_query_search_ms", oracle.exact_query.search_ms},
-            {"exact_float_query_total_ms", oracle.exact_query.total_ms},
-            {"exact_float_mean_query_ms", per_query_ms(
-                oracle.exact_query.total_ms,
+            {"current_exact_index_build_ms", oracle.current_exact_build_ms},
+            {"contiguous_exact_build_ms", oracle.contiguous_exact_build_ms},
+            {"current_exact_index_similarity_backend",
+                oracle.current_exact_similarity_backend},
+            {"contiguous_exact_similarity_backend",
+                oracle.contiguous_exact_similarity_backend},
+            {"exact_timing_repeat_count",
+                oracle.current_exact_query_total_ms_samples.size()},
+            {"current_exact_index_query_total_ms_samples",
+                oracle.current_exact_query_total_ms_samples},
+            {"current_exact_index_query_total_ms_stats",
+                samples_to_stats_json(
+                    oracle.current_exact_query_total_ms_samples
+                )},
+            {"contiguous_exact_query_total_ms_samples",
+                oracle.contiguous_exact_query_total_ms_samples},
+            {"contiguous_exact_query_total_ms_stats",
+                samples_to_stats_json(
+                    oracle.contiguous_exact_query_total_ms_samples
+                )},
+            {"speedup_denominators", {
+                {"current_exact_index", "median_current_exact_index_query_total_ms"},
+                {"contiguous_exact", "median_contiguous_exact_query_total_ms"}
+            }},
+            {"current_exact_index_query_total_ms",
+                oracle.current_exact_query.total_ms},
+            {"contiguous_exact_query_total_ms",
+                oracle.contiguous_exact_query.total_ms},
+            {"current_exact_index_mean_query_ms", per_query_ms(
+                oracle.current_exact_query.total_ms,
                 config.query_count
             )},
-            {"exact_float_queries_per_second", queries_per_second(
-                oracle.exact_query.total_ms,
+            {"current_exact_index_queries_per_second", queries_per_second(
+                oracle.current_exact_query.total_ms,
+                config.query_count
+            )},
+            {"contiguous_exact_mean_query_ms", per_query_ms(
+                oracle.contiguous_exact_query.total_ms,
+                config.query_count
+            )},
+            {"contiguous_exact_queries_per_second", queries_per_second(
+                oracle.contiguous_exact_query.total_ms,
                 config.query_count
             )}
         };
@@ -2171,7 +2488,7 @@ namespace {
             "Synthetic binary rerank grid reuses one exact oracle per data seed across all bit widths.",
             "data_seeds control synthetic data; encoder_seeds control random hyperplanes.",
             "repeat_count repeats binary timings; quality is sampled once per data/encoder seed pair.",
-            "Exact timing is repeated per data seed; speedups use its median as the denominator.",
+            "Current ExactVectorIndex and contiguous exact timing use separate repeated medians.",
             "Timing statistics are still local in-process measurements.",
             "Use multi-seed grids to choose the next real-embedding experiment band."
         });
@@ -2188,7 +2505,10 @@ namespace {
             const auto oracle = prepare_binary_benchmark_oracle(data_config);
 
             std::cout << "Grid data_seed=" << data_seed
-                      << " exact_total_ms=" << oracle.exact_query.total_ms << '\n';
+                      << " current_exact_ms="
+                      << oracle.current_exact_query.total_ms
+                      << " contiguous_exact_ms="
+                      << oracle.contiguous_exact_query.total_ms << '\n';
 
             for(const auto encoder_seed : config.encoder_seeds) {
                 nlohmann::json seed_run;

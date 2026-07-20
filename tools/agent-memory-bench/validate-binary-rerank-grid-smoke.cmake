@@ -123,7 +123,17 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
         "${grid_json}" aggregate_summary ${aggregate_index} speed
         binary_query_total_ms p95_nearest_rank
     )
-    if(NOT quality_stat_count EQUAL 2 OR NOT timing_stat_count EQUAL 4)
+    string(JSON current_speedup_count GET
+        "${grid_json}" aggregate_summary ${aggregate_index} speed
+        binary_total_speedup_vs_current_exact_index_including_encode sample_count
+    )
+    string(JSON contiguous_speedup_count GET
+        "${grid_json}" aggregate_summary ${aggregate_index} speed
+        binary_total_speedup_vs_contiguous_exact_including_encode sample_count
+    )
+    if(NOT quality_stat_count EQUAL 2 OR NOT timing_stat_count EQUAL 4
+       OR NOT current_speedup_count EQUAL 4
+       OR NOT contiguous_speedup_count EQUAL 4)
         message(FATAL_ERROR
             "aggregate nested quality/timing sample counts are inconsistent"
         )
@@ -135,44 +145,79 @@ endforeach()
 
 math(EXPR last_seed_run "${seed_run_count} - 1")
 foreach(seed_run_index RANGE 0 ${last_seed_run})
-    string(JSON exact_total_ms GET
-        "${grid_json}" seed_runs ${seed_run_index} common_exact exact_float_query_total_ms
+    string(JSON current_exact_total_ms GET
+        "${grid_json}" seed_runs ${seed_run_index} common_exact
+        current_exact_index_query_total_ms
     )
-    if(NOT exact_total_ms GREATER 0)
-        message(FATAL_ERROR "common exact timing must be positive")
+    string(JSON contiguous_exact_total_ms GET
+        "${grid_json}" seed_runs ${seed_run_index} common_exact
+        contiguous_exact_query_total_ms
+    )
+    if(NOT current_exact_total_ms GREATER 0
+       OR NOT contiguous_exact_total_ms GREATER 0)
+        message(FATAL_ERROR "both common exact timings must be positive")
     endif()
     string(JSON exact_repeat_count GET
         "${grid_json}" seed_runs ${seed_run_index} common_exact exact_timing_repeat_count
     )
-    string(JSON exact_stat_count GET
+    string(JSON current_exact_stat_count GET
         "${grid_json}" seed_runs ${seed_run_index} common_exact
-        exact_float_query_total_ms_stats sample_count
+        current_exact_index_query_total_ms_stats sample_count
     )
-    string(JSON speedup_denominator GET
-        "${grid_json}" seed_runs ${seed_run_index} common_exact speedup_denominator
-    )
-    string(JSON similarity_backend GET
+    string(JSON contiguous_exact_stat_count GET
         "${grid_json}" seed_runs ${seed_run_index} common_exact
-        exact_vector_similarity_backend
+        contiguous_exact_query_total_ms_stats sample_count
     )
-    if(NOT exact_repeat_count EQUAL 3 OR NOT exact_stat_count EQUAL 3)
-        message(FATAL_ERROR "expected 3 exact timing samples")
+    string(JSON current_speedup_denominator GET
+        "${grid_json}" seed_runs ${seed_run_index} common_exact
+        speedup_denominators current_exact_index
+    )
+    string(JSON contiguous_speedup_denominator GET
+        "${grid_json}" seed_runs ${seed_run_index} common_exact
+        speedup_denominators contiguous_exact
+    )
+    string(JSON current_similarity_backend GET
+        "${grid_json}" seed_runs ${seed_run_index} common_exact
+        current_exact_index_similarity_backend
+    )
+    string(JSON contiguous_similarity_backend GET
+        "${grid_json}" seed_runs ${seed_run_index} common_exact
+        contiguous_exact_similarity_backend
+    )
+    if(NOT exact_repeat_count EQUAL 3
+       OR NOT current_exact_stat_count EQUAL 3
+       OR NOT contiguous_exact_stat_count EQUAL 3)
+        message(FATAL_ERROR "expected 3 samples for both exact timing baselines")
     endif()
-    string(JSON exact_stat_median GET
+    string(JSON current_exact_stat_median GET
         "${grid_json}" seed_runs ${seed_run_index} common_exact
-        exact_float_query_total_ms_stats median
+        current_exact_index_query_total_ms_stats median
     )
-    if(NOT exact_total_ms EQUAL exact_stat_median)
+    string(JSON contiguous_exact_stat_median GET
+        "${grid_json}" seed_runs ${seed_run_index} common_exact
+        contiguous_exact_query_total_ms_stats median
+    )
+    if(NOT current_exact_total_ms EQUAL current_exact_stat_median)
         message(FATAL_ERROR
-            "exact speedup denominator must equal median exact timing: "
-            "${exact_total_ms} != ${exact_stat_median}"
+            "current-index denominator must equal its median timing: "
+            "${current_exact_total_ms} != ${current_exact_stat_median}"
         )
     endif()
-    if(NOT speedup_denominator STREQUAL "median_exact_float_query_total_ms")
-        message(FATAL_ERROR "unexpected speedup denominator: ${speedup_denominator}")
+    if(NOT contiguous_exact_total_ms EQUAL contiguous_exact_stat_median)
+        message(FATAL_ERROR
+            "contiguous denominator must equal its median timing: "
+            "${contiguous_exact_total_ms} != ${contiguous_exact_stat_median}"
+        )
     endif()
-    if(NOT similarity_backend MATCHES "^(scalar|sse2|avx2)$")
-        message(FATAL_ERROR "unexpected exact vector backend: ${similarity_backend}")
+    if(NOT current_speedup_denominator STREQUAL
+           "median_current_exact_index_query_total_ms"
+       OR NOT contiguous_speedup_denominator STREQUAL
+           "median_contiguous_exact_query_total_ms")
+        message(FATAL_ERROR "unexpected exact speedup denominator names")
+    endif()
+    if(NOT current_similarity_backend MATCHES "^(scalar|sse2|avx2)$"
+       OR NOT contiguous_similarity_backend MATCHES "^(scalar|sse2|avx2)$")
+        message(FATAL_ERROR "unexpected exact vector backend")
     endif()
 
     string(JSON report_count LENGTH "${grid_json}" seed_runs ${seed_run_index} reports)
@@ -240,6 +285,20 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
             if(NOT encoder_backend MATCHES "^(scalar|sse2|avx2)$")
                 message(FATAL_ERROR "unexpected encoder vector backend: ${encoder_backend}")
             endif()
+            string(JSON current_direct_speedup GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} speed
+                binary_total_speedup_vs_current_exact_index_including_encode
+            )
+            string(JSON contiguous_direct_speedup GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} speed
+                binary_total_speedup_vs_contiguous_exact_including_encode
+            )
+            if(NOT current_direct_speedup GREATER 0
+               OR NOT contiguous_direct_speedup GREATER 0)
+                message(FATAL_ERROR "both direct exact speedups must be positive")
+            endif()
             string(JSON rerank_count LENGTH
                 "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
                 repeats ${repeat_index} rerank
@@ -268,6 +327,16 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
                     repeats ${repeat_index} rerank ${rerank_index}
                     reranked_recall_at_k_vs_exact
                 )
+                string(JSON current_rerank_speedup GET
+                    "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                    repeats ${repeat_index} rerank ${rerank_index}
+                    total_speedup_vs_current_exact_index
+                )
+                string(JSON contiguous_rerank_speedup GET
+                    "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                    repeats ${repeat_index} rerank ${rerank_index}
+                    total_speedup_vs_contiguous_exact
+                )
 
                 if(rerank_index EQUAL 0 AND NOT candidate_limit EQUAL 3)
                     message(FATAL_ERROR "expected first candidate_limit 3")
@@ -281,6 +350,10 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
 
                 if(coverage LESS 0 OR coverage GREATER 1)
                     message(FATAL_ERROR "coverage out of range: ${coverage}")
+                endif()
+                if(NOT current_rerank_speedup GREATER 0
+                   OR NOT contiguous_rerank_speedup GREATER 0)
+                    message(FATAL_ERROR "both rerank exact speedups must be positive")
                 endif()
                 if(NOT coverage STREQUAL reranked_recall)
                     message(FATAL_ERROR

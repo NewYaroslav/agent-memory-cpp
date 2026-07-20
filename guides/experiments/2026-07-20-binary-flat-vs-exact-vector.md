@@ -641,9 +641,11 @@ and on-the-fly hyperplane generation dominated the hot path.
 
 At this scale, `512 bits x 500 candidates` is again a strong balanced point:
 `0.9595` exact-top-k coverage, perfect top-1 agreement, and `2.27x` total
-speedup against the SIMD exact baseline. `1024 x 500` is the quality-oriented
-point at `0.996` coverage and `1.57x`. Candidate sets of 2,000 are still too
-large: exact reranking and result selection erase the gain.
+speedup against the current SIMD-enabled `ExactVectorIndex`. This comparison is
+qualified by the contiguous compute-oriented baseline in the continuation
+below. `1024 x 500` is the quality-oriented point at `0.996` coverage and
+`1.57x` against the current index. Candidate sets of 2,000 are still too large:
+exact reranking and result selection erase the gain.
 
 The next evidence gate is no longer basic flat-scan viability. It is:
 
@@ -652,3 +654,93 @@ The next evidence gate is no longer basic flat-scan viability. It is:
 - more data and encoder seeds with confidence intervals;
 - a mature high-recall Hamming ANN implementation, because the first bounded
   multi-probe prototype did not beat the optimized flat scan at useful recall.
+
+## 2026-07-20: comparable contiguous dense baseline
+
+### Why this continuation was needed
+
+The previous grid compared a compact binary filter with the production-shaped
+`ExactVectorIndex`. That is a valid implementation-level comparison, but it is
+not a clean answer to whether Hamming filtering beats exact dense arithmetic:
+the current exact index stores records in an ordered map, keeps embeddings in
+separate allocations, parses identifiers, and constructs public result objects.
+
+This continuation adds a second exact oracle that keeps all vectors in one
+row-major float buffer, caches inverse norms, dispatches the selected SIMD dot
+product kernel once per batch, reuses dot-product and scoring workspaces, and
+returns only document positions. The current index and contiguous baseline are
+timed in alternating order. The benchmark rejects the run unless both produce
+the same exact top-k for every query.
+
+### Expected result
+
+The contiguous baseline was expected to be faster than the current index and
+therefore reduce the reported binary speedup. A meaningful binary-filter win
+would need to remain visible against this stronger denominator, not merely
+against object layout and API overhead in `ExactVectorIndex`.
+
+### Configuration
+
+- 10,000 documents and 100 queries;
+- 128-dimensional clustered normalized vectors;
+- data seed `42`;
+- encoder seeds `1001` and `1002`;
+- signature widths `128`, `256`, `512`, and `1024` bits;
+- candidate limits `100`, `500`, `1000`, and `2000`;
+- five binary timing repeats per encoder seed;
+- seven timing repeats for each exact baseline;
+- randomized grid order and alternating exact-baseline order.
+
+### Exact-baseline result
+
+| Baseline | Median for 100 queries | Samples, ms |
+| --- | ---: | --- |
+| Current `ExactVectorIndex` | 57.8083 ms | 57.8083, 59.7544, 56.8027, 58.2207, 56.5642, 59.5654, 57.7041 |
+| Contiguous exact cosine | 28.7912 ms | 29.1613, 28.7912, 28.4862, 27.9653, 29.1701, 28.6445, 28.8731 |
+
+The existing index is about `2.01x` slower in this fixture. Consequently, every
+binary speedup is reported twice below. Each cell is
+`coverage / top-1 / speedup vs current index / speedup vs contiguous exact`.
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 6.60x / 3.29x | 0.6260 / 0.685 / 2.65x / 1.32x | 0.7795 / 0.850 / 1.51x / 0.75x | 0.9035 / 0.955 / 0.82x / 0.41x |
+| 256 | 0.5065 / 0.665 / 5.64x / 2.81x | 0.8260 / 0.890 / 2.55x / 1.27x | 0.9265 / 0.955 / 1.52x / 0.76x | 0.9780 / 0.990 / 0.82x / 0.41x |
+| 512 | 0.7435 / 0.895 / 3.96x / 1.97x | 0.9595 / 1.000 / 2.25x / 1.12x | 0.9895 / 1.000 / 1.43x / 0.71x | 0.9990 / 1.000 / 0.81x / 0.40x |
+| 1024 | 0.9010 / 1.000 / 2.22x / 1.10x | 0.9960 / 1.000 / 1.55x / 0.77x | 1.0000 / 1.000 / 1.12x / 0.56x | 1.0000 / 1.000 / 0.72x / 0.36x |
+
+Direct binary top-k remains a poor final ranker. Its total median and speedup
+against current/contiguous exact were `5.4553 ms` and `10.60x/5.28x` at 128
+bits, `7.5054 ms` and `7.70x/3.84x` at 256 bits, `11.3379 ms` and
+`5.10x/2.54x` at 512 bits, and `23.1109 ms` and `2.50x/1.25x` at 1024 bits.
+Mean direct top-10 recall ranged only from `0.0805` to `0.4295`.
+
+### Revised conclusion
+
+Binary signatures are useful as a compact candidate filter, but the latency
+claim is configuration- and baseline-dependent. The earlier `512 x 500`
+result remains attractive for quality (`0.9595` coverage and perfect top-1),
+yet its advantage over the comparable contiguous exact scan is only `1.12x` in
+this single local run. That is directional evidence, not a robust performance
+win. The `1024 x 500` quality-oriented point loses to contiguous exact at
+`0.77x`. Lower-width and smaller-candidate modes produce clearer speedups, but
+with correspondingly lower exact-top-k coverage.
+
+At 128 source dimensions, a high-quality flat binary filter therefore has not
+yet demonstrated a decisive compute-only latency advantage. Its stronger
+system-level cases remain compact hot-index payload, lower memory bandwidth,
+avoiding reads of most persisted float vectors, and higher-dimensional source
+embeddings where exact dense arithmetic is more expensive. The current rerank
+path still uses individually allocated `Embedding` values, so a compact
+row-major rerank store may improve the complete filter pipeline.
+
+### Follow-up experiments
+
+- Repeat on real 384/768/1536-dimensional embeddings with qrels.
+- Measure persisted vector bytes fetched and read amplification for rerank.
+- Add a compact row-major or blocked dense candidate store and compare it with
+  both exact denominators.
+- Test adaptive candidate budgets instead of one fixed limit for every query.
+- Compare a mature sub-linear Hamming ANN implementation with both flat scans.
+- Add more data seeds, confidence intervals, and randomized warm-up protocol
+  before choosing a production default.

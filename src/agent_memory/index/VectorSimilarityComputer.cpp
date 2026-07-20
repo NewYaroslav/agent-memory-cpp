@@ -353,6 +353,19 @@ namespace agent_memory {
         return dot_product_kernel(m_backend)(lhs, rhs, size);
     }
 
+    void VectorSimilarityComputer::dot_products(
+        const float* query,
+        const float* rows,
+        std::size_t row_count,
+        std::size_t row_width,
+        float* output
+    ) const noexcept {
+        const auto kernel = dot_product_kernel(m_backend);
+        for(std::size_t row = 0; row < row_count; ++row) {
+            output[row] = kernel(query, rows + row * row_width, row_width);
+        }
+    }
+
     float VectorSimilarityComputer::squared_norm(const Embedding& embedding) const noexcept {
         return dot_product_kernel(m_backend)(
             embedding.values.data(),
