@@ -9,12 +9,17 @@ namespace agent_memory {
 
     namespace {
 
-        [[nodiscard]] bool closer_binary_result(
-            const BinarySignatureSearchResult& lhs,
-            const BinarySignatureSearchResult& rhs
+        struct ScoredRecord final {
+            const BinarySignatureRecord* record = nullptr;
+            std::size_t hamming_distance = 0;
+        };
+
+        [[nodiscard]] bool closer_binary_record(
+            const ScoredRecord& lhs,
+            const ScoredRecord& rhs
         ) noexcept {
             if(lhs.hamming_distance == rhs.hamming_distance) {
-                return lhs.chunk_id < rhs.chunk_id;
+                return lhs.record->chunk_id < rhs.record->chunk_id;
             }
             return lhs.hamming_distance < rhs.hamming_distance;
         }
@@ -73,29 +78,39 @@ namespace agent_memory {
 
         validate_query(query);
 
+        std::vector<ScoredRecord> scored_records;
+        scored_records.reserve(m_records.size());
         for(const auto& item : m_records) {
             const auto& record = item.second;
             if(!matches_metadata_filters(record.metadata, query.metadata_filters)) {
                 continue;
             }
 
-            results.push_back(BinarySignatureSearchResult{
-                record.chunk_id,
-                hamming_distance(query.signature, record.signature),
-                record.metadata
+            scored_records.push_back(ScoredRecord{
+                &record,
+                hamming_distance(query.signature, record.signature)
             });
         }
 
-        if(results.size() > query.limit) {
+        if(scored_records.size() > query.limit) {
             std::partial_sort(
-                results.begin(),
-                results.begin() + static_cast<std::ptrdiff_t>(query.limit),
-                results.end(),
-                closer_binary_result
+                scored_records.begin(),
+                scored_records.begin() + static_cast<std::ptrdiff_t>(query.limit),
+                scored_records.end(),
+                closer_binary_record
             );
-            results.resize(query.limit);
+            scored_records.resize(query.limit);
         } else {
-            std::sort(results.begin(), results.end(), closer_binary_result);
+            std::sort(scored_records.begin(), scored_records.end(), closer_binary_record);
+        }
+
+        results.reserve(scored_records.size());
+        for(const auto& scored : scored_records) {
+            results.push_back(BinarySignatureSearchResult{
+                scored.record->chunk_id,
+                scored.hamming_distance,
+                scored.record->metadata
+            });
         }
         return results;
     }

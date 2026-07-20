@@ -18,6 +18,7 @@
 #include "index/IBinarySignatureIndex.hpp"
 #include "index/IVectorIndex.hpp"
 #include "index/RandomHyperplaneBinaryEncoder.hpp"
+#include "index/VectorSimilarityComputer.hpp"
 #include "index/VectorIndex.hpp"
 
 #endif

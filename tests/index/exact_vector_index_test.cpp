@@ -1,5 +1,6 @@
 #include <agent_memory.hpp>
 
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -40,6 +41,10 @@ namespace {
             return true;
         }
         return false;
+    }
+
+    [[nodiscard]] bool almost_equal(float lhs, float rhs) noexcept {
+        return std::fabs(lhs - rhs) <= 1.0e-5F;
     }
 
 } // namespace
@@ -182,6 +187,64 @@ int main() {
         euclidean_results[1].chunk_id.value() != "chunk:far"
     ) {
         return fail("euclidean search must rank lower distances first");
+    }
+
+    agent_memory::ExactVectorIndex scalar_index(agent_memory::ExactVectorIndexOptions{
+        13,
+        agent_memory::SimilarityMetric::Cosine,
+        false
+    });
+    agent_memory::ExactVectorIndex simd_index(agent_memory::ExactVectorIndexOptions{
+        13,
+        agent_memory::SimilarityMetric::Cosine,
+        true
+    });
+    const std::vector<std::pair<std::string, std::vector<float>>> wide_records = {
+        {"chunk:wide-a", {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}},
+        {"chunk:wide-b", {13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}},
+        {"chunk:wide-c", {1, -2, 3, -4, 5, -6, 7, -8, 9, -10, 11, -12, 13}}
+    };
+    for(const auto& item : wide_records) {
+        scalar_index.upsert(make_record(item.first, item.second, "wide"));
+        simd_index.upsert(make_record(item.first, item.second, "wide"));
+    }
+    const agent_memory::VectorSearchQuery wide_query{
+        agent_memory::Embedding{{
+            2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14
+        }},
+        3,
+        {}
+    };
+    const auto scalar_results = scalar_index.search(wide_query);
+    const auto simd_results = simd_index.search(wide_query);
+    if(scalar_index.similarity_backend() != agent_memory::VectorSimilarityBackend::Scalar
+       || scalar_results.size() != simd_results.size()) {
+        return fail("exact vector index must expose scalar fallback and comparable results");
+    }
+    for(std::size_t result_index = 0; result_index < scalar_results.size(); ++result_index) {
+        if(scalar_results[result_index].chunk_id != simd_results[result_index].chunk_id
+           || !almost_equal(
+               scalar_results[result_index].score,
+               simd_results[result_index].score
+           )) {
+            return fail("SIMD exact vector ranking must match the scalar reference");
+        }
+    }
+
+    simd_index.upsert(make_record(
+        "chunk:wide-a",
+        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5},
+        "wide"
+    ));
+    const auto replacement_results = simd_index.search(agent_memory::VectorSearchQuery{
+        agent_memory::Embedding{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}},
+        1,
+        {}
+    });
+    if(replacement_results.empty()
+       || replacement_results.front().chunk_id.value() != "chunk:wide-a"
+       || !almost_equal(replacement_results.front().score, 1.0F)) {
+        return fail("upsert replacement must refresh the cached cosine norm");
     }
 
     index.clear();

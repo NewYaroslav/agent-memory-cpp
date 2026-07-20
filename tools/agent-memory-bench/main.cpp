@@ -7,6 +7,7 @@
 #include <agent_memory/index/ExactVectorIndex.hpp>
 #include <agent_memory/index/FlatBinarySignatureIndex.hpp>
 #include <agent_memory/index/RandomHyperplaneBinaryEncoder.hpp>
+#include <agent_memory/index/VectorSimilarityComputer.hpp>
 #include <agent_memory/retrieval/ExactLexicalRetriever.hpp>
 #include <agent_memory/retrieval/BowVectorRetriever.hpp>
 #include <agent_memory/retrieval/IRetrievalEngine.hpp>
@@ -118,6 +119,7 @@ namespace {
         double data_generation_ms = 0.0;
         double exact_build_ms = 0.0;
         double binary_build_ms = 0.0;
+        std::string exact_similarity_backend;
         SearchTiming exact_query;
         std::vector<double> exact_query_total_ms_samples;
         SearchTiming binary_query;
@@ -133,6 +135,7 @@ namespace {
         SyntheticDenseData data;
         double data_generation_ms = 0.0;
         double exact_build_ms = 0.0;
+        std::string exact_similarity_backend;
         SearchTiming exact_query;
         std::vector<double> exact_query_total_ms_samples;
         std::vector<std::vector<std::string>> exact_top_k;
@@ -733,22 +736,12 @@ namespace {
         return value;
     }
 
-    [[nodiscard]] float normalized_dot_product(
-        const agent_memory::Embedding& lhs,
-        const agent_memory::Embedding& rhs
-    ) noexcept {
-        float score = 0.0F;
-        for(std::size_t index = 0; index < lhs.values.size(); ++index) {
-            score += lhs.values[index] * rhs.values[index];
-        }
-        return score;
-    }
-
     [[nodiscard]] std::vector<std::string> rerank_binary_candidates_exact(
         const agent_memory::Embedding& query,
         const std::vector<agent_memory::Embedding>& documents,
         const std::vector<agent_memory::BinarySignatureSearchResult>& candidates,
-        std::size_t result_limit
+        std::size_t result_limit,
+        const agent_memory::VectorSimilarityComputer& similarity
     ) {
         std::vector<ScoredDocument> scored;
         scored.reserve(candidates.size());
@@ -761,7 +754,7 @@ namespace {
             }
             scored.push_back(ScoredDocument{
                 *index,
-                normalized_dot_product(query, documents[*index])
+                similarity.dot_product(query, documents[*index])
             });
         }
 
@@ -1571,6 +1564,7 @@ namespace {
         document["speed"] = {
             {"data_generation_ms", result.data_generation_ms},
             {"exact_float_build_ms", result.exact_build_ms},
+            {"exact_vector_similarity_backend", result.exact_similarity_backend},
             {"binary_encode_and_build_ms", result.binary_build_ms},
             {"exact_float_query_search_ms", result.exact_query.search_ms},
             {"exact_float_query_total_ms", result.exact_query.total_ms},
@@ -1671,6 +1665,11 @@ namespace {
             config.embedding_dimensions,
             agent_memory::SimilarityMetric::Cosine
         });
+        oracle.exact_similarity_backend = std::string{
+            agent_memory::vector_similarity_backend_name(
+                exact_index.similarity_backend()
+            )
+        };
 
         const auto exact_build_start = Clock::now();
         for(std::size_t index = 0; index < oracle.data.documents.size(); ++index) {
@@ -1755,6 +1754,7 @@ namespace {
         result.data_generation_ms = oracle.data_generation_ms;
         result.exact_build_ms = oracle.exact_build_ms;
         result.binary_build_ms = elapsed_ms(binary_build_start, binary_build_end);
+        result.exact_similarity_backend = oracle.exact_similarity_backend;
         result.exact_query = oracle.exact_query;
         result.exact_query_total_ms_samples = oracle.exact_query_total_ms_samples;
         result.exact_payload_bytes = oracle.exact_payload_bytes;
@@ -1807,6 +1807,7 @@ namespace {
                 / static_cast<double>(oracle.data.queries.size());
         }
 
+        const agent_memory::VectorSimilarityComputer rerank_similarity;
         result.rerank_candidates.reserve(config.rerank_candidate_limits.size());
         for(const auto candidate_limit : config.rerank_candidate_limits) {
             BinaryRerankCandidateResult candidate_result;
@@ -1854,7 +1855,8 @@ namespace {
                     oracle.data.queries[query_index],
                     oracle.data.documents,
                     candidates,
-                    config.result_limit
+                    config.result_limit,
+                    rerank_similarity
                 );
                 const auto rerank_end = Clock::now();
                 candidate_result.exact_rerank_ms += elapsed_ms(
@@ -2103,6 +2105,7 @@ namespace {
         return {
             {"data_generation_ms", oracle.data_generation_ms},
             {"exact_float_build_ms", oracle.exact_build_ms},
+            {"exact_vector_similarity_backend", oracle.exact_similarity_backend},
             {"exact_timing_repeat_count", oracle.exact_query_total_ms_samples.size()},
             {"exact_float_query_total_ms_samples", oracle.exact_query_total_ms_samples},
             {"exact_float_query_total_ms_stats",

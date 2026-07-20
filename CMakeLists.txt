@@ -51,6 +51,7 @@ add_library(agent_memory STATIC
     src/agent_memory/index/IBinarySignatureIndex.cpp
     src/agent_memory/index/IVectorIndex.cpp
     src/agent_memory/index/RandomHyperplaneBinaryEncoder.cpp
+    src/agent_memory/index/VectorSimilarityComputer.cpp
     src/agent_memory/index/VectorIndex.cpp
     src/agent_memory/lexical/ExactLexicalIndex.cpp
     src/agent_memory/lexical/IChunkEnricher.cpp

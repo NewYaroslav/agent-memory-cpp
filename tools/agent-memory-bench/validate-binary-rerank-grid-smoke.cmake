@@ -151,6 +151,10 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
     string(JSON speedup_denominator GET
         "${grid_json}" seed_runs ${seed_run_index} common_exact speedup_denominator
     )
+    string(JSON similarity_backend GET
+        "${grid_json}" seed_runs ${seed_run_index} common_exact
+        exact_vector_similarity_backend
+    )
     if(NOT exact_repeat_count EQUAL 3 OR NOT exact_stat_count EQUAL 3)
         message(FATAL_ERROR "expected 3 exact timing samples")
     endif()
@@ -166,6 +170,9 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
     endif()
     if(NOT speedup_denominator STREQUAL "median_exact_float_query_total_ms")
         message(FATAL_ERROR "unexpected speedup denominator: ${speedup_denominator}")
+    endif()
+    if(NOT similarity_backend MATCHES "^(scalar|sse2|avx2)$")
+        message(FATAL_ERROR "unexpected exact vector backend: ${similarity_backend}")
     endif()
 
     string(JSON report_count LENGTH "${grid_json}" seed_runs ${seed_run_index} reports)

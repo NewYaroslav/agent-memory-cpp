@@ -407,7 +407,7 @@ Local directional run:
 - exact timing repeats per data seed: `5`;
 - randomized execution order: enabled.
 
-### Aggregate results
+### Initial aggregate results before explicit float SIMD
 
 Each cell shows:
 
@@ -424,7 +424,8 @@ baseline has `5` timing measurements:
 ```
 
 Its conventional median, `360.403 ms`, is the denominator for every speedup in
-the table.
+the table. This run is retained as the historical pre-SIMD result; the
+controlled rerun below supersedes its latency conclusions.
 
 | Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
 | ---: | --- | --- | --- | --- |
@@ -467,10 +468,70 @@ This is still not a production benchmark:
   CPU frequency effects;
 - the corpus is synthetic clustered dense vectors, not real embeddings with qrels.
 
+### SIMD-controlled rerun
+
+The initial exact baseline used scalar source loops and recomputed cosine norms
+for every query/document pair. That made the binary speedup depend on an
+unnecessarily weak float implementation. In the same PR we therefore added:
+
+- runtime-selected AVX2 and SSE2 vector arithmetic with a scalar fallback;
+- cached inverse document norms and one query norm calculation per search;
+- lightweight exact and binary top-k candidates, so metadata is copied only
+  after partial selection;
+- the same SIMD dot-product backend for exact candidate reranking;
+- the selected exact backend in the JSON report.
+
+Eigen was not added. The dependency would not improve these two compact kernels
+over direct intrinsics, and the runtime-dispatched scalar fallback remains
+dependency-free.
+
+The clean rerun used the same data, seeds, bit widths, candidate limits, and
+sample counts. The selected backend was `avx2`. Exact timing samples were:
+
+```text
+56.336, 56.489, 55.995, 57.868, 57.668 ms
+```
+
+The median exact time fell from `360.403 ms` to `56.489 ms`, a `6.38x`
+improvement. Quality stayed unchanged, while the latency result changed
+materially:
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 0.80x | 0.6260 / 0.685 / 0.55x | 0.7795 / 0.850 / 0.40x | 0.9035 / 0.955 / 0.26x |
+| 256 | 0.5065 / 0.665 / 0.79x | 0.8260 / 0.890 / 0.54x | 0.9265 / 0.955 / 0.39x | 0.9780 / 0.990 / 0.26x |
+| 512 | 0.7435 / 0.895 / 0.56x | 0.9595 / 1.000 / 0.41x | 0.9895 / 1.000 / 0.33x | 0.9990 / 1.000 / 0.24x |
+| 1024 | 0.9010 / 1.000 / 0.34x | 0.9960 / 1.000 / 0.29x | 1.0000 / 1.000 / 0.24x | 1.0000 / 1.000 / 0.19x |
+
+No tested flat-binary candidate configuration beats the optimized exact float
+scan at this `128`-dimension, `10000`-document scale. The best total latency is
+`128 bits × 100 candidates` at `70.22 ms`, still `1.24x` slower than exact and
+with only `0.3200` exact-top-k coverage.
+
+The stage breakdown explains why:
+
+| Configuration | Query encode ms | Hamming search ms | Exact rerank ms | Total ms |
+| --- | ---: | ---: | ---: | ---: |
+| 128 bits × 100 | 12.56 | 55.24 | 2.49 | 70.22 |
+| 512 bits × 100 | 49.78 | 49.61 | 2.53 | 101.73 |
+| 512 bits × 500 | 50.26 | 75.65 | 10.08 | 136.14 |
+| 1024 bits × 100 | 98.77 | 62.74 | 4.12 | 165.58 |
+
+Flat Hamming search alone can approach or slightly beat the exact float scan,
+but random-hyperplane query encoding consumes the gain. Candidate over-fetch
+and reranking then add more work. Binary signatures still reduce index payload,
+but this flat implementation is currently a compression and candidate-quality
+experiment, not a latency optimization.
+
 ### What to check next
 
+- Vectorize or batch the random-hyperplane encoder and measure encoding
+  separately before changing the retrieval architecture.
+- Add a sub-linear Hamming candidate index; a full-corpus Hamming scan cannot
+  exploit the main indexing benefit of binary signatures.
+- Repeat on real `384`, `768`, and `1536` dimensional embeddings with qrels;
+  the float/binary crossover depends strongly on source dimension.
 - Increase data seed count before making architecture defaults.
-- Add real embedding vectors and qrels.
 - Add `nDCG@10`, dense-vector bytes read for rerank, and persisted vector fetch
   cost.
 - Compare top-N candidate selection with Hamming-radius or bucket/Multi-Index

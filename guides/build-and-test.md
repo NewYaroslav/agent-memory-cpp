@@ -85,6 +85,10 @@ controls repeated timing of the common exact baseline. Quality is sampled once
 per data/encoder seed pair; timing repeats are not treated as independent
 quality observations.
 
+Binary grid reports also record `exact_vector_similarity_backend`. On supported
+x86 builds the exact scan and reranker select AVX2 at runtime, fall back to SSE2
+when available, and otherwise use the scalar C++17 implementation.
+
 Run the deterministic staircase sweep helper:
 
 ```bash
