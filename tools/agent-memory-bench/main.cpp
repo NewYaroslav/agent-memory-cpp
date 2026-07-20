@@ -53,6 +53,8 @@ namespace {
     constexpr std::string_view kModeSyntheticSweep = "synthetic_sweep";
     constexpr std::string_view kModeSyntheticBinaryFlatVsFloat =
         "synthetic_binary_flat_vs_float";
+    constexpr std::string_view kModeSyntheticBinaryRerankGrid =
+        "synthetic_binary_rerank_grid";
     constexpr std::string_view kBaselineNameBm25Exact = "bm25_exact";
 
     struct BenchmarkConfig final {
@@ -69,6 +71,9 @@ namespace {
         fs::path dataset_path;
         fs::path output_path;
         std::vector<std::string> baselines;
+        std::vector<std::size_t> bit_counts;
+        std::vector<std::size_t> rerank_candidate_limits;
+        std::vector<std::uint32_t> seeds;
     };
 
     struct ScoredDocument final {
@@ -93,17 +98,38 @@ namespace {
         double search_ms = 0.0;
     };
 
+    struct BinaryRerankCandidateResult final {
+        std::size_t candidate_limit = 0;
+        SearchTiming binary_candidate_query;
+        double exact_rerank_ms = 0.0;
+        double total_ms = 0.0;
+        double exact_top_k_candidate_coverage = 0.0;
+        double reranked_recall_at_k_vs_exact = 0.0;
+        double reranked_top1_agreement = 0.0;
+    };
+
     struct BinaryFlatVsFloatResult final {
         double data_generation_ms = 0.0;
         double exact_build_ms = 0.0;
         double binary_build_ms = 0.0;
         SearchTiming exact_query;
         SearchTiming binary_query;
+        std::vector<BinaryRerankCandidateResult> rerank_candidates;
         double mean_recall_at_k_vs_exact = 0.0;
         double top1_agreement = 0.0;
         std::uint64_t exact_payload_bytes = 0;
         std::uint64_t binary_payload_bytes = 0;
         std::uint64_t process_peak_resident_set_bytes = 0;
+    };
+
+    struct BinaryBenchmarkOracle final {
+        SyntheticDenseData data;
+        double data_generation_ms = 0.0;
+        double exact_build_ms = 0.0;
+        SearchTiming exact_query;
+        std::vector<std::vector<std::string>> exact_top_k;
+        std::vector<std::unordered_set<std::string>> exact_top_k_sets;
+        std::uint64_t exact_payload_bytes = 0;
     };
 
     [[nodiscard]] double elapsed_ms(Clock::time_point start, Clock::time_point end) {
@@ -233,6 +259,123 @@ namespace {
         return baselines;
     }
 
+    [[nodiscard]] std::vector<std::size_t> read_optional_size_list(
+        const nlohmann::json& document,
+        std::string_view field
+    ) {
+        const auto* node = find_optional(document, field);
+        if(node == nullptr) {
+            return {};
+        }
+        if(!node->is_array() || node->empty()) {
+            throw std::runtime_error(
+                "config field '" + std::string{field}
+                + "' must be a non-empty integer array"
+            );
+        }
+
+        std::vector<std::size_t> values;
+        values.reserve(node->size());
+        std::set<std::size_t> seen;
+        for(const auto& entry : *node) {
+            if(!entry.is_number_integer()) {
+                throw std::runtime_error(
+                    "config field '" + std::string{field}
+                    + "' entries must be integers"
+                );
+            }
+
+            std::uint64_t raw = 0;
+            if(entry.is_number_unsigned()) {
+                raw = entry.get<std::uint64_t>();
+            } else {
+                const auto signed_value = entry.get<std::int64_t>();
+                if(signed_value <= 0) {
+                    throw std::runtime_error(
+                        "config field '" + std::string{field}
+                        + "' entries must be greater than zero"
+                    );
+                }
+                raw = static_cast<std::uint64_t>(signed_value);
+            }
+            if(raw == 0) {
+                throw std::runtime_error(
+                    "config field '" + std::string{field}
+                    + "' entries must be greater than zero"
+                );
+            }
+
+            const auto value = checked_size(raw, field);
+            if(!seen.insert(value).second) {
+                throw std::runtime_error(
+                    "config field '" + std::string{field}
+                    + "' must not contain duplicate values"
+                );
+            }
+            values.push_back(value);
+        }
+        return values;
+    }
+
+    [[nodiscard]] std::vector<std::uint32_t> read_optional_uint32_list(
+        const nlohmann::json& document,
+        std::string_view field
+    ) {
+        const auto values = read_optional_size_list(document, field);
+        std::vector<std::uint32_t> out;
+        out.reserve(values.size());
+        for(const auto value : values) {
+            if(value > static_cast<std::size_t>(
+                std::numeric_limits<std::uint32_t>::max()
+            )) {
+                throw std::runtime_error(
+                    "config field '" + std::string{field} + "' entries exceed uint32_t"
+                );
+            }
+            out.push_back(static_cast<std::uint32_t>(value));
+        }
+        return out;
+    }
+
+    [[nodiscard]] std::vector<std::size_t> default_rerank_candidate_limits(
+        std::size_t result_limit,
+        std::size_t document_count
+    ) {
+        const std::vector<std::size_t> multipliers = {1, 5, 10, 50};
+        std::vector<std::size_t> limits;
+        std::set<std::size_t> seen;
+        for(const auto multiplier : multipliers) {
+            std::size_t limit = result_limit;
+            if(multiplier != 0 && result_limit <= (
+                std::numeric_limits<std::size_t>::max() / multiplier
+            )) {
+                limit = result_limit * multiplier;
+            } else {
+                limit = document_count;
+            }
+            limit = std::min(limit, document_count);
+            if(limit != 0 && seen.insert(limit).second) {
+                limits.push_back(limit);
+            }
+        }
+        return limits;
+    }
+
+    void validate_rerank_candidate_limits(const BenchmarkConfig& config) {
+        for(const auto limit : config.rerank_candidate_limits) {
+            if(limit < config.result_limit) {
+                throw std::runtime_error(
+                    "config field 'rerank_candidate_limits' entries must be at least result_limit"
+                );
+            }
+            if(limit > config.document_count) {
+                throw std::runtime_error(
+                    "config field 'rerank_candidate_limits' entries must not exceed document_count"
+                );
+            }
+        }
+    }
+
     [[nodiscard]] BenchmarkConfig load_config(const fs::path& path) {
         std::ifstream input(path, std::ios::binary);
         if(!input) {
@@ -267,14 +410,16 @@ namespace {
         }
         const bool binary_flat_vs_float =
             config.mode == kModeSyntheticBinaryFlatVsFloat;
-        if(config.mode != kModeRandomExact && !binary_flat_vs_float) {
+        const bool binary_rerank_grid =
+            config.mode == kModeSyntheticBinaryRerankGrid;
+        if(config.mode != kModeRandomExact && !binary_flat_vs_float && !binary_rerank_grid) {
             throw std::runtime_error(
                 "config field 'mode' must be synthetic_random_exact, synthetic_sweep, "
-                "or synthetic_binary_flat_vs_float"
+                "synthetic_binary_flat_vs_float, or synthetic_binary_rerank_grid"
             );
         }
 
-        if(!binary_flat_vs_float) {
+        if(!binary_flat_vs_float && !binary_rerank_grid) {
             config.baseline_name = require_string(document, "baseline_name");
         }
         config.dataset_name = require_string(document, "dataset_name");
@@ -295,6 +440,21 @@ namespace {
                 require_positive_integer(document, "bit_count"),
                 "bit_count"
             );
+            config.rerank_candidate_limits = read_optional_size_list(
+                document,
+                "rerank_candidate_limits"
+            );
+        } else if(binary_rerank_grid) {
+            config.bit_counts = read_optional_size_list(document, "bit_counts");
+            if(config.bit_counts.empty()) {
+                throw std::runtime_error(
+                    "config field 'bit_counts' must be provided for synthetic_binary_rerank_grid"
+                );
+            }
+            config.rerank_candidate_limits = read_optional_size_list(
+                document,
+                "rerank_candidate_limits"
+            );
         }
         config.result_limit = checked_size(
             require_positive_integer(document, "result_limit"),
@@ -305,6 +465,23 @@ namespace {
             throw std::runtime_error("config field 'seed' exceeds uint32_t");
         }
         config.seed = static_cast<std::uint32_t>(seed);
+        config.seeds = {config.seed};
+        if(binary_rerank_grid) {
+            auto seeds = read_optional_uint32_list(document, "seeds");
+            if(!seeds.empty()) {
+                config.seeds = std::move(seeds);
+                config.seed = config.seeds.front();
+            }
+        }
+        if(binary_flat_vs_float || binary_rerank_grid) {
+            if(config.rerank_candidate_limits.empty()) {
+                config.rerank_candidate_limits = default_rerank_candidate_limits(
+                    config.result_limit,
+                    config.document_count
+                );
+            }
+            validate_rerank_candidate_limits(config);
+        }
         return config;
     }
 
@@ -448,6 +625,98 @@ namespace {
 
     [[nodiscard]] agent_memory::ChunkId make_chunk_id(std::size_t index) {
         return agent_memory::ChunkId{"doc:" + std::to_string(index)};
+    }
+
+    [[nodiscard]] std::optional<std::size_t> parse_prefixed_index(
+        std::string_view text,
+        std::string_view prefix
+    ) noexcept {
+        if(text.substr(0, prefix.size()) != prefix) {
+            return std::nullopt;
+        }
+        std::size_t value = 0;
+        const char* first = text.data() + static_cast<std::ptrdiff_t>(prefix.size());
+        const char* last = text.data() + static_cast<std::ptrdiff_t>(text.size());
+        const auto result = std::from_chars(first, last, value);
+        if(result.ec != std::errc{} || result.ptr != last) {
+            return std::nullopt;
+        }
+        return value;
+    }
+
+    [[nodiscard]] float normalized_dot_product(
+        const agent_memory::Embedding& lhs,
+        const agent_memory::Embedding& rhs
+    ) noexcept {
+        float score = 0.0F;
+        for(std::size_t index = 0; index < lhs.values.size(); ++index) {
+            score += lhs.values[index] * rhs.values[index];
+        }
+        return score;
+    }
+
+    [[nodiscard]] std::vector<std::string> rerank_binary_candidates_exact(
+        const agent_memory::Embedding& query,
+        const std::vector<agent_memory::Embedding>& documents,
+        const std::vector<agent_memory::BinarySignatureSearchResult>& candidates,
+        std::size_t result_limit
+    ) {
+        std::vector<ScoredDocument> scored;
+        scored.reserve(candidates.size());
+        for(const auto& candidate : candidates) {
+            const auto index = parse_prefixed_index(candidate.chunk_id.value(), "doc:");
+            if(!index || *index >= documents.size()) {
+                throw std::runtime_error(
+                    "binary rerank candidate chunk id is not a synthetic document id"
+                );
+            }
+            scored.push_back(ScoredDocument{
+                *index,
+                normalized_dot_product(query, documents[*index])
+            });
+        }
+
+        const auto compare = [](const ScoredDocument& lhs, const ScoredDocument& rhs) {
+            if(lhs.score == rhs.score) {
+                return lhs.index < rhs.index;
+            }
+            return lhs.score > rhs.score;
+        };
+        if(scored.size() > result_limit) {
+            std::partial_sort(
+                scored.begin(),
+                scored.begin() + static_cast<std::ptrdiff_t>(result_limit),
+                scored.end(),
+                compare
+            );
+            scored.resize(result_limit);
+        } else {
+            std::sort(scored.begin(), scored.end(), compare);
+        }
+
+        std::vector<std::string> ids;
+        ids.reserve(scored.size());
+        for(const auto& item : scored) {
+            ids.push_back("doc:" + std::to_string(item.index));
+        }
+        return ids;
+    }
+
+    [[nodiscard]] double recall_against_exact_top_k(
+        const std::vector<std::string>& actual,
+        const std::unordered_set<std::string>& exact_ids
+    ) {
+        if(exact_ids.empty()) {
+            return 0.0;
+        }
+        std::size_t intersection_count = 0;
+        for(const auto& id : actual) {
+            if(exact_ids.find(id) != exact_ids.end()) {
+                ++intersection_count;
+            }
+        }
+        return static_cast<double>(intersection_count)
+            / static_cast<double>(exact_ids.size());
     }
 
     [[nodiscard]] std::uint64_t checked_payload_bytes(
@@ -797,8 +1066,25 @@ namespace {
         return static_cast<double>(query_count) * 1000.0 / total_ms;
     }
 
+    [[nodiscard]] nlohmann::json binary_flat_vs_float_report_to_json(
+        const BenchmarkConfig& config,
+        const agent_memory::BinarySignatureEncoderInfo& encoder_info,
+        const BinaryFlatVsFloatResult& result
+    );
+
     void write_binary_flat_vs_float_json_report(
         const fs::path& path,
+        const BenchmarkConfig& config,
+        const agent_memory::BinarySignatureEncoderInfo& encoder_info,
+        const BinaryFlatVsFloatResult& result
+    ) {
+        write_text_file(
+            path,
+            binary_flat_vs_float_report_to_json(config, encoder_info, result).dump(2) + "\n"
+        );
+    }
+
+    [[nodiscard]] nlohmann::json binary_flat_vs_float_report_to_json(
         const BenchmarkConfig& config,
         const agent_memory::BinarySignatureEncoderInfo& encoder_info,
         const BinaryFlatVsFloatResult& result
@@ -859,6 +1145,32 @@ namespace {
                 ? 0.0
                 : result.exact_query.total_ms / result.binary_query.total_ms}
         };
+        document["rerank"] = nlohmann::json::array();
+        for(const auto& candidate : result.rerank_candidates) {
+            document["rerank"].push_back({
+                {"candidate_limit", candidate.candidate_limit},
+                {"exact_top_k_candidate_coverage",
+                    candidate.exact_top_k_candidate_coverage},
+                {"reranked_recall_at_k_vs_exact",
+                    candidate.reranked_recall_at_k_vs_exact},
+                {"reranked_top1_agreement", candidate.reranked_top1_agreement},
+                {"binary_candidate_encode_ms",
+                    candidate.binary_candidate_query.encode_ms},
+                {"binary_candidate_search_ms",
+                    candidate.binary_candidate_query.search_ms},
+                {"exact_rerank_ms", candidate.exact_rerank_ms},
+                {"total_ms", candidate.total_ms},
+                {"mean_query_ms", per_query_ms(candidate.total_ms, config.query_count)},
+                {"queries_per_second", queries_per_second(
+                    candidate.total_ms,
+                    config.query_count
+                )},
+                {"total_speedup_vs_exact_search",
+                    candidate.total_ms <= 0.0
+                    ? 0.0
+                    : result.exact_query.total_ms / candidate.total_ms}
+            });
+        }
         document["index"] = {
             {"exact_vector_payload_bytes", result.exact_payload_bytes},
             {"binary_signature_payload_bytes", result.binary_payload_bytes},
@@ -876,24 +1188,76 @@ namespace {
             "Timing is one local in-process run and is directional, not statistically stable.",
             "Exact search timing excludes quality-bookkeeping ID extraction.",
             "Binary total timing is query signature encoding plus exact flat Hamming scan.",
+            "Rerank rows measure binary candidate over-fetch followed by exact float rerank.",
             "Process peak RSS is a whole benchmark-process high-water mark, not per-index memory."
         });
-        write_text_file(path, document.dump(2) + "\n");
+        return document;
     }
 
-    [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark(
-        const BenchmarkConfig& config,
-        const agent_memory::RandomHyperplaneBinaryEncoder& encoder
+    [[nodiscard]] BinaryBenchmarkOracle prepare_binary_benchmark_oracle(
+        const BenchmarkConfig& config
     ) {
+        BinaryBenchmarkOracle oracle;
+
         const auto data_start = Clock::now();
-        auto data = make_clustered_dense_data(config);
+        oracle.data = make_clustered_dense_data(config);
         const auto data_end = Clock::now();
+        oracle.data_generation_ms = elapsed_ms(data_start, data_end);
 
         agent_memory::ExactVectorIndex exact_index(agent_memory::ExactVectorIndexOptions{
             config.embedding_dimensions,
             agent_memory::SimilarityMetric::Cosine
         });
 
+        const auto exact_build_start = Clock::now();
+        for(std::size_t index = 0; index < oracle.data.documents.size(); ++index) {
+            exact_index.upsert(agent_memory::VectorRecord{
+                make_chunk_id(index),
+                oracle.data.documents[index],
+                {}
+            });
+        }
+        const auto exact_build_end = Clock::now();
+        oracle.exact_build_ms = elapsed_ms(exact_build_start, exact_build_end);
+
+        oracle.exact_payload_bytes = checked_payload_bytes(
+            config.document_count,
+            config.embedding_dimensions,
+            sizeof(float)
+        );
+
+        oracle.exact_top_k.reserve(oracle.data.queries.size());
+        for(const auto& query_embedding : oracle.data.queries) {
+            const auto search_start = Clock::now();
+            const auto hits = exact_index.search(agent_memory::VectorSearchQuery{
+                query_embedding,
+                config.result_limit,
+                {}
+            });
+            const auto search_end = Clock::now();
+            oracle.exact_query.search_ms += elapsed_ms(search_start, search_end);
+
+            std::vector<std::string> ids;
+            ids.reserve(hits.size());
+            for(const auto& hit : hits) {
+                ids.push_back(hit.chunk_id.value());
+            }
+            oracle.exact_top_k.push_back(std::move(ids));
+        }
+        oracle.exact_query.total_ms = oracle.exact_query.search_ms;
+
+        oracle.exact_top_k_sets.reserve(oracle.exact_top_k.size());
+        for(const auto& ids : oracle.exact_top_k) {
+            oracle.exact_top_k_sets.emplace_back(ids.begin(), ids.end());
+        }
+        return oracle;
+    }
+
+    [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark_with_oracle(
+        const BenchmarkConfig& config,
+        const agent_memory::RandomHyperplaneBinaryEncoder& encoder,
+        const BinaryBenchmarkOracle& oracle
+    ) {
         const auto signature_info = agent_memory::make_binary_signature_info(
             encoder.info(),
             make_synthetic_model_info(config),
@@ -903,21 +1267,11 @@ namespace {
             agent_memory::FlatBinarySignatureIndexOptions{signature_info}
         );
 
-        const auto exact_build_start = Clock::now();
-        for(std::size_t index = 0; index < data.documents.size(); ++index) {
-            exact_index.upsert(agent_memory::VectorRecord{
-                make_chunk_id(index),
-                data.documents[index],
-                {}
-            });
-        }
-        const auto exact_build_end = Clock::now();
-
         const auto binary_build_start = Clock::now();
-        for(std::size_t index = 0; index < data.documents.size(); ++index) {
+        for(std::size_t index = 0; index < oracle.data.documents.size(); ++index) {
             binary_index.upsert(agent_memory::BinarySignatureRecord{
                 make_chunk_id(index),
-                encoder.encode(data.documents[index]),
+                encoder.encode(oracle.data.documents[index]),
                 signature_info,
                 {}
             });
@@ -925,46 +1279,22 @@ namespace {
         const auto binary_build_end = Clock::now();
 
         BinaryFlatVsFloatResult result;
-        result.data_generation_ms = elapsed_ms(data_start, data_end);
-        result.exact_build_ms = elapsed_ms(exact_build_start, exact_build_end);
+        result.data_generation_ms = oracle.data_generation_ms;
+        result.exact_build_ms = oracle.exact_build_ms;
         result.binary_build_ms = elapsed_ms(binary_build_start, binary_build_end);
-        result.exact_payload_bytes = checked_payload_bytes(
-            config.document_count,
-            config.embedding_dimensions,
-            sizeof(float)
-        );
+        result.exact_query = oracle.exact_query;
+        result.exact_payload_bytes = oracle.exact_payload_bytes;
         result.binary_payload_bytes = checked_payload_bytes(
             config.document_count,
             agent_memory::binary_signature_word_count(config.bit_count),
             sizeof(std::uint64_t)
         );
 
-        std::vector<std::vector<std::string>> exact_top_k;
-        exact_top_k.reserve(data.queries.size());
-        for(const auto& query_embedding : data.queries) {
-            const auto search_start = Clock::now();
-            const auto hits = exact_index.search(agent_memory::VectorSearchQuery{
-                query_embedding,
-                config.result_limit,
-                {}
-            });
-            const auto search_end = Clock::now();
-            result.exact_query.search_ms += elapsed_ms(search_start, search_end);
-
-            std::vector<std::string> ids;
-            ids.reserve(hits.size());
-            for(const auto& hit : hits) {
-                ids.push_back(hit.chunk_id.value());
-            }
-            exact_top_k.push_back(std::move(ids));
-        }
-        result.exact_query.total_ms = result.exact_query.search_ms;
-
         double recall_sum = 0.0;
         std::size_t top1_match_count = 0;
-        for(std::size_t query_index = 0; query_index < data.queries.size(); ++query_index) {
+        for(std::size_t query_index = 0; query_index < oracle.data.queries.size(); ++query_index) {
             const auto encode_start = Clock::now();
-            const auto query_signature = encoder.encode(data.queries[query_index]);
+            const auto query_signature = encoder.encode(oracle.data.queries[query_index]);
             const auto encode_end = Clock::now();
             result.binary_query.encode_ms += elapsed_ms(encode_start, encode_end);
 
@@ -980,35 +1310,122 @@ namespace {
             result.binary_query.total_ms =
                 result.binary_query.encode_ms + result.binary_query.search_ms;
 
-            std::unordered_set<std::string> exact_ids(
-                exact_top_k[query_index].begin(),
-                exact_top_k[query_index].end()
-            );
-            std::size_t intersection_count = 0;
+            std::vector<std::string> binary_ids;
+            binary_ids.reserve(hits.size());
             for(const auto& hit : hits) {
-                if(exact_ids.find(hit.chunk_id.value()) != exact_ids.end()) {
-                    ++intersection_count;
-                }
+                binary_ids.push_back(hit.chunk_id.value());
             }
-            if(!exact_ids.empty()) {
-                recall_sum += static_cast<double>(intersection_count)
-                    / static_cast<double>(exact_ids.size());
-            }
-            if(!exact_top_k[query_index].empty() && !hits.empty()
-               && exact_top_k[query_index].front() == hits.front().chunk_id.value()) {
+            recall_sum += recall_against_exact_top_k(
+                binary_ids,
+                oracle.exact_top_k_sets[query_index]
+            );
+            if(!oracle.exact_top_k[query_index].empty() && !hits.empty()
+               && oracle.exact_top_k[query_index].front() == hits.front().chunk_id.value()) {
                 ++top1_match_count;
             }
         }
 
-        if(!data.queries.empty()) {
+        if(!oracle.data.queries.empty()) {
             result.mean_recall_at_k_vs_exact =
-                recall_sum / static_cast<double>(data.queries.size());
+                recall_sum / static_cast<double>(oracle.data.queries.size());
             result.top1_agreement =
                 static_cast<double>(top1_match_count)
-                / static_cast<double>(data.queries.size());
+                / static_cast<double>(oracle.data.queries.size());
         }
+
+        result.rerank_candidates.reserve(config.rerank_candidate_limits.size());
+        for(const auto candidate_limit : config.rerank_candidate_limits) {
+            BinaryRerankCandidateResult candidate_result;
+            candidate_result.candidate_limit = candidate_limit;
+
+            double candidate_recall_sum = 0.0;
+            double reranked_recall_sum = 0.0;
+            std::size_t reranked_top1_match_count = 0;
+            for(std::size_t query_index = 0; query_index < oracle.data.queries.size(); ++query_index) {
+                const auto encode_start = Clock::now();
+                const auto query_signature = encoder.encode(oracle.data.queries[query_index]);
+                const auto encode_end = Clock::now();
+                candidate_result.binary_candidate_query.encode_ms += elapsed_ms(
+                    encode_start,
+                    encode_end
+                );
+
+                const auto search_start = Clock::now();
+                const auto candidates = binary_index.search(
+                    agent_memory::BinarySignatureSearchQuery{
+                        query_signature,
+                        signature_info,
+                        candidate_limit,
+                        {}
+                    }
+                );
+                const auto search_end = Clock::now();
+                candidate_result.binary_candidate_query.search_ms += elapsed_ms(
+                    search_start,
+                    search_end
+                );
+
+                std::vector<std::string> candidate_ids;
+                candidate_ids.reserve(candidates.size());
+                for(const auto& candidate : candidates) {
+                    candidate_ids.push_back(candidate.chunk_id.value());
+                }
+                candidate_recall_sum += recall_against_exact_top_k(
+                    candidate_ids,
+                    oracle.exact_top_k_sets[query_index]
+                );
+
+                const auto rerank_start = Clock::now();
+                const auto reranked_ids = rerank_binary_candidates_exact(
+                    oracle.data.queries[query_index],
+                    oracle.data.documents,
+                    candidates,
+                    config.result_limit
+                );
+                const auto rerank_end = Clock::now();
+                candidate_result.exact_rerank_ms += elapsed_ms(
+                    rerank_start,
+                    rerank_end
+                );
+
+                reranked_recall_sum += recall_against_exact_top_k(
+                    reranked_ids,
+                    oracle.exact_top_k_sets[query_index]
+                );
+                if(!oracle.exact_top_k[query_index].empty() && !reranked_ids.empty()
+                   && oracle.exact_top_k[query_index].front() == reranked_ids.front()) {
+                    ++reranked_top1_match_count;
+                }
+            }
+
+            candidate_result.binary_candidate_query.total_ms =
+                candidate_result.binary_candidate_query.encode_ms
+                + candidate_result.binary_candidate_query.search_ms;
+            candidate_result.total_ms =
+                candidate_result.binary_candidate_query.total_ms
+                + candidate_result.exact_rerank_ms;
+            if(!oracle.data.queries.empty()) {
+                candidate_result.exact_top_k_candidate_coverage =
+                    candidate_recall_sum / static_cast<double>(oracle.data.queries.size());
+                candidate_result.reranked_recall_at_k_vs_exact =
+                    reranked_recall_sum / static_cast<double>(oracle.data.queries.size());
+                candidate_result.reranked_top1_agreement =
+                    static_cast<double>(reranked_top1_match_count)
+                    / static_cast<double>(oracle.data.queries.size());
+            }
+            result.rerank_candidates.push_back(candidate_result);
+        }
+
         result.process_peak_resident_set_bytes = peak_resident_set_bytes();
         return result;
+    }
+
+    [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark(
+        const BenchmarkConfig& config,
+        const agent_memory::RandomHyperplaneBinaryEncoder& encoder
+    ) {
+        const auto oracle = prepare_binary_benchmark_oracle(config);
+        return run_binary_flat_vs_float_benchmark_with_oracle(config, encoder, oracle);
     }
 
     int run_random_exact(const BenchmarkConfig& config) {
@@ -1185,8 +1602,141 @@ namespace {
                       ? 0.0
                       : result.exact_query.total_ms / result.binary_query.total_ms)
                   << '\n';
+        for(const auto& candidate : result.rerank_candidates) {
+            std::cout << "Rerank candidates=" << candidate.candidate_limit
+                      << " exact_top_k_candidate_coverage="
+                      << candidate.exact_top_k_candidate_coverage
+                      << " final_recall@k="
+                      << candidate.reranked_recall_at_k_vs_exact
+                      << " top1_agreement="
+                      << candidate.reranked_top1_agreement
+                      << " total_speedup="
+                      << (candidate.total_ms <= 0.0
+                          ? 0.0
+                          : result.exact_query.total_ms / candidate.total_ms)
+                      << '\n';
+        }
         std::cout << "Payload bytes exact/binary: " << result.exact_payload_bytes
                   << '/' << result.binary_payload_bytes << '\n';
+        std::cout << "JSON output: " << config.output_path.string() << '\n';
+        return 0;
+    }
+
+    [[nodiscard]] nlohmann::json common_exact_oracle_to_json(
+        const BenchmarkConfig& config,
+        const BinaryBenchmarkOracle& oracle
+    ) {
+        return {
+            {"data_generation_ms", oracle.data_generation_ms},
+            {"exact_float_build_ms", oracle.exact_build_ms},
+            {"exact_float_query_search_ms", oracle.exact_query.search_ms},
+            {"exact_float_query_total_ms", oracle.exact_query.total_ms},
+            {"exact_float_mean_query_ms", per_query_ms(
+                oracle.exact_query.total_ms,
+                config.query_count
+            )},
+            {"exact_float_queries_per_second", queries_per_second(
+                oracle.exact_query.total_ms,
+                config.query_count
+            )}
+        };
+    }
+
+    void write_binary_rerank_grid_json_report(
+        const fs::path& path,
+        const BenchmarkConfig& config,
+        const std::vector<nlohmann::json>& seed_runs
+    ) {
+        nlohmann::json document;
+        document["schema_version"] = 1;
+        document["mode"] = std::string{kModeSyntheticBinaryRerankGrid};
+        document["benchmark_name"] = config.benchmark_name;
+        document["dataset_name"] = config.dataset_name;
+        document["corpus_size"] = config.document_count;
+        document["query_count"] = config.query_count;
+        document["embedding_dimensions"] = config.embedding_dimensions;
+        document["result_limit"] = config.result_limit;
+        document["seed"] = config.seed;
+        document["seeds"] = config.seeds;
+        document["bit_counts"] = config.bit_counts;
+        document["rerank_candidate_limits"] = config.rerank_candidate_limits;
+        document["seed_runs"] = seed_runs;
+        if(seed_runs.size() == 1) {
+            document["common_exact"] = seed_runs.front().at("common_exact");
+            document["reports"] = seed_runs.front().at("reports");
+        }
+        document["notes"] = nlohmann::json::array({
+            "Synthetic binary rerank grid reuses one exact oracle per seed across all bit widths.",
+            "Single-run timings are directional and should not be treated as statistically stable.",
+            "Use multi-seed grids to choose the next real-embedding experiment band."
+        });
+        write_text_file(path, document.dump(2) + "\n");
+    }
+
+    int run_binary_rerank_grid(const BenchmarkConfig& config) {
+        std::vector<nlohmann::json> seed_runs;
+        seed_runs.reserve(config.seeds.size());
+
+        for(const auto seed : config.seeds) {
+            BenchmarkConfig seed_config = config;
+            seed_config.seed = seed;
+            const auto oracle = prepare_binary_benchmark_oracle(seed_config);
+
+            nlohmann::json seed_run;
+            seed_run["seed"] = seed;
+            seed_run["common_exact"] = common_exact_oracle_to_json(seed_config, oracle);
+            seed_run["reports"] = nlohmann::json::array();
+
+            std::cout << "Grid seed=" << seed
+                      << " exact_total_ms=" << oracle.exact_query.total_ms << '\n';
+
+            for(const auto bit_count : config.bit_counts) {
+                BenchmarkConfig run_config = seed_config;
+                run_config.mode = std::string{kModeSyntheticBinaryFlatVsFloat};
+                run_config.bit_count = bit_count;
+                run_config.benchmark_name =
+                    config.benchmark_name + "_" + std::to_string(seed)
+                    + "_" + std::to_string(bit_count) + "b";
+
+                agent_memory::RandomHyperplaneBinaryEncoderOptions encoder_options;
+                encoder_options.input_dimension = run_config.embedding_dimensions;
+                encoder_options.bit_count = run_config.bit_count;
+                encoder_options.seed = run_config.seed;
+                const agent_memory::RandomHyperplaneBinaryEncoder encoder(encoder_options);
+
+                const auto result = run_binary_flat_vs_float_benchmark_with_oracle(
+                    run_config,
+                    encoder,
+                    oracle
+                );
+                seed_run["reports"].push_back(binary_flat_vs_float_report_to_json(
+                    run_config,
+                    encoder.info(),
+                    result
+                ));
+
+                std::cout << "  bits=" << bit_count
+                          << " direct_recall@k=" << result.mean_recall_at_k_vs_exact
+                          << " direct_top1=" << result.top1_agreement << '\n';
+                for(const auto& candidate : result.rerank_candidates) {
+                    std::cout << "    candidates=" << candidate.candidate_limit
+                              << " coverage="
+                              << candidate.exact_top_k_candidate_coverage
+                              << " final_recall@k="
+                              << candidate.reranked_recall_at_k_vs_exact
+                              << " top1="
+                              << candidate.reranked_top1_agreement
+                              << " total_speedup="
+                              << (candidate.total_ms <= 0.0
+                                  ? 0.0
+                                  : result.exact_query.total_ms / candidate.total_ms)
+                              << '\n';
+                }
+            }
+            seed_runs.push_back(std::move(seed_run));
+        }
+
+        write_binary_rerank_grid_json_report(config.output_path, config, seed_runs);
         std::cout << "JSON output: " << config.output_path.string() << '\n';
         return 0;
     }
@@ -1197,6 +1747,9 @@ namespace {
         }
         if(config.mode == kModeSyntheticBinaryFlatVsFloat) {
             return run_binary_flat_vs_float(config);
+        }
+        if(config.mode == kModeSyntheticBinaryRerankGrid) {
+            return run_binary_rerank_grid(config);
         }
         return run_random_exact(config);
     }
