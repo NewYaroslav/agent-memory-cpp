@@ -98,14 +98,15 @@ track. Future work must keep two axes separate:
 Faiss makes the same distinction in its index taxonomy: `IndexLSH` stores
 binary codes and compares them by Hamming distance, while scale-oriented
 families such as IVF, HNSW, PQ, and IVFPQ are separate index/codec layers.
-Faiss also notes that its LSH implementation is not vanilla independent random
-projection: it uses orthogonal projectors when `nbits <= d` and a tight frame
-when `nbits > d`. Treat that as a useful next baseline, not as proof that
-random-hyperplane LSH is enough for our workload.
+`IndexLSH` is an exhaustive flat scan over binary codes, not a bucket-based LSH
+table candidate generator. Faiss also notes that its LSH implementation is not
+vanilla independent random projection: it uses orthogonal projectors when
+`nbits <= d` and a tight frame when `nbits > d`. Treat that as a useful next
+baseline, not as proof that random-hyperplane LSH is enough for our workload.
 
 | Family | Shared code space? | Training | Intended role | Notes |
 |---|---:|---:|---|---|
-| Coordinate sign `sign(x)` | Yes | No | Cheapest diagnostic baseline | One bit per source coordinate; no projection cost, but keeps source dimension and can inherit bad coordinate balance. |
+| Coordinate sign `sign(x)` | Yes | No | Cheapest diagnostic baseline | One bit per source coordinate; no projection cost, but naturally supports only `bit_count == input_dimension`. |
 | Random hyperplane `sign(Rx)` | Yes | No | Implemented baseline candidate filter | Good zero-training reference. PR #57 showed useful system speedups vs current `ExactVectorIndex`, but no decisive compute-only win vs contiguous exact scan at 128D. |
 | Orthogonal/tight-frame projection | Yes | No | Next zero-training baseline | Faiss-style improvement over independent projections; should be compared before learned encoders. |
 | Global learned projection (ITQ-like) | Yes | Yes | Main learned-hashing candidate | One corpus/calibration-trained `R`; preserves comparability across all records. Requires train/validation split and bit-health diagnostics. |
@@ -129,6 +130,18 @@ Post-PR57 PR ladder:
 | PR #61 | Run high-dimensional and real-embedding benchmarks (384/768/1536D if fixtures are available), still with exact dense rerank as oracle. | Determine whether binary filtering starts winning against a contiguous exact baseline when dense dimension grows. | No production default switch. |
 | PR #62 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
 | PR #63+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, or HNSW dense baseline. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall. | More flat-scan polishing unless a benchmark justifies it. |
+
+Coordinate-sign benchmark contract for PR #59:
+
+- Pure coordinate sign emits exactly `input_dimension` bits.
+- It participates in the bit-width grid only when `bit_count == input_dimension`.
+- `bit_count > input_dimension` is not supported for pure coordinate sign:
+  padding or duplicated coordinates do not add information.
+- `bit_count < input_dimension` requires a separately named coordinate-subset
+  policy and should not be presented as the default `sign(x)` baseline.
+- Orthogonal/tight-frame projection is the zero-training family that can cover
+  the full bit-width grid (`nbits <= d` via orthogonal/subspace projectors,
+  `nbits > d` via tight-frame-style projection).
 
 [Source: Faiss wiki, "Faiss indexes": <https://github.com/facebookresearch/faiss/wiki/Faiss-indexes>]
 <br>[Source: Charikar 2002, "Similarity Estimation Techniques from Rounding Algorithms": <https://www.cs.princeton.edu/courses/archive/spr04/cos598B/bib/CharikarEstim.pdf>]
