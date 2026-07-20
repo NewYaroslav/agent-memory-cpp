@@ -1,0 +1,13 @@
+{
+  "mode": "synthetic_binary_rerank_grid",
+  "benchmark_name": "synthetic_binary_rerank_grid_v1_smoke",
+  "dataset_name": "synthetic_clustered_dense_v1_smoke",
+  "document_count": 30,
+  "query_count": 4,
+  "embedding_dimensions": 8,
+  "bit_counts": [8, 16],
+  "result_limit": 3,
+  "rerank_candidate_limits": [3, 10, 30],
+  "seed": 42,
+  "output_path": "tmp/synthetic-binary-rerank-grid-smoke-report.json"
+}

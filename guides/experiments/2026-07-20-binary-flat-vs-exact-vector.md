@@ -336,7 +336,7 @@ For this synthetic setup, `512` and `1024` bits look more interesting than the
 original `256`-bit point. The extra Hamming and encoding cost can be offset by
 needing fewer rerank candidates.
 
-The most attractive follow-up bands are:
+The most useful candidate bands for a repeated benchmark are:
 
 - speed-oriented: `1024 bits × 100 candidates`;
 - balanced: `512 bits × 500 candidates`;
@@ -344,9 +344,12 @@ The most attractive follow-up bands are:
 
 ### Limitations
 
-This is still a single-seed, single-run, synthetic-vector grid. The numbers are
-useful for selecting the next experiment band, not for choosing production
-defaults.
+This is still a single-seed, single-run, synthetic-vector grid. The speedup
+values use separate exact-search timings per bit-width row, so they are useful
+as rough directional signals only. Small differences between bit widths should
+not be interpreted as winners without a common exact baseline and repeated
+timings. The numbers are useful for selecting the next experiment band, not for
+choosing production defaults.
 
 ### What to check next
 

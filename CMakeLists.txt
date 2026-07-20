@@ -157,6 +157,14 @@ if(AGENT_MEMORY_BUILD_TESTS)
                 ${CMAKE_CURRENT_BINARY_DIR}/synthetic-binary-flat-vs-float-ctest.json
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
+        add_test(
+            NAME agent_memory_benchmark_cli_synthetic_binary_rerank_grid
+            COMMAND
+                $<TARGET_FILE:agent-memory-bench>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/synthetic-binary-rerank-grid-smoke.example.json
+                ${CMAKE_CURRENT_BINARY_DIR}/synthetic-binary-rerank-grid-ctest.json
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
     endif()
     add_subdirectory(tests)
 endif()
