@@ -59,7 +59,9 @@ ctest --test-dir tmp/build-bench --output-on-failure
 
 When tests and benchmarks are enabled together, CTest also registers
 `agent_memory_benchmark_cli_synthetic_sweep`, a smoke test that runs
-`agent-memory-bench` against the committed synthetic sweep fixture.
+`agent-memory-bench` against the committed synthetic sweep fixture. It also
+registers benchmark CLI smoke tests for the binary flat-vs-float mode and the
+binary rerank grid mode.
 
 Run the BoW-vs-BM25 synthetic sweep fixture:
 
@@ -67,6 +69,14 @@ Run the BoW-vs-BM25 synthetic sweep fixture:
 ./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
     tools/agent-memory-bench/synthetic-sweep.example.json \
     tmp/synthetic-sweep-report.json
+```
+
+Run the binary rerank statistical grid fixture:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/synthetic-binary-rerank-grid.example.json \
+    tmp/synthetic-binary-rerank-grid-report.json
 ```
 
 Run the deterministic staircase sweep helper:

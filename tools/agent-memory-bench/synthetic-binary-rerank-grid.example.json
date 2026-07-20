@@ -1,13 +1,16 @@
 {
   "mode": "synthetic_binary_rerank_grid",
-  "benchmark_name": "synthetic_binary_rerank_grid_v1_large",
-  "dataset_name": "synthetic_clustered_dense_v1_large",
-  "document_count": 20000,
-  "query_count": 200,
+  "benchmark_name": "synthetic_binary_rerank_grid_v1_stat",
+  "dataset_name": "synthetic_clustered_dense_v1_stat",
+  "document_count": 10000,
+  "query_count": 100,
   "embedding_dimensions": 128,
   "bit_counts": [128, 256, 512, 1024],
   "result_limit": 10,
   "rerank_candidate_limits": [100, 500, 1000, 2000],
-  "seed": 42,
+  "data_seeds": [42],
+  "encoder_seeds": [1001, 1002],
+  "repeat_count": 2,
+  "randomize_execution_order": true,
   "output_path": "tmp/synthetic-binary-rerank-grid-report.json"
 }

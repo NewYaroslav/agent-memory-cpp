@@ -359,3 +359,98 @@ experiment band, not for choosing production defaults.
 - Add `nDCG@10` and dense-vector bytes read for rerank.
 - Repeat the best bands on real embedding vectors and qrels.
 - Compare top-N candidate selection with Hamming-radius candidate selection.
+
+## 2026-07-20 — PR #57 stat-grid harness
+
+### What we changed
+
+PR #56 answered the first bit-width question, but still used a lightweight
+single-seed/single-run grid. PR #57 turns the grid into a more useful
+experiment harness:
+
+- `data_seeds` and `encoder_seeds` are separate;
+- each data seed builds one common exact oracle reused across encoder seeds,
+  bit widths, and repeats;
+- `repeat_count` records repeated binary measurements over the same oracle;
+- optional `randomize_execution_order` shuffles bit/repeat tasks and candidate
+  limit execution while keeping JSON output sorted;
+- each bit-width report includes repeat-level raw reports and summary statistics;
+- the top-level report includes `aggregate_summary` across seed runs and repeats.
+
+### Hypothesis
+
+The earlier candidate bands should remain directionally stable when projection
+seed and repeated timings are separated from data generation. The exact winner
+should still not be treated as production-stable because the run is local,
+synthetic, and small.
+
+### Setup
+
+Local directional run:
+
+- build: MinGW Release;
+- documents: `10000`;
+- queries: `100`;
+- embedding dimension: `128`;
+- bit counts: `128`, `256`, `512`, `1024`;
+- final top-k: `10`;
+- candidate limits: `100`, `500`, `1000`, `2000`;
+- data seeds: `42`;
+- encoder seeds: `1001`, `1002`;
+- repeats per data/encoder/bit: `2`;
+- randomized execution order: enabled.
+
+### Aggregate results
+
+Each cell shows:
+
+```text
+coverage mean / top-1 mean / median total speedup
+```
+
+The sample count per cell is `4`: two encoder seeds times two repeats.
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates |
+| ---: | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 1.93x | 0.6260 / 0.685 / 1.44x | 0.7795 / 0.850 / 1.12x |
+| 256 | 0.5065 / 0.665 / 1.65x | 0.8260 / 0.890 / 1.30x | 0.9265 / 0.955 / 1.08x |
+| 512 | 0.7435 / 0.895 / 1.41x | 0.9595 / 1.000 / 1.13x | 0.9895 / 1.000 / 0.96x |
+| 1024 | 0.9010 / 1.000 / 1.15x | 0.9960 / 1.000 / 1.15x | 1.0000 / 1.000 / 0.90x |
+
+### Interpretation
+
+The broad shape from PR #56 remains:
+
+- direct binary top-k is still not the main retrieval mode;
+- binary candidate over-fetch plus exact rerank is the useful mode;
+- wider signatures recover quality with smaller candidate sets;
+- large candidate sets eventually lose the speed advantage to rerank cost.
+
+The practical candidate bands are now slightly clearer:
+
+- `1024 bits × 100 candidates`: strong top-1/routing candidate with high
+  coverage and still-positive median speedup;
+- `512 bits × 500 candidates`: balanced quality candidate, but speedup is
+  modest and needs larger repeated runs;
+- `1024 bits × 500 candidates`: quality-oriented candidate with near-exact
+  coverage, but not clearly faster than `512 × 500` in this small local run.
+
+### Limitations
+
+This is still not a production benchmark:
+
+- only one data seed was used;
+- only two encoder seeds and two repeats were used;
+- timings are local in-process measurements;
+- candidate order is randomized, but the machine still has cache, allocator, and
+  CPU frequency effects;
+- the corpus is synthetic clustered dense vectors, not real embeddings with qrels.
+
+### What to check next
+
+- Increase data seed count before making architecture defaults.
+- Add real embedding vectors and qrels.
+- Add `nDCG@10`, dense-vector bytes read for rerank, and persisted vector fetch
+  cost.
+- Compare top-N candidate selection with Hamming-radius or bucket/Multi-Index
+  Hashing candidate generation.
