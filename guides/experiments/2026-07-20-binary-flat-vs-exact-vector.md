@@ -292,6 +292,7 @@ Local directional run:
 - final top-k: `10`;
 - candidate limits: `100`, `500`, `1000`, `2000`;
 - seed: `42`.
+- exact baseline: generated and measured once, then reused for every bit width.
 
 ### Results
 
@@ -303,10 +304,10 @@ exact top-10 candidate coverage / top-1 agreement / total speedup
 
 | Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
 | ---: | --- | --- | --- | --- |
-| 128 | 0.254 / 0.330 / 2.42x | 0.5195 / 0.670 / 2.00x | 0.674 / 0.795 / 1.65x | 0.8235 / 0.910 / 1.21x |
-| 256 | 0.4745 / 0.705 / 1.65x | 0.790 / 0.935 / 1.65x | 0.888 / 0.950 / 1.41x | 0.952 / 0.980 / 1.10x |
-| 512 | 0.7155 / 0.925 / 1.70x | 0.935 / 0.985 / 1.68x | 0.9785 / 1.000 / 1.39x | 0.9975 / 1.000 / 0.97x |
-| 1024 | 0.8905 / 0.990 / 1.49x | 0.996 / 1.000 / 1.27x | 0.999 / 1.000 / 1.16x | 0.9995 / 1.000 / 0.94x |
+| 128 | 0.254 / 0.330 / 1.97x | 0.5195 / 0.670 / 1.64x | 0.674 / 0.795 / 1.33x | 0.8235 / 0.910 / 1.09x |
+| 256 | 0.4745 / 0.705 / 1.95x | 0.790 / 0.935 / 1.37x | 0.888 / 0.950 / 1.18x | 0.952 / 0.980 / 1.03x |
+| 512 | 0.7155 / 0.925 / 1.81x | 0.935 / 0.985 / 1.46x | 0.9785 / 1.000 / 1.20x | 0.9975 / 1.000 / 0.94x |
+| 1024 | 0.8905 / 0.990 / 1.42x | 0.996 / 1.000 / 1.16x | 0.999 / 1.000 / 1.04x | 0.9995 / 1.000 / 0.89x |
 
 Direct binary top-10 also improves with wider signatures, but remains weaker
 than reranked candidate search:
@@ -323,13 +324,13 @@ than reranked candidate search:
 The `256`-bit `1000`-candidate point is not uniquely best. Wider signatures can
 move the same quality target to a smaller candidate set:
 
-- `256 bits × 1000 candidates`: `0.888` coverage, `0.950` top-1, `1.41x`
+- `256 bits × 1000 candidates`: `0.888` coverage, `0.950` top-1, `1.18x`
   speedup.
-- `512 bits × 500 candidates`: `0.935` coverage, `0.985` top-1, `1.68x`
+- `512 bits × 500 candidates`: `0.935` coverage, `0.985` top-1, `1.46x`
   speedup.
-- `1024 bits × 100 candidates`: `0.8905` coverage, `0.990` top-1, `1.49x`
+- `1024 bits × 100 candidates`: `0.8905` coverage, `0.990` top-1, `1.42x`
   speedup.
-- `1024 bits × 500 candidates`: `0.996` coverage, exact top-1, `1.27x`
+- `1024 bits × 500 candidates`: `0.996` coverage, exact top-1, `1.16x`
   speedup.
 
 For this synthetic setup, `512` and `1024` bits look more interesting than the
@@ -344,16 +345,17 @@ The most useful candidate bands for a repeated benchmark are:
 
 ### Limitations
 
-This is still a single-seed, single-run, synthetic-vector grid. The speedup
-values use separate exact-search timings per bit-width row, so they are useful
-as rough directional signals only. Small differences between bit widths should
-not be interpreted as winners without a common exact baseline and repeated
-timings. The numbers are useful for selecting the next experiment band, not for
-choosing production defaults.
+This is still a single-seed, single-run, synthetic-vector grid. The grid now
+uses one common exact baseline for the whole seed, but timing differences can
+still reflect run order, cache state, allocator warm-up, and CPU frequency
+changes. Small speed differences between bit widths should not be interpreted as
+winners without repeated timings. The numbers are useful for selecting the next
+experiment band, not for choosing production defaults.
 
 ### What to check next
 
-- Repeat this grid across multiple seeds and randomized candidate-limit order.
+- Repeat this grid with the new multi-seed harness and randomized candidate-limit
+  order.
 - Add `nDCG@10` and dense-vector bytes read for rerank.
 - Repeat the best bands on real embedding vectors and qrels.
 - Compare top-N candidate selection with Hamming-radius candidate selection.

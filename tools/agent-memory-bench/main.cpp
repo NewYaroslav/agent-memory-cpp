@@ -73,6 +73,7 @@ namespace {
         std::vector<std::string> baselines;
         std::vector<std::size_t> bit_counts;
         std::vector<std::size_t> rerank_candidate_limits;
+        std::vector<std::uint32_t> seeds;
     };
 
     struct ScoredDocument final {
@@ -119,6 +120,16 @@ namespace {
         std::uint64_t exact_payload_bytes = 0;
         std::uint64_t binary_payload_bytes = 0;
         std::uint64_t process_peak_resident_set_bytes = 0;
+    };
+
+    struct BinaryBenchmarkOracle final {
+        SyntheticDenseData data;
+        double data_generation_ms = 0.0;
+        double exact_build_ms = 0.0;
+        SearchTiming exact_query;
+        std::vector<std::vector<std::string>> exact_top_k;
+        std::vector<std::unordered_set<std::string>> exact_top_k_sets;
+        std::uint64_t exact_payload_bytes = 0;
     };
 
     [[nodiscard]] double elapsed_ms(Clock::time_point start, Clock::time_point end) {
@@ -306,6 +317,26 @@ namespace {
         return values;
     }
 
+    [[nodiscard]] std::vector<std::uint32_t> read_optional_uint32_list(
+        const nlohmann::json& document,
+        std::string_view field
+    ) {
+        const auto values = read_optional_size_list(document, field);
+        std::vector<std::uint32_t> out;
+        out.reserve(values.size());
+        for(const auto value : values) {
+            if(value > static_cast<std::size_t>(
+                std::numeric_limits<std::uint32_t>::max()
+            )) {
+                throw std::runtime_error(
+                    "config field '" + std::string{field} + "' entries exceed uint32_t"
+                );
+            }
+            out.push_back(static_cast<std::uint32_t>(value));
+        }
+        return out;
+    }
+
     [[nodiscard]] std::vector<std::size_t> default_rerank_candidate_limits(
         std::size_t result_limit,
         std::size_t document_count
@@ -434,6 +465,14 @@ namespace {
             throw std::runtime_error("config field 'seed' exceeds uint32_t");
         }
         config.seed = static_cast<std::uint32_t>(seed);
+        config.seeds = {config.seed};
+        if(binary_rerank_grid) {
+            auto seeds = read_optional_uint32_list(document, "seeds");
+            if(!seeds.empty()) {
+                config.seeds = std::move(seeds);
+                config.seed = config.seeds.front();
+            }
+        }
         if(binary_flat_vs_float || binary_rerank_grid) {
             if(config.rerank_candidate_limits.empty()) {
                 config.rerank_candidate_limits = default_rerank_candidate_limits(
@@ -1155,19 +1194,70 @@ namespace {
         return document;
     }
 
-    [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark(
-        const BenchmarkConfig& config,
-        const agent_memory::RandomHyperplaneBinaryEncoder& encoder
+    [[nodiscard]] BinaryBenchmarkOracle prepare_binary_benchmark_oracle(
+        const BenchmarkConfig& config
     ) {
+        BinaryBenchmarkOracle oracle;
+
         const auto data_start = Clock::now();
-        auto data = make_clustered_dense_data(config);
+        oracle.data = make_clustered_dense_data(config);
         const auto data_end = Clock::now();
+        oracle.data_generation_ms = elapsed_ms(data_start, data_end);
 
         agent_memory::ExactVectorIndex exact_index(agent_memory::ExactVectorIndexOptions{
             config.embedding_dimensions,
             agent_memory::SimilarityMetric::Cosine
         });
 
+        const auto exact_build_start = Clock::now();
+        for(std::size_t index = 0; index < oracle.data.documents.size(); ++index) {
+            exact_index.upsert(agent_memory::VectorRecord{
+                make_chunk_id(index),
+                oracle.data.documents[index],
+                {}
+            });
+        }
+        const auto exact_build_end = Clock::now();
+        oracle.exact_build_ms = elapsed_ms(exact_build_start, exact_build_end);
+
+        oracle.exact_payload_bytes = checked_payload_bytes(
+            config.document_count,
+            config.embedding_dimensions,
+            sizeof(float)
+        );
+
+        oracle.exact_top_k.reserve(oracle.data.queries.size());
+        for(const auto& query_embedding : oracle.data.queries) {
+            const auto search_start = Clock::now();
+            const auto hits = exact_index.search(agent_memory::VectorSearchQuery{
+                query_embedding,
+                config.result_limit,
+                {}
+            });
+            const auto search_end = Clock::now();
+            oracle.exact_query.search_ms += elapsed_ms(search_start, search_end);
+
+            std::vector<std::string> ids;
+            ids.reserve(hits.size());
+            for(const auto& hit : hits) {
+                ids.push_back(hit.chunk_id.value());
+            }
+            oracle.exact_top_k.push_back(std::move(ids));
+        }
+        oracle.exact_query.total_ms = oracle.exact_query.search_ms;
+
+        oracle.exact_top_k_sets.reserve(oracle.exact_top_k.size());
+        for(const auto& ids : oracle.exact_top_k) {
+            oracle.exact_top_k_sets.emplace_back(ids.begin(), ids.end());
+        }
+        return oracle;
+    }
+
+    [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark_with_oracle(
+        const BenchmarkConfig& config,
+        const agent_memory::RandomHyperplaneBinaryEncoder& encoder,
+        const BinaryBenchmarkOracle& oracle
+    ) {
         const auto signature_info = agent_memory::make_binary_signature_info(
             encoder.info(),
             make_synthetic_model_info(config),
@@ -1177,21 +1267,11 @@ namespace {
             agent_memory::FlatBinarySignatureIndexOptions{signature_info}
         );
 
-        const auto exact_build_start = Clock::now();
-        for(std::size_t index = 0; index < data.documents.size(); ++index) {
-            exact_index.upsert(agent_memory::VectorRecord{
-                make_chunk_id(index),
-                data.documents[index],
-                {}
-            });
-        }
-        const auto exact_build_end = Clock::now();
-
         const auto binary_build_start = Clock::now();
-        for(std::size_t index = 0; index < data.documents.size(); ++index) {
+        for(std::size_t index = 0; index < oracle.data.documents.size(); ++index) {
             binary_index.upsert(agent_memory::BinarySignatureRecord{
                 make_chunk_id(index),
-                encoder.encode(data.documents[index]),
+                encoder.encode(oracle.data.documents[index]),
                 signature_info,
                 {}
             });
@@ -1199,52 +1279,22 @@ namespace {
         const auto binary_build_end = Clock::now();
 
         BinaryFlatVsFloatResult result;
-        result.data_generation_ms = elapsed_ms(data_start, data_end);
-        result.exact_build_ms = elapsed_ms(exact_build_start, exact_build_end);
+        result.data_generation_ms = oracle.data_generation_ms;
+        result.exact_build_ms = oracle.exact_build_ms;
         result.binary_build_ms = elapsed_ms(binary_build_start, binary_build_end);
-        result.exact_payload_bytes = checked_payload_bytes(
-            config.document_count,
-            config.embedding_dimensions,
-            sizeof(float)
-        );
+        result.exact_query = oracle.exact_query;
+        result.exact_payload_bytes = oracle.exact_payload_bytes;
         result.binary_payload_bytes = checked_payload_bytes(
             config.document_count,
             agent_memory::binary_signature_word_count(config.bit_count),
             sizeof(std::uint64_t)
         );
 
-        std::vector<std::vector<std::string>> exact_top_k;
-        exact_top_k.reserve(data.queries.size());
-        for(const auto& query_embedding : data.queries) {
-            const auto search_start = Clock::now();
-            const auto hits = exact_index.search(agent_memory::VectorSearchQuery{
-                query_embedding,
-                config.result_limit,
-                {}
-            });
-            const auto search_end = Clock::now();
-            result.exact_query.search_ms += elapsed_ms(search_start, search_end);
-
-            std::vector<std::string> ids;
-            ids.reserve(hits.size());
-            for(const auto& hit : hits) {
-                ids.push_back(hit.chunk_id.value());
-            }
-            exact_top_k.push_back(std::move(ids));
-        }
-        result.exact_query.total_ms = result.exact_query.search_ms;
-
-        std::vector<std::unordered_set<std::string>> exact_top_k_sets;
-        exact_top_k_sets.reserve(exact_top_k.size());
-        for(const auto& ids : exact_top_k) {
-            exact_top_k_sets.emplace_back(ids.begin(), ids.end());
-        }
-
         double recall_sum = 0.0;
         std::size_t top1_match_count = 0;
-        for(std::size_t query_index = 0; query_index < data.queries.size(); ++query_index) {
+        for(std::size_t query_index = 0; query_index < oracle.data.queries.size(); ++query_index) {
             const auto encode_start = Clock::now();
-            const auto query_signature = encoder.encode(data.queries[query_index]);
+            const auto query_signature = encoder.encode(oracle.data.queries[query_index]);
             const auto encode_end = Clock::now();
             result.binary_query.encode_ms += elapsed_ms(encode_start, encode_end);
 
@@ -1267,20 +1317,20 @@ namespace {
             }
             recall_sum += recall_against_exact_top_k(
                 binary_ids,
-                exact_top_k_sets[query_index]
+                oracle.exact_top_k_sets[query_index]
             );
-            if(!exact_top_k[query_index].empty() && !hits.empty()
-               && exact_top_k[query_index].front() == hits.front().chunk_id.value()) {
+            if(!oracle.exact_top_k[query_index].empty() && !hits.empty()
+               && oracle.exact_top_k[query_index].front() == hits.front().chunk_id.value()) {
                 ++top1_match_count;
             }
         }
 
-        if(!data.queries.empty()) {
+        if(!oracle.data.queries.empty()) {
             result.mean_recall_at_k_vs_exact =
-                recall_sum / static_cast<double>(data.queries.size());
+                recall_sum / static_cast<double>(oracle.data.queries.size());
             result.top1_agreement =
                 static_cast<double>(top1_match_count)
-                / static_cast<double>(data.queries.size());
+                / static_cast<double>(oracle.data.queries.size());
         }
 
         result.rerank_candidates.reserve(config.rerank_candidate_limits.size());
@@ -1291,9 +1341,9 @@ namespace {
             double candidate_recall_sum = 0.0;
             double reranked_recall_sum = 0.0;
             std::size_t reranked_top1_match_count = 0;
-            for(std::size_t query_index = 0; query_index < data.queries.size(); ++query_index) {
+            for(std::size_t query_index = 0; query_index < oracle.data.queries.size(); ++query_index) {
                 const auto encode_start = Clock::now();
-                const auto query_signature = encoder.encode(data.queries[query_index]);
+                const auto query_signature = encoder.encode(oracle.data.queries[query_index]);
                 const auto encode_end = Clock::now();
                 candidate_result.binary_candidate_query.encode_ms += elapsed_ms(
                     encode_start,
@@ -1322,13 +1372,13 @@ namespace {
                 }
                 candidate_recall_sum += recall_against_exact_top_k(
                     candidate_ids,
-                    exact_top_k_sets[query_index]
+                    oracle.exact_top_k_sets[query_index]
                 );
 
                 const auto rerank_start = Clock::now();
                 const auto reranked_ids = rerank_binary_candidates_exact(
-                    data.queries[query_index],
-                    data.documents,
+                    oracle.data.queries[query_index],
+                    oracle.data.documents,
                     candidates,
                     config.result_limit
                 );
@@ -1340,10 +1390,10 @@ namespace {
 
                 reranked_recall_sum += recall_against_exact_top_k(
                     reranked_ids,
-                    exact_top_k_sets[query_index]
+                    oracle.exact_top_k_sets[query_index]
                 );
-                if(!exact_top_k[query_index].empty() && !reranked_ids.empty()
-                   && exact_top_k[query_index].front() == reranked_ids.front()) {
+                if(!oracle.exact_top_k[query_index].empty() && !reranked_ids.empty()
+                   && oracle.exact_top_k[query_index].front() == reranked_ids.front()) {
                     ++reranked_top1_match_count;
                 }
             }
@@ -1354,20 +1404,28 @@ namespace {
             candidate_result.total_ms =
                 candidate_result.binary_candidate_query.total_ms
                 + candidate_result.exact_rerank_ms;
-            if(!data.queries.empty()) {
+            if(!oracle.data.queries.empty()) {
                 candidate_result.exact_top_k_candidate_coverage =
-                    candidate_recall_sum / static_cast<double>(data.queries.size());
+                    candidate_recall_sum / static_cast<double>(oracle.data.queries.size());
                 candidate_result.reranked_recall_at_k_vs_exact =
-                    reranked_recall_sum / static_cast<double>(data.queries.size());
+                    reranked_recall_sum / static_cast<double>(oracle.data.queries.size());
                 candidate_result.reranked_top1_agreement =
                     static_cast<double>(reranked_top1_match_count)
-                    / static_cast<double>(data.queries.size());
+                    / static_cast<double>(oracle.data.queries.size());
             }
             result.rerank_candidates.push_back(candidate_result);
         }
 
         result.process_peak_resident_set_bytes = peak_resident_set_bytes();
         return result;
+    }
+
+    [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark(
+        const BenchmarkConfig& config,
+        const agent_memory::RandomHyperplaneBinaryEncoder& encoder
+    ) {
+        const auto oracle = prepare_binary_benchmark_oracle(config);
+        return run_binary_flat_vs_float_benchmark_with_oracle(config, encoder, oracle);
     }
 
     int run_random_exact(const BenchmarkConfig& config) {
@@ -1564,10 +1622,30 @@ namespace {
         return 0;
     }
 
+    [[nodiscard]] nlohmann::json common_exact_oracle_to_json(
+        const BenchmarkConfig& config,
+        const BinaryBenchmarkOracle& oracle
+    ) {
+        return {
+            {"data_generation_ms", oracle.data_generation_ms},
+            {"exact_float_build_ms", oracle.exact_build_ms},
+            {"exact_float_query_search_ms", oracle.exact_query.search_ms},
+            {"exact_float_query_total_ms", oracle.exact_query.total_ms},
+            {"exact_float_mean_query_ms", per_query_ms(
+                oracle.exact_query.total_ms,
+                config.query_count
+            )},
+            {"exact_float_queries_per_second", queries_per_second(
+                oracle.exact_query.total_ms,
+                config.query_count
+            )}
+        };
+    }
+
     void write_binary_rerank_grid_json_report(
         const fs::path& path,
         const BenchmarkConfig& config,
-        const std::vector<nlohmann::json>& reports
+        const std::vector<nlohmann::json>& seed_runs
     ) {
         nlohmann::json document;
         document["schema_version"] = 1;
@@ -1579,61 +1657,86 @@ namespace {
         document["embedding_dimensions"] = config.embedding_dimensions;
         document["result_limit"] = config.result_limit;
         document["seed"] = config.seed;
+        document["seeds"] = config.seeds;
         document["bit_counts"] = config.bit_counts;
         document["rerank_candidate_limits"] = config.rerank_candidate_limits;
-        document["reports"] = reports;
+        document["seed_runs"] = seed_runs;
+        if(seed_runs.size() == 1) {
+            document["common_exact"] = seed_runs.front().at("common_exact");
+            document["reports"] = seed_runs.front().at("reports");
+        }
         document["notes"] = nlohmann::json::array({
-            "Synthetic binary rerank grid reuses the single-run report schema per bit count.",
-            "Single-seed, single-run timings are directional and should not be treated as stable.",
-            "Use this grid to choose the next multi-seed and real-embedding experiment band."
+            "Synthetic binary rerank grid reuses one exact oracle per seed across all bit widths.",
+            "Single-run timings are directional and should not be treated as statistically stable.",
+            "Use multi-seed grids to choose the next real-embedding experiment band."
         });
         write_text_file(path, document.dump(2) + "\n");
     }
 
     int run_binary_rerank_grid(const BenchmarkConfig& config) {
-        std::vector<nlohmann::json> reports;
-        reports.reserve(config.bit_counts.size());
+        std::vector<nlohmann::json> seed_runs;
+        seed_runs.reserve(config.seeds.size());
 
-        for(const auto bit_count : config.bit_counts) {
-            BenchmarkConfig run_config = config;
-            run_config.mode = std::string{kModeSyntheticBinaryFlatVsFloat};
-            run_config.bit_count = bit_count;
-            run_config.benchmark_name =
-                config.benchmark_name + "_" + std::to_string(bit_count) + "b";
+        for(const auto seed : config.seeds) {
+            BenchmarkConfig seed_config = config;
+            seed_config.seed = seed;
+            const auto oracle = prepare_binary_benchmark_oracle(seed_config);
 
-            agent_memory::RandomHyperplaneBinaryEncoderOptions encoder_options;
-            encoder_options.input_dimension = run_config.embedding_dimensions;
-            encoder_options.bit_count = run_config.bit_count;
-            encoder_options.seed = run_config.seed;
-            const agent_memory::RandomHyperplaneBinaryEncoder encoder(encoder_options);
+            nlohmann::json seed_run;
+            seed_run["seed"] = seed;
+            seed_run["common_exact"] = common_exact_oracle_to_json(seed_config, oracle);
+            seed_run["reports"] = nlohmann::json::array();
 
-            const auto result = run_binary_flat_vs_float_benchmark(run_config, encoder);
-            reports.push_back(binary_flat_vs_float_report_to_json(
-                run_config,
-                encoder.info(),
-                result
-            ));
+            std::cout << "Grid seed=" << seed
+                      << " exact_total_ms=" << oracle.exact_query.total_ms << '\n';
 
-            std::cout << "Grid bits=" << bit_count
-                      << " direct_recall@k=" << result.mean_recall_at_k_vs_exact
-                      << " direct_top1=" << result.top1_agreement << '\n';
-            for(const auto& candidate : result.rerank_candidates) {
-                std::cout << "  candidates=" << candidate.candidate_limit
-                          << " coverage="
-                          << candidate.exact_top_k_candidate_coverage
-                          << " final_recall@k="
-                          << candidate.reranked_recall_at_k_vs_exact
-                          << " top1="
-                          << candidate.reranked_top1_agreement
-                          << " total_speedup="
-                          << (candidate.total_ms <= 0.0
-                              ? 0.0
-                              : result.exact_query.total_ms / candidate.total_ms)
-                          << '\n';
+            for(const auto bit_count : config.bit_counts) {
+                BenchmarkConfig run_config = seed_config;
+                run_config.mode = std::string{kModeSyntheticBinaryFlatVsFloat};
+                run_config.bit_count = bit_count;
+                run_config.benchmark_name =
+                    config.benchmark_name + "_" + std::to_string(seed)
+                    + "_" + std::to_string(bit_count) + "b";
+
+                agent_memory::RandomHyperplaneBinaryEncoderOptions encoder_options;
+                encoder_options.input_dimension = run_config.embedding_dimensions;
+                encoder_options.bit_count = run_config.bit_count;
+                encoder_options.seed = run_config.seed;
+                const agent_memory::RandomHyperplaneBinaryEncoder encoder(encoder_options);
+
+                const auto result = run_binary_flat_vs_float_benchmark_with_oracle(
+                    run_config,
+                    encoder,
+                    oracle
+                );
+                seed_run["reports"].push_back(binary_flat_vs_float_report_to_json(
+                    run_config,
+                    encoder.info(),
+                    result
+                ));
+
+                std::cout << "  bits=" << bit_count
+                          << " direct_recall@k=" << result.mean_recall_at_k_vs_exact
+                          << " direct_top1=" << result.top1_agreement << '\n';
+                for(const auto& candidate : result.rerank_candidates) {
+                    std::cout << "    candidates=" << candidate.candidate_limit
+                              << " coverage="
+                              << candidate.exact_top_k_candidate_coverage
+                              << " final_recall@k="
+                              << candidate.reranked_recall_at_k_vs_exact
+                              << " top1="
+                              << candidate.reranked_top1_agreement
+                              << " total_speedup="
+                              << (candidate.total_ms <= 0.0
+                                  ? 0.0
+                                  : result.exact_query.total_ms / candidate.total_ms)
+                              << '\n';
+                }
             }
+            seed_runs.push_back(std::move(seed_run));
         }
 
-        write_binary_rerank_grid_json_report(config.output_path, config, reports);
+        write_binary_rerank_grid_json_report(config.output_path, config, seed_runs);
         std::cout << "JSON output: " << config.output_path.string() << '\n';
         return 0;
     }
