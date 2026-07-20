@@ -59,7 +59,9 @@ ctest --test-dir tmp/build-bench --output-on-failure
 
 When tests and benchmarks are enabled together, CTest also registers
 `agent_memory_benchmark_cli_synthetic_sweep`, a smoke test that runs
-`agent-memory-bench` against the committed synthetic sweep fixture.
+`agent-memory-bench` against the committed synthetic sweep fixture. It also
+registers benchmark CLI smoke tests for the binary flat-vs-float mode and the
+binary rerank grid mode.
 
 Run the BoW-vs-BM25 synthetic sweep fixture:
 
@@ -68,6 +70,69 @@ Run the BoW-vs-BM25 synthetic sweep fixture:
     tools/agent-memory-bench/synthetic-sweep.example.json \
     tmp/synthetic-sweep-report.json
 ```
+
+Run the binary rerank statistical grid fixture:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/synthetic-binary-rerank-grid.example.json \
+    tmp/synthetic-binary-rerank-grid-report.json
+```
+
+The grid separates `data_seeds` from `encoder_seeds`. `repeat_count` controls
+binary timing measurements, while `exact_timing_repeat_count` independently
+controls repeated timing of two common exact baselines. Quality is sampled once
+per data/encoder seed pair; timing repeats are not treated as independent
+quality observations.
+
+The two exact baselines answer different questions:
+
+- `current_exact_index` measures the existing `ExactVectorIndex`, including its
+  public index data structures and result construction;
+- `contiguous_exact` stores normalized source vectors row-major, dispatches the
+  SIMD dot-product kernel once per batch, reuses scoring workspaces, and returns
+  lightweight positions. It is the compute-oriented denominator for deciding
+  whether binary filtering beats a well-laid-out exact scan.
+
+Both baselines must return exactly the same top-k for every query. Their timing
+samples and median speedup denominators are reported separately; do not describe
+a speedup against `current_exact_index` as a speedup against contiguous exact
+vector arithmetic.
+
+Binary grid reports also record `exact_vector_similarity_backend`. GNU/Clang
+x86 builds select AVX2 at runtime, fall back to SSE2 when available, and
+otherwise use the scalar C++17 implementation. The current MSVC x64 build uses
+SSE2 for vector arithmetic; an isolated `/arch:AVX2` translation unit and
+dispatch path remain future work.
+
+They also record `binary_hamming_backend` and
+`binary_encoder_similarity_backend`. Short packed signatures prefer hardware
+POPCNT, sufficiently wide signatures may select the AVX2 nibble-LUT kernel on
+GNU/Clang x86, and all platforms retain a lookup-table fallback. The current
+MSVC x86/x64 implementation selects POPCNT when available and does not compile
+the AVX2 Hamming kernel. The random-hyperplane `v2`
+encoder materializes its deterministic projection lazily and uses the same
+AVX2/SSE2/scalar vector backend for dense inputs. Every dense backend and the
+sparse path use the same eight-lane reduction contract, so persisted signatures
+do not change with runtime CPU dispatch.
+
+Tests and diagnostic tools can query backend availability and request a
+specific backend through `HammingDistanceComputer` and
+`VectorSimilarityComputer`. Forced construction rejects unavailable backends;
+it never executes an unsupported instruction speculatively.
+
+Run the decomposed Hamming hot-path benchmark:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-hamming-hot-path-bench \
+    tools/agent-memory-bench/hamming-hot-path.example.json \
+    tmp/hamming-hot-path-report.json
+```
+
+The report separates raw contiguous distance calculation, `partial_sort`,
+`nth_element`, distance-bucket selection, the complete flat-index API, and the
+experimental bounded multi-probe index. Use the 100k fixtures only for manual
+directional runs; the tiny smoke fixture is the one registered in CTest.
 
 Run the deterministic staircase sweep helper:
 

@@ -359,3 +359,388 @@ experiment band, not for choosing production defaults.
 - Add `nDCG@10` and dense-vector bytes read for rerank.
 - Repeat the best bands on real embedding vectors and qrels.
 - Compare top-N candidate selection with Hamming-radius candidate selection.
+
+## 2026-07-20 — PR #57 stat-grid harness
+
+### What we changed
+
+PR #56 answered the first bit-width question, but still used a lightweight
+single-seed/single-run grid. PR #57 turns the grid into a more useful
+experiment harness:
+
+- `data_seeds` and `encoder_seeds` are separate;
+- each data seed builds one common exact oracle reused across encoder seeds,
+  bit widths, and repeats;
+- `repeat_count` records repeated binary timings over the same oracle without
+  treating deterministic repeats as new quality observations;
+- `exact_timing_repeat_count` measures the shared exact baseline repeatedly,
+  and speedups use its median query time as their denominator;
+- optional `randomize_execution_order` shuffles bit/repeat tasks and candidate
+  limit execution while keeping bit, repeat, and candidate JSON output sorted;
+- each bit-width report includes repeat-level raw reports and summary statistics;
+- the top-level report includes `aggregate_summary` with separate quality and
+  timing sample counts;
+- summary `median` is the conventional median, while `p95_nearest_rank` names
+  the percentile method explicitly.
+
+### Hypothesis
+
+The earlier candidate bands should remain directionally stable when projection
+seed and repeated timings are separated from data generation. The exact winner
+should still not be treated as production-stable because the run is local,
+synthetic, and small.
+
+### Setup
+
+Local directional run:
+
+- build: MinGW Release;
+- documents: `10000`;
+- queries: `100`;
+- embedding dimension: `128`;
+- bit counts: `128`, `256`, `512`, `1024`;
+- final top-k: `10`;
+- candidate limits: `100`, `500`, `1000`, `2000`;
+- data seeds: `42`;
+- encoder seeds: `1001`, `1002`;
+- repeats per data/encoder/bit: `2`;
+- exact timing repeats per data seed: `5`;
+- randomized execution order: enabled.
+
+### Initial aggregate results before explicit float SIMD
+
+Each cell shows:
+
+```text
+coverage mean / top-1 mean / median total speedup
+```
+
+Each quality cell has `2` samples: one per encoder seed. Each timing cell has
+`4` measurements: two encoder seeds times two repeats. The common exact
+baseline has `5` timing measurements:
+
+```text
+362.368, 421.191, 360.403, 342.740, 335.916 ms
+```
+
+Its conventional median, `360.403 ms`, is the denominator for every speedup in
+the table. This run is retained as the historical pre-SIMD result; the
+controlled rerun below supersedes its latency conclusions.
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 2.53x | 0.6260 / 0.685 / 1.88x | 0.7795 / 0.850 / 1.47x | 0.9035 / 0.955 / 0.97x |
+| 256 | 0.5065 / 0.665 / 1.87x | 0.8260 / 0.890 / 1.48x | 0.9265 / 0.955 / 1.22x | 0.9780 / 0.990 / 0.93x |
+| 512 | 0.7435 / 0.895 / 2.03x | 0.9595 / 1.000 / 1.58x | 0.9895 / 1.000 / 1.25x | 0.9990 / 1.000 / 0.95x |
+| 1024 | 0.9010 / 1.000 / 1.34x | 0.9960 / 1.000 / 1.05x | 1.0000 / 1.000 / 0.96x | 1.0000 / 1.000 / 0.71x |
+
+### Interpretation
+
+The broad shape from PR #56 remains:
+
+- direct binary top-k is still not the main retrieval mode;
+- binary candidate over-fetch plus exact rerank is the useful mode;
+- wider signatures recover quality with smaller candidate sets;
+- large candidate sets eventually lose the speed advantage to rerank cost.
+
+The practical candidate bands are now slightly clearer:
+
+- `1024 bits × 100 candidates`: strong top-1/routing candidate with high
+  coverage and a `1.34x` median speedup;
+- `512 bits × 500 candidates`: the strongest balanced candidate in this run,
+  with `0.9595` coverage, perfect top-1 agreement, and a `1.58x` median speedup;
+- `1024 bits × 500 candidates`: quality-oriented candidate with near-exact
+  coverage, but its `1.05x` median speedup is too small to treat as robust;
+- `128 bits × 100 candidates` is fast at `2.53x`, but its `0.3200` coverage is
+  only suitable for coarse routing where that loss is acceptable.
+
+### Limitations
+
+This is still not a production benchmark:
+
+- only one data seed was used;
+- only two encoder seeds, two binary timing repeats, and five exact timing
+  repeats were used;
+- timings are local in-process measurements;
+- four binary timing measurements are not enough for stable tail statistics or
+  confidence intervals; `p95_nearest_rank` is diagnostic only at this scale;
+- candidate order is randomized, but the machine still has cache, allocator, and
+  CPU frequency effects;
+- the corpus is synthetic clustered dense vectors, not real embeddings with qrels.
+
+### SIMD-controlled rerun
+
+The initial exact baseline used scalar source loops and recomputed cosine norms
+for every query/document pair. That made the binary speedup depend on an
+unnecessarily weak float implementation. In the same PR we therefore added:
+
+- runtime-selected AVX2 and SSE2 vector arithmetic with a scalar fallback;
+- cached inverse document norms and one query norm calculation per search;
+- lightweight exact and binary top-k candidates, so metadata is copied only
+  after partial selection;
+- the same SIMD dot-product backend for exact candidate reranking;
+- the selected exact backend in the JSON report.
+
+Eigen was not added. The dependency would not improve these two compact kernels
+over direct intrinsics, and the runtime-dispatched scalar fallback remains
+dependency-free.
+
+The clean rerun used the same data, seeds, bit widths, candidate limits, and
+sample counts. The selected backend was `avx2`. Exact timing samples were:
+
+```text
+56.336, 56.489, 55.995, 57.868, 57.668 ms
+```
+
+The median exact time fell from `360.403 ms` to `56.489 ms`, a `6.38x`
+improvement. Quality stayed unchanged, while the latency result changed
+materially:
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 0.80x | 0.6260 / 0.685 / 0.55x | 0.7795 / 0.850 / 0.40x | 0.9035 / 0.955 / 0.26x |
+| 256 | 0.5065 / 0.665 / 0.79x | 0.8260 / 0.890 / 0.54x | 0.9265 / 0.955 / 0.39x | 0.9780 / 0.990 / 0.26x |
+| 512 | 0.7435 / 0.895 / 0.56x | 0.9595 / 1.000 / 0.41x | 0.9895 / 1.000 / 0.33x | 0.9990 / 1.000 / 0.24x |
+| 1024 | 0.9010 / 1.000 / 0.34x | 0.9960 / 1.000 / 0.29x | 1.0000 / 1.000 / 0.24x | 1.0000 / 1.000 / 0.19x |
+
+No tested flat-binary candidate configuration beats the optimized exact float
+scan at this `128`-dimension, `10000`-document scale. The best total latency is
+`128 bits × 100 candidates` at `70.22 ms`, still `1.24x` slower than exact and
+with only `0.3200` exact-top-k coverage.
+
+The stage breakdown explains why:
+
+| Configuration | Query encode ms | Hamming search ms | Exact rerank ms | Total ms |
+| --- | ---: | ---: | ---: | ---: |
+| 128 bits × 100 | 12.56 | 55.24 | 2.49 | 70.22 |
+| 512 bits × 100 | 49.78 | 49.61 | 2.53 | 101.73 |
+| 512 bits × 500 | 50.26 | 75.65 | 10.08 | 136.14 |
+| 1024 bits × 100 | 98.77 | 62.74 | 4.12 | 165.58 |
+
+Flat Hamming search alone can approach or slightly beat the exact float scan,
+but random-hyperplane query encoding consumes the gain. Candidate over-fetch
+and reranking then add more work. Binary signatures still reduce index payload,
+but this flat implementation is currently a compression and candidate-quality
+experiment, not a latency optimization.
+
+### What to check next
+
+- Vectorize or batch the random-hyperplane encoder and measure encoding
+  separately before changing the retrieval architecture.
+- Add a sub-linear Hamming candidate index; a full-corpus Hamming scan cannot
+  exploit the main indexing benefit of binary signatures.
+- Repeat on real `384`, `768`, and `1536` dimensional embeddings with qrels;
+  the float/binary crossover depends strongly on source dimension.
+- Increase data seed count before making architecture defaults.
+- Add `nDCG@10`, dense-vector bytes read for rerank, and persisted vector fetch
+  cost.
+- Compare top-N candidate selection with Hamming-radius or bucket/Multi-Index
+  Hashing candidate generation.
+
+## 2026-07-20: binary hot-path completion
+
+### Why this continuation was needed
+
+The SIMD-controlled rerun above proved that the float baseline had previously
+been too weak, but its new conclusion was also suspicious: two XOR operations
+and two popcounts for a 128-bit code should not cost as much as a 128-float dot
+product. The follow-up therefore decomposed and optimized the complete binary
+hot path before accepting the latency conclusion.
+
+### Changes under test
+
+- Width-aware Hamming dispatch: short signatures use hardware POPCNT instead
+  of entering an AVX2 kernel whose short tail fell back to byte lookup.
+- One reusable batch Hamming kernel per index instead of validation and runtime
+  dispatch for every record.
+- Contiguous row-major signature words, contiguous lightweight records, and one
+  shared `BinarySignatureInfo` per flat index.
+- Distance-histogram top-k selection with deterministic chunk-id tie breaking.
+- Empty-filter fast path so the scan does not call metadata matching twice per
+  record.
+- Lazy materialization of the Rademacher projection matrix, SIMD dense dot
+  products, ordered batch encoding, and a sparse-input encoder path.
+- An explicit encoder contract bump from `v1` to `v2`. Dense SIMD, scalar, and
+  sparse paths now share a fixed eight-lane reduction order so persisted
+  signatures do not depend on the runtime backend; changing from the old
+  scalar accumulation order is nevertheless behavior-affecting.
+- An experimental `MultiProbeHammingIndex` with configurable projected-bit
+  tables and bounded radius probing.
+- A separate `agent-memory-hamming-hot-path-bench` executable for raw-kernel,
+  selection, flat-index, and multi-probe measurements.
+
+Eigen was still not added. The measured kernels need runtime CPU dispatch and
+packed-bit handling directly; a new general matrix dependency would not remove
+the need for those paths.
+
+### Decomposed 128-bit hot path
+
+Setup: 10,000 uniformly generated signatures, 100 queries, top-10, five timing
+repeats. The selected backend was `hardware_popcount`.
+
+| Stage or strategy | Median total for 100 queries |
+| --- | ---: |
+| Raw contiguous Hamming scan | 2.00 ms |
+| Top-k with `partial_sort` only | 3.98 ms |
+| Top-k with `nth_element` plus final sort | 12.08 ms |
+| Top-k with distance buckets | 1.54 ms |
+| Complete optimized `FlatBinarySignatureIndex` | 5.12 ms |
+
+The old flat-index measurement was about `48.20 ms`. Compact storage,
+short-width POPCNT dispatch, batch scanning, distance buckets, and the empty
+filter path reduce it by roughly `9x`. The remaining difference between raw
+scan plus selection and the full index is result construction, identifiers,
+metadata, validation, and allocator effects rather than Hamming arithmetic.
+
+### Bounded multi-probe prototype
+
+The prototype establishes the API and exposes candidate/bucket diagnostics,
+but does not justify a production default:
+
+| Corpus/configuration | Mean candidates | Recall@10 vs flat | Time | Speedup vs flat |
+| --- | ---: | ---: | ---: | ---: |
+| 10k, 8 tables x 8 bits, radius 1, target 640 | 2,486 | 0.797 | 7.32 ms | 0.70x |
+| 100k, same tables, target 640 (radius 0 stopped early) | 3,087 | 0.267 | 16.85 ms | 3.01x |
+| 100k, same tables, target 4,000 | 24,898 | 0.850 | 75.82 ms | 0.67x |
+
+This simple projection scheme can be fast or high-recall, but not both in the
+tested configurations. Fixed bucket parameters also have no worst-case
+sub-linear guarantee. Production follow-up should compare proper Multi-Index
+Hashing or HNSW-Hamming rather than promote this prototype by default.
+
+### Final clustered-vector grid
+
+The final rerun used the same 10,000 documents, 100 queries, 128-dimensional
+clustered vectors, one data seed, two encoder seeds, two binary repeats, and
+five exact repeats. Exact AVX2 samples were `58.839`, `59.127`, `59.620`,
+`58.929`, and `58.692 ms`; the common median denominator was `58.929 ms`.
+
+Each cell is `exact-top-k coverage / top-1 agreement / median total speedup`:
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 6.81x | 0.6260 / 0.685 / 2.70x | 0.7795 / 0.850 / 1.60x | 0.9035 / 0.955 / 0.82x |
+| 256 | 0.5065 / 0.665 / 5.58x | 0.8260 / 0.890 / 2.62x | 0.9265 / 0.955 / 1.55x | 0.9780 / 0.990 / 0.82x |
+| 512 | 0.7435 / 0.895 / 4.01x | 0.9595 / 1.000 / 2.27x | 0.9895 / 1.000 / 1.43x | 0.9990 / 1.000 / 0.82x |
+| 1024 | 0.9010 / 1.000 / 2.29x | 0.9960 / 1.000 / 1.58x | 1.0000 / 1.000 / 1.15x | 1.0000 / 1.000 / 0.72x |
+
+Representative stage medians:
+
+| Configuration | Query encode | Hamming search | Exact rerank | Total |
+| --- | ---: | ---: | ---: | ---: |
+| 128 bits x 100 | 0.50 ms | 6.81 ms | 1.26 ms | 8.65 ms |
+| 256 bits x 500 | 0.90 ms | 16.35 ms | 5.57 ms | 22.49 ms |
+| 512 bits x 500 | 1.76 ms | 18.80 ms | 5.27 ms | 25.95 ms |
+| 1024 bits x 500 | 3.50 ms | 27.75 ms | 5.78 ms | 37.33 ms |
+
+### Updated conclusion
+
+The earlier "no latency win" conclusion is superseded. The arithmetic was not
+the problem; container layout, short-code dispatch, selection, metadata calls,
+and on-the-fly hyperplane generation dominated the hot path.
+
+At this scale, `512 bits x 500 candidates` is again a strong balanced point:
+`0.9595` exact-top-k coverage, perfect top-1 agreement, and `2.27x` total
+speedup against the current SIMD-enabled `ExactVectorIndex`. This comparison is
+qualified by the contiguous compute-oriented baseline in the continuation
+below. `1024 x 500` is the quality-oriented point at `0.996` coverage and
+`1.57x` against the current index. Candidate sets of 2,000 are still too large:
+exact reranking and result selection erase the gain.
+
+The next evidence gate is no longer basic flat-scan viability. It is:
+
+- real 384/768/1536-dimensional embeddings and qrels;
+- persisted float-vector fetch/read amplification during rerank;
+- more data and encoder seeds with confidence intervals;
+- a mature high-recall Hamming ANN implementation, because the first bounded
+  multi-probe prototype did not beat the optimized flat scan at useful recall.
+
+## 2026-07-20: comparable contiguous dense baseline
+
+### Why this continuation was needed
+
+The previous grid compared a compact binary filter with the production-shaped
+`ExactVectorIndex`. That is a valid implementation-level comparison, but it is
+not a clean answer to whether Hamming filtering beats exact dense arithmetic:
+the current exact index stores records in an ordered map, keeps embeddings in
+separate allocations, parses identifiers, and constructs public result objects.
+
+This continuation adds a second exact oracle that keeps all vectors in one
+row-major float buffer, caches inverse norms, dispatches the selected SIMD dot
+product kernel once per batch, reuses dot-product and scoring workspaces, and
+returns only document positions. The current index and contiguous baseline are
+timed in alternating order. The benchmark rejects the run unless both produce
+the same exact top-k for every query.
+
+### Expected result
+
+The contiguous baseline was expected to be faster than the current index and
+therefore reduce the reported binary speedup. A meaningful binary-filter win
+would need to remain visible against this stronger denominator, not merely
+against object layout and API overhead in `ExactVectorIndex`.
+
+### Configuration
+
+- 10,000 documents and 100 queries;
+- 128-dimensional clustered normalized vectors;
+- data seed `42`;
+- encoder seeds `1001` and `1002`;
+- signature widths `128`, `256`, `512`, and `1024` bits;
+- candidate limits `100`, `500`, `1000`, and `2000`;
+- five binary timing repeats per encoder seed;
+- seven timing repeats for each exact baseline;
+- randomized grid order and alternating exact-baseline order.
+
+### Exact-baseline result
+
+| Baseline | Median for 100 queries | Samples, ms |
+| --- | ---: | --- |
+| Current `ExactVectorIndex` | 57.8083 ms | 57.8083, 59.7544, 56.8027, 58.2207, 56.5642, 59.5654, 57.7041 |
+| Contiguous exact cosine | 28.7912 ms | 29.1613, 28.7912, 28.4862, 27.9653, 29.1701, 28.6445, 28.8731 |
+
+The existing index is about `2.01x` slower in this fixture. Consequently, every
+binary speedup is reported twice below. Each cell is
+`coverage / top-1 / speedup vs current index / speedup vs contiguous exact`.
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 6.60x / 3.29x | 0.6260 / 0.685 / 2.65x / 1.32x | 0.7795 / 0.850 / 1.51x / 0.75x | 0.9035 / 0.955 / 0.82x / 0.41x |
+| 256 | 0.5065 / 0.665 / 5.64x / 2.81x | 0.8260 / 0.890 / 2.55x / 1.27x | 0.9265 / 0.955 / 1.52x / 0.76x | 0.9780 / 0.990 / 0.82x / 0.41x |
+| 512 | 0.7435 / 0.895 / 3.96x / 1.97x | 0.9595 / 1.000 / 2.25x / 1.12x | 0.9895 / 1.000 / 1.43x / 0.71x | 0.9990 / 1.000 / 0.81x / 0.40x |
+| 1024 | 0.9010 / 1.000 / 2.22x / 1.10x | 0.9960 / 1.000 / 1.55x / 0.77x | 1.0000 / 1.000 / 1.12x / 0.56x | 1.0000 / 1.000 / 0.72x / 0.36x |
+
+Direct binary top-k remains a poor final ranker. Its total median and speedup
+against current/contiguous exact were `5.4553 ms` and `10.60x/5.28x` at 128
+bits, `7.5054 ms` and `7.70x/3.84x` at 256 bits, `11.3379 ms` and
+`5.10x/2.54x` at 512 bits, and `23.1109 ms` and `2.50x/1.25x` at 1024 bits.
+Mean direct top-10 recall ranged only from `0.0805` to `0.4295`.
+
+### Revised conclusion
+
+Binary signatures are useful as a compact candidate filter, but the latency
+claim is configuration- and baseline-dependent. The earlier `512 x 500`
+result remains attractive for quality (`0.9595` coverage and perfect top-1),
+yet its advantage over the comparable contiguous exact scan is only `1.12x` in
+this single local run. That is directional evidence, not a robust performance
+win. The `1024 x 500` quality-oriented point loses to contiguous exact at
+`0.77x`. Lower-width and smaller-candidate modes produce clearer speedups, but
+with correspondingly lower exact-top-k coverage.
+
+At 128 source dimensions, a high-quality flat binary filter therefore has not
+yet demonstrated a decisive compute-only latency advantage. Its stronger
+system-level cases remain compact hot-index payload, lower memory bandwidth,
+avoiding reads of most persisted float vectors, and higher-dimensional source
+embeddings where exact dense arithmetic is more expensive. The current rerank
+path still uses individually allocated `Embedding` values, so a compact
+row-major rerank store may improve the complete filter pipeline.
+
+### Follow-up experiments
+
+- Repeat on real 384/768/1536-dimensional embeddings with qrels.
+- Measure persisted vector bytes fetched and read amplification for rerank.
+- Add a compact row-major or blocked dense candidate store and compare it with
+  both exact denominators.
+- Test adaptive candidate budgets instead of one fixed limit for every query.
+- Compare a mature sub-linear Hamming ANN implementation with both flat scans.
+- Add more data seeds, confidence intervals, and randomized warm-up protocol
+  before choosing a production default.

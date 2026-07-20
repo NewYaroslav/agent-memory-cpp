@@ -43,11 +43,7 @@ namespace agent_memory {
 
         constexpr auto kBytePopcount = make_byte_popcount_table();
 
-        enum class HammingDistanceBackend {
-            LookupTable,
-            HardwarePopcount,
-            Avx2Simd
-        };
+        constexpr std::size_t kMinimumAvx2WordCount = 16;
 
         [[nodiscard]] std::uint64_t valid_tail_mask(std::size_t bit_count) noexcept {
             const auto remainder = bit_count % kBitsPerWord;
@@ -171,7 +167,26 @@ namespace agent_memory {
             return distance;
         }
 
+        void hamming_distances_lookup(
+            const std::uint64_t* query,
+            const std::uint64_t* records,
+            std::size_t record_count,
+            std::size_t word_count,
+            std::size_t* output
+        ) noexcept {
+            for(std::size_t record = 0; record < record_count; ++record) {
+                output[record] = hamming_distance_words_lookup(
+                    query,
+                    records + record * word_count,
+                    word_count
+                );
+            }
+        }
+
 #if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
+        __attribute__((target("popcnt")))
+#endif
         [[nodiscard]] std::size_t hamming_distance_words_popcnt(
             const std::uint64_t* lhs,
             const std::uint64_t* rhs,
@@ -183,40 +198,132 @@ namespace agent_memory {
             }
             return distance;
         }
+
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
+        __attribute__((target("popcnt")))
+#endif
+        void hamming_distances_popcnt(
+            const std::uint64_t* query,
+            const std::uint64_t* records,
+            std::size_t record_count,
+            std::size_t word_count,
+            std::size_t* output
+        ) noexcept {
+            for(std::size_t record = 0; record < record_count; ++record) {
+                output[record] = hamming_distance_words_popcnt(
+                    query,
+                    records + record * word_count,
+                    word_count
+                );
+            }
+        }
 #endif
 
-        [[nodiscard]] HammingDistanceBackend select_hamming_distance_backend() noexcept {
+        using HammingSingleKernel = std::size_t (*)(
+            const std::uint64_t*,
+            const std::uint64_t*,
+            std::size_t
+        ) noexcept;
+        using HammingBatchKernel = void (*)(
+            const std::uint64_t*,
+            const std::uint64_t*,
+            std::size_t,
+            std::size_t,
+            std::size_t*
+        ) noexcept;
+
+        struct HammingKernelSelection final {
+            HammingDistanceBackend backend = HammingDistanceBackend::LookupTable;
+            HammingSingleKernel single = hamming_distance_words_lookup;
+            HammingBatchKernel batch = hamming_distances_lookup;
+        };
+
 #if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
-            if(runtime_supports_avx2()) {
-                return HammingDistanceBackend::Avx2Simd;
+        __attribute__((target("avx2"))) void hamming_distances_avx2(
+            const std::uint64_t* query,
+            const std::uint64_t* records,
+            std::size_t record_count,
+            std::size_t word_count,
+            std::size_t* output
+        ) noexcept {
+            for(std::size_t record = 0; record < record_count; ++record) {
+                output[record] = hamming_distance_words_avx2(
+                    query,
+                    records + record * word_count,
+                    word_count
+                );
             }
+        }
 #endif
+
+        [[nodiscard]] bool is_hamming_backend_supported(
+            HammingDistanceBackend backend
+        ) noexcept {
+            switch(backend) {
+                case HammingDistanceBackend::LookupTable:
+                    return true;
+                case HammingDistanceBackend::HardwarePopcount:
 #if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
-            if(runtime_supports_popcnt()) {
-                return HammingDistanceBackend::HardwarePopcount;
-            }
+                {
+                    static const bool supported = runtime_supports_popcnt();
+                    return supported;
+                }
+#else
+                    return false;
 #endif
-            return HammingDistanceBackend::LookupTable;
+                case HammingDistanceBackend::Avx2Simd:
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
+                {
+                    static const bool supported = runtime_supports_avx2();
+                    return supported;
+                }
+#else
+                    return false;
+#endif
+            }
+            return false;
         }
 
-        [[nodiscard]] std::size_t hamming_distance_words(
-            const std::uint64_t* lhs,
-            const std::uint64_t* rhs,
+        [[nodiscard]] HammingKernelSelection hamming_kernel_for_backend(
+            HammingDistanceBackend backend
+        ) noexcept {
+            switch(backend) {
+                case HammingDistanceBackend::LookupTable:
+                    return {};
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
+                case HammingDistanceBackend::HardwarePopcount:
+                    return {
+                        HammingDistanceBackend::HardwarePopcount,
+                        hamming_distance_words_popcnt,
+                        hamming_distances_popcnt
+                    };
+#endif
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
+                case HammingDistanceBackend::Avx2Simd:
+                    return {
+                        HammingDistanceBackend::Avx2Simd,
+                        hamming_distance_words_avx2,
+                        hamming_distances_avx2
+                    };
+#endif
+                default:
+                    return {};
+            }
+        }
+
+        [[nodiscard]] HammingKernelSelection select_hamming_distance_kernel(
             std::size_t word_count
         ) noexcept {
-            static const auto backend = select_hamming_distance_backend();
-
-#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
-            if(backend == HammingDistanceBackend::Avx2Simd) {
-                return hamming_distance_words_avx2(lhs, rhs, word_count);
+            if(word_count >= kMinimumAvx2WordCount
+               && is_hamming_backend_supported(HammingDistanceBackend::Avx2Simd)) {
+                return hamming_kernel_for_backend(HammingDistanceBackend::Avx2Simd);
             }
-#endif
-#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
-            if(backend == HammingDistanceBackend::HardwarePopcount) {
-                return hamming_distance_words_popcnt(lhs, rhs, word_count);
+            if(is_hamming_backend_supported(HammingDistanceBackend::HardwarePopcount)) {
+                return hamming_kernel_for_backend(
+                    HammingDistanceBackend::HardwarePopcount
+                );
             }
-#endif
-            return hamming_distance_words_lookup(lhs, rhs, word_count);
+            return {};
         }
 
         [[nodiscard]] double bit_entropy(double probability_one) noexcept {
@@ -387,15 +494,86 @@ namespace agent_memory {
         return !(lhs == rhs);
     }
 
+    std::string_view hamming_distance_backend_name(
+        HammingDistanceBackend backend
+    ) noexcept {
+        switch(backend) {
+            case HammingDistanceBackend::LookupTable:
+                return "lookup_table";
+            case HammingDistanceBackend::HardwarePopcount:
+                return "hardware_popcount";
+            case HammingDistanceBackend::Avx2Simd:
+                return "avx2_simd";
+        }
+        return "unknown";
+    }
+
+    bool hamming_distance_backend_supported(HammingDistanceBackend backend) noexcept {
+        return is_hamming_backend_supported(backend);
+    }
+
+    HammingDistanceComputer::HammingDistanceComputer(std::size_t word_count) noexcept
+        : m_word_count(word_count) {
+        const auto selection = select_hamming_distance_kernel(word_count);
+        m_backend = selection.backend;
+        m_single_kernel = selection.single;
+        m_batch_kernel = selection.batch;
+    }
+
+    HammingDistanceComputer::HammingDistanceComputer(
+        std::size_t word_count,
+        HammingDistanceBackend backend
+    )
+        : m_word_count(word_count) {
+        if(!is_hamming_backend_supported(backend)) {
+            throw std::invalid_argument(
+                "requested Hamming-distance backend is not supported by this build and CPU"
+            );
+        }
+        const auto selection = hamming_kernel_for_backend(backend);
+        m_backend = selection.backend;
+        m_single_kernel = selection.single;
+        m_batch_kernel = selection.batch;
+    }
+
+    std::size_t HammingDistanceComputer::word_count() const noexcept {
+        return m_word_count;
+    }
+
+    HammingDistanceBackend HammingDistanceComputer::backend() const noexcept {
+        return m_backend;
+    }
+
+    std::size_t HammingDistanceComputer::distance_words(
+        const std::uint64_t* lhs,
+        const std::uint64_t* rhs
+    ) const noexcept {
+        return m_single_kernel(lhs, rhs, m_word_count);
+    }
+
+    void HammingDistanceComputer::compute_distances(
+        const std::uint64_t* query_words,
+        const std::uint64_t* record_words,
+        std::size_t record_count,
+        std::size_t* output_distances
+    ) const noexcept {
+        m_batch_kernel(
+            query_words,
+            record_words,
+            record_count,
+            m_word_count,
+            output_distances
+        );
+    }
+
     std::size_t hamming_distance(const BinarySignature& lhs, const BinarySignature& rhs) {
         if(lhs.bit_count() != rhs.bit_count()) {
             throw std::invalid_argument("Hamming distance requires equal-width signatures");
         }
 
-        return hamming_distance_words(
+        return HammingDistanceComputer(lhs.word_count()).distance_words(
             lhs.words().data(),
-            rhs.words().data(),
-            lhs.words().size()
+            rhs.words().data()
         );
     }
 

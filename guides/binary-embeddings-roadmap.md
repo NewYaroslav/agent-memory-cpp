@@ -2,7 +2,7 @@
 
 > C++17 compliance: кодовые сниппеты используют `const std::vector<T>&` вместо `std::span` и явные конструкторы вместо designated initializers. Binary signatures (`BinarySignature`, `IBinarySignatureEncoder`, `BinarySignatureEncoderRegistry`, `RandomHyperplaneLSH`, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`) — это cache-friendly fingerprints для coarse filter (bucket index); binary embeddings — это semantic-preserving quantizers общего назначения. Этот гайд расширяет roadmap binary signatures до общего compression layer; cross-link с [`optimization-roadmap.md`](optimization-roadmap.md) §"Binary Signature Index Tasks" обязателен.
 
-> **Implementation status.** `BinarySignature`, `BinarySignature::hamming_distance`, binary-code health diagnostics, `IBinarySignatureEncoder`, `RandomHyperplaneBinaryEncoder`, `BinarySignatureInfo`, and the in-memory `BinarySignatureEncoderRegistry` are implemented in `src/agent_memory/index/`. `.bse` loading, `RandomHyperplaneLSH` bucket wiring, `binary_bucket_index`, `DenseIndexMode::BinaryCandidateFilter`, `DenseIndexMode::BinaryOnly`, `DenseIndexMode::ApproximateVector`, `BinaryOnlyIndex`, `ApproximateVectorIndex`, `AutoencoderBinarySignatureEncoder`, `IAutoencoderEncoder`, and `IAutoencoderDecoder` remain roadmap-only and require separate PRs.
+> **Implementation status.** `BinarySignature`, width-aware batch Hamming kernels, binary-code health diagnostics, `IBinarySignatureEncoder`, the materialized/SIMD `RandomHyperplaneBinaryEncoder` v2, sparse and batch encoding, `BinarySignatureInfo`, `BinarySignatureEncoderRegistry`, optimized `FlatBinarySignatureIndex`, and experimental in-memory `MultiProbeHammingIndex` are implemented in `src/agent_memory/index/`. A synthetic 128-dimensional run found that the high-quality `512-bit x 500-candidate` filter was `2.25x` faster than the current `ExactVectorIndex`, but only `1.12x` faster than a comparable contiguous exact scan; both figures are directional. Persisted `.bse` loading, production `binary_bucket_index`, dense-index integration, high-recall Hamming ANN, `AutoencoderBinarySignatureEncoder`, `IAutoencoderEncoder`, and `IAutoencoderDecoder` remain roadmap-only and require separate PRs.
 
 ## Source attribution policy
 
@@ -359,7 +359,7 @@ struct DenseIndexConfig {
 
 ### M0: Binary Signatures Only (partially implemented)
 
-> **Status.** `BinarySignature`, Hamming distance, code-health diagnostics, `IBinarySignatureEncoder`, `BinarySignatureInfo`, the scalar `RandomHyperplaneBinaryEncoder` baseline, and the in-memory `BinarySignatureEncoderRegistry` are the first implemented pieces. `.bse` loading, persisted bucket layout, and dense-index integration remain planned.
+> **Status.** Core packed signatures, width-aware Hamming dispatch, the optimized flat oracle, materialized/SIMD random-hyperplane encoder v2, sparse/batch encoding, identity registry, and a bounded multi-probe prototype are implemented. `.bse` loading, persisted bucket layout, dense-index integration, and a production high-recall Hamming ANN remain planned.
 
 M0 scope:
 
@@ -368,8 +368,9 @@ M0 scope:
 - `IBinarySignatureEncoder` interface (implemented).
 - `BinarySignatureEncoderRegistry` in-memory identity registry (implemented).
 - `.bse` file format and registry loading (Planned API).
-- `RandomHyperplaneBinaryEncoder` scalar baseline encoder (implemented).
-- `RandomHyperplaneLSH` bucket/index wiring (Planned API).
+- `RandomHyperplaneBinaryEncoder` v2 with lazy materialization and SIMD dense scoring (implemented).
+- `MultiProbeHammingIndex` bounded in-memory bucket prototype (implemented, experimental; no worst-case sub-linear guarantee).
+- Persisted `RandomHyperplaneLSH` / production Hamming ANN wiring (Planned API).
 - `binary_bucket_index` MDBX layout (Planned API).
 - `DenseIndexMode::BinaryCandidateFilter` default candidate-filter mode (Planned API).
 

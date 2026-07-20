@@ -464,7 +464,10 @@ but `Embedding` must remain a `std::vector<float>` value type in the public API.
 Binary signature and bucket indexes are approximate candidate filters. They
 must be benchmarked against exact float search by recall@K, latency, candidate
 count, storage size, read amplification, and decompression time before being
-treated as production defaults.
+treated as production defaults. Latency reports must distinguish the current
+public exact-index implementation from a contiguous compute-oriented exact
+baseline; otherwise container layout and result-materialization overhead can be
+mistaken for an arithmetic advantage of binary search.
 
 The knowledge base layers (lexical field postings, graph edges, temporal
 events, metadata filters) share a common primary-table-plus-secondary-index
@@ -485,6 +488,13 @@ Never first: hand-written AVX matrix-vector encoder.
 
 Hot path: Hamming scan (real bottleneck), не encoder (1 matrix-vector per query).
 Детальная спецификация: см. [`guides/optimization-roadmap.md`](optimization-roadmap.md) → "Eigen и SIMD стратегия".
+
+> **Measured update (PR #57).** Do not assume that Hamming scan is always the
+> only bottleneck. Before projection materialization, encoder work dominated;
+> after hot-path optimization, top-k selection, result construction, and exact
+> rerank can dominate depending on bit width and candidate count. The current
+> dependency-free implementation uses runtime-dispatched float SIMD,
+> width-aware Hamming kernels, and a scalar fallback without requiring Eigen.
 
 CMake flags (planned):
 - `AGENT_MEMORY_ENABLE_EIGEN` (default OFF)

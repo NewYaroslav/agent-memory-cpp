@@ -6,6 +6,7 @@
 /// \brief In-memory exact vector index implementation.
 
 #include "IVectorIndex.hpp"
+#include "VectorSimilarityComputer.hpp"
 
 #include <map>
 
@@ -15,6 +16,8 @@ namespace agent_memory {
     struct ExactVectorIndexOptions final {
         std::size_t dimension = 0;
         SimilarityMetric similarity_metric = SimilarityMetric::Cosine;
+        /// \brief Enables the best SIMD backend supported by the running CPU.
+        bool enable_simd = true;
     };
 
     /// \brief Deterministic in-memory exact vector index.
@@ -26,6 +29,9 @@ namespace agent_memory {
         [[nodiscard]] SimilarityMetric similarity_metric() const noexcept override;
         [[nodiscard]] std::size_t dimension() const noexcept override;
         [[nodiscard]] std::size_t size() const noexcept override;
+
+        /// \brief Returns the vector arithmetic backend selected by this index.
+        [[nodiscard]] VectorSimilarityBackend similarity_backend() const noexcept;
 
         void upsert(VectorRecord record) override;
 
@@ -46,11 +52,17 @@ namespace agent_memory {
         void clear() override;
 
     private:
+        struct StoredRecord final {
+            VectorRecord record;
+            float inverse_norm = 0.0F;
+        };
+
         void validate_record_embedding(const Embedding& embedding);
         void validate_query_embedding(const Embedding& embedding) const;
 
         ExactVectorIndexOptions m_options;
-        std::map<ChunkId, VectorRecord> m_records;
+        VectorSimilarityComputer m_similarity;
+        std::map<ChunkId, StoredRecord> m_records;
     };
 
 } // namespace agent_memory
