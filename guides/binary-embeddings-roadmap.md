@@ -52,7 +52,7 @@ See [`advanced-binary-techniques-roadmap.md`](advanced-binary-techniques-roadmap
 | **Product Quantization (PQ)** | m bytes (typ. 8) | 96× (768-dim) | ~95% | FAISS, Milvus, billion-scale ANN |
 | **Binary (1 bit/dim)** | d / 8 bytes | 32× (768-dim) | ~85% | Coarse filter, edge, in-memory cache |
 | **Binary learned (Tissier 2018)** | 8-64 B per vector (see table below) | 300d: 18.75-150×; 768d: 48-384× (see table below) | ~98% (256 bit) | Coarse-to-fine retrieval, dense storage tier |
-| **LSH (random hyperplanes)** | 8-64 B per vector (see table below) | 300d: 18.75-150×; 768d: 48-384× (see table below) | ~85% (256 bit) | Cache-friendly candidate filter (planned; `RandomHyperplaneLSH` not yet implemented) |
+| **LSH (random hyperplanes)** | 8-64 B per vector (see table below) | 300d: 18.75-150×; 768d: 48-384× (see table below) | ~85% (256 bit) | Cache-friendly candidate filter; `RandomHyperplaneBinaryEncoder` v2 is implemented, production bucket/ANN integration remains planned |
 | **RotSQ** | ~6 bytes/dim + 12 B metadata | ~6× | ~95% | Sibling codec alongside Matryoshka, PQ |
 
 > All values above are **illustrative starting hypotheses, not validated cross-codec quality targets**. Recall@10 numbers depend on:
@@ -84,6 +84,56 @@ Note: actual ratios depend on dimension. Numbers above are upper and lower bound
 > ```
 > 
 > The code is a single `bit_count`-bit value stored once per vector, NOT `bit_count / dim` bits per dimension.
+
+### §2.1. Post-PR57 encoder and index taxonomy
+
+PR #57 validated only the first serious baseline: a shared random-hyperplane
+projection (`sign(Rx)`) used as a flat or bounded multi-probe Hamming candidate
+filter, followed by exact dense rerank. It does **not** close the binarisation
+track. Future work must keep two axes separate:
+
+- **Encoder family:** how a float vector becomes bits.
+- **Index family:** how those bits are searched.
+
+Faiss makes the same distinction in its index taxonomy: `IndexLSH` stores
+binary codes and compares them by Hamming distance, while scale-oriented
+families such as IVF, HNSW, PQ, and IVFPQ are separate index/codec layers.
+Faiss also notes that its LSH implementation is not vanilla independent random
+projection: it uses orthogonal projectors when `nbits <= d` and a tight frame
+when `nbits > d`. Treat that as a useful next baseline, not as proof that
+random-hyperplane LSH is enough for our workload.
+
+| Family | Shared code space? | Training | Intended role | Notes |
+|---|---:|---:|---|---|
+| Coordinate sign `sign(x)` | Yes | No | Cheapest diagnostic baseline | One bit per source coordinate; no projection cost, but keeps source dimension and can inherit bad coordinate balance. |
+| Random hyperplane `sign(Rx)` | Yes | No | Implemented baseline candidate filter | Good zero-training reference. PR #57 showed useful system speedups vs current `ExactVectorIndex`, but no decisive compute-only win vs contiguous exact scan at 128D. |
+| Orthogonal/tight-frame projection | Yes | No | Next zero-training baseline | Faiss-style improvement over independent projections; should be compared before learned encoders. |
+| Global learned projection (ITQ-like) | Yes | Yes | Main learned-hashing candidate | One corpus/calibration-trained `R`; preserves comparability across all records. Requires train/validation split and bit-health diagnostics. |
+| Autoencoder binary encoder | Yes | Yes | Strong learned compression tier | More expressive than linear ITQ-like projection; requires training toolchain, persisted weights, and careful acceptance criteria. |
+| Cluster-local projection `R_c` | Within a routed cluster | Yes | Hierarchical candidate filter | Query must first route to a small set of clusters; codes across unrelated clusters are not directly comparable. |
+| Document-local projection `R_j` | Within one selected document | Yes | Local page/book/codebase scan | Valid only after document selection or inside a known scope; otherwise the query would need to be encoded once per document. |
+
+The local variants are not drop-in replacements for a global binary index.
+If document A uses `R_A` and document B uses `R_B`, then bit position 17 no
+longer asks the same question in both codes. Hamming distance across those
+codes is therefore not meaningful. Local projections belong after a global
+router, not before it.
+
+Post-PR57 PR ladder:
+
+| PR | Scope | Success signal | Non-goal |
+|---|---|---|---|
+| PR #58 | Roadmap/taxonomy only: record the encoder families, Faiss-derived index lessons, and follow-up order. | Future agents can see that random hyperplane is only the baseline. | No code changes. |
+| PR #59 | Add coordinate-sign and orthogonal/tight-frame encoder baselines; run the existing binary-rerank grid against all zero-training encoders. | Find whether Faiss-style projection improves coverage/speed tradeoff over PR #57. | No learned training pipeline. |
+| PR #60 | Add a global learned projection prototype, ITQ-like if dependency-free enough, with train/validation split and persisted encoder identity. | Better candidate coverage at the same bit/candidate budget without validation leakage. | No per-document local matrices. |
+| PR #61 | Run high-dimensional and real-embedding benchmarks (384/768/1536D if fixtures are available), still with exact dense rerank as oracle. | Determine whether binary filtering starts winning against a contiguous exact baseline when dense dimension grows. | No production default switch. |
+| PR #62 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
+| PR #63+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, or HNSW dense baseline. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall. | More flat-scan polishing unless a benchmark justifies it. |
+
+[Source: Faiss wiki, "Faiss indexes": <https://github.com/facebookresearch/faiss/wiki/Faiss-indexes>]
+<br>[Source: Charikar 2002, "Similarity Estimation Techniques from Rounding Algorithms": <https://www.cs.princeton.edu/courses/archive/spr04/cos598B/bib/CharikarEstim.pdf>]
+<br>[Source: Gong et al., "Iterative Quantization: A Procrustean Approach to Learning Binary Codes": <https://slazebni.cs.illinois.edu/publications/ITQ.pdf>]
+<br>[Source: internal note — no public source available. Path: `ai-agent-playbook/concepts/llm-research/Бинаризация эмбеддингов для экономии памяти и ускорения retrieval.md`]
 
 ## §3. Binarization Methods
 
