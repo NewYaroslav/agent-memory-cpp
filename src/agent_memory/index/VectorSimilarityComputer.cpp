@@ -2,6 +2,7 @@
 
 #include <agent_memory/embedding/embedding_types.hpp>
 
+#include <array>
 #include <cstddef>
 #include <stdexcept>
 
@@ -37,8 +38,19 @@ namespace agent_memory {
             const float* rhs,
             std::size_t size
         ) noexcept {
+            std::array<float, 8> sums{};
+            std::size_t index = 0;
+            for(; index + sums.size() <= size; index += sums.size()) {
+                for(std::size_t lane = 0; lane < sums.size(); ++lane) {
+                    sums[lane] += lhs[index + lane] * rhs[index + lane];
+                }
+            }
+
             float result = 0.0F;
-            for(std::size_t index = 0; index < size; ++index) {
+            for(const auto sum : sums) {
+                result += sum;
+            }
+            for(; index < size; ++index) {
                 result += lhs[index] * rhs[index];
             }
             return result;
@@ -71,17 +83,30 @@ namespace agent_memory {
             const float* rhs,
             std::size_t size
         ) noexcept {
-            auto sums = _mm_setzero_ps();
+            auto low_sums = _mm_setzero_ps();
+            auto high_sums = _mm_setzero_ps();
             std::size_t index = 0;
-            for(; index + 4 <= size; index += 4) {
-                const auto lhs_values = _mm_loadu_ps(lhs + index);
-                const auto rhs_values = _mm_loadu_ps(rhs + index);
-                sums = _mm_add_ps(sums, _mm_mul_ps(lhs_values, rhs_values));
+            for(; index + 8 <= size; index += 8) {
+                low_sums = _mm_add_ps(
+                    low_sums,
+                    _mm_mul_ps(_mm_loadu_ps(lhs + index), _mm_loadu_ps(rhs + index))
+                );
+                high_sums = _mm_add_ps(
+                    high_sums,
+                    _mm_mul_ps(
+                        _mm_loadu_ps(lhs + index + 4),
+                        _mm_loadu_ps(rhs + index + 4)
+                    )
+                );
             }
 
-            alignas(16) float lanes[4]{};
-            _mm_store_ps(lanes, sums);
-            float result = lanes[0] + lanes[1] + lanes[2] + lanes[3];
+            alignas(16) float lanes[8]{};
+            _mm_store_ps(lanes, low_sums);
+            _mm_store_ps(lanes + 4, high_sums);
+            float result = 0.0F;
+            for(const auto lane : lanes) {
+                result += lane;
+            }
             for(; index < size; ++index) {
                 result += lhs[index] * rhs[index];
             }
@@ -270,11 +295,19 @@ namespace agent_memory {
         const Embedding& rhs
     ) const {
         require_equal_dimensions(lhs, rhs);
-        return dot_product_kernel(m_backend)(
+        return dot_product_values(
             lhs.values.data(),
             rhs.values.data(),
             lhs.values.size()
         );
+    }
+
+    float VectorSimilarityComputer::dot_product_values(
+        const float* lhs,
+        const float* rhs,
+        std::size_t size
+    ) const noexcept {
+        return dot_product_kernel(m_backend)(lhs, rhs, size);
     }
 
     float VectorSimilarityComputer::squared_norm(const Embedding& embedding) const noexcept {

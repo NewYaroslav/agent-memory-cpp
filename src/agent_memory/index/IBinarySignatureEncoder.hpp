@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace agent_memory {
 
@@ -45,6 +46,15 @@ namespace agent_memory {
 
         /// \brief Encodes one vector into a binary signature.
         [[nodiscard]] virtual BinarySignature encode(const Embedding& vector) const = 0;
+
+        /// \brief Encodes a batch while preserving input order.
+        ///
+        /// The default implementation delegates to `encode()`. Implementations
+        /// may override this method to reuse prepared projection state or batch
+        /// arithmetic without changing the single-vector contract.
+        [[nodiscard]] virtual std::vector<BinarySignature> encode_batch(
+            const std::vector<Embedding>& vectors
+        ) const;
     };
 
 } // namespace agent_memory

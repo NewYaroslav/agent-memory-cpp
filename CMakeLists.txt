@@ -50,6 +50,7 @@ add_library(agent_memory STATIC
     src/agent_memory/index/IBinarySignatureEncoder.cpp
     src/agent_memory/index/IBinarySignatureIndex.cpp
     src/agent_memory/index/IVectorIndex.cpp
+    src/agent_memory/index/MultiProbeHammingIndex.cpp
     src/agent_memory/index/RandomHyperplaneBinaryEncoder.cpp
     src/agent_memory/index/VectorSimilarityComputer.cpp
     src/agent_memory/index/VectorIndex.cpp
@@ -167,6 +168,14 @@ if(AGENT_MEMORY_BUILD_TESTS)
                 -DAGENT_MEMORY_BENCH_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/synthetic-binary-rerank-grid-ctest.json
                 -DAGENT_MEMORY_BENCH_WORKDIR=${CMAKE_CURRENT_SOURCE_DIR}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-binary-rerank-grid-smoke.cmake
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        add_test(
+            NAME agent_memory_benchmark_cli_hamming_hot_path
+            COMMAND
+                $<TARGET_FILE:agent-memory-hamming-hot-path-bench>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/hamming-hot-path-smoke.example.json
+                ${CMAKE_CURRENT_BINARY_DIR}/hamming-hot-path-ctest.json
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
     endif()

@@ -536,3 +536,119 @@ experiment, not a latency optimization.
   cost.
 - Compare top-N candidate selection with Hamming-radius or bucket/Multi-Index
   Hashing candidate generation.
+
+## 2026-07-20: binary hot-path completion
+
+### Why this continuation was needed
+
+The SIMD-controlled rerun above proved that the float baseline had previously
+been too weak, but its new conclusion was also suspicious: two XOR operations
+and two popcounts for a 128-bit code should not cost as much as a 128-float dot
+product. The follow-up therefore decomposed and optimized the complete binary
+hot path before accepting the latency conclusion.
+
+### Changes under test
+
+- Width-aware Hamming dispatch: short signatures use hardware POPCNT instead
+  of entering an AVX2 kernel whose short tail fell back to byte lookup.
+- One reusable batch Hamming kernel per index instead of validation and runtime
+  dispatch for every record.
+- Contiguous row-major signature words, contiguous lightweight records, and one
+  shared `BinarySignatureInfo` per flat index.
+- Distance-histogram top-k selection with deterministic chunk-id tie breaking.
+- Empty-filter fast path so the scan does not call metadata matching twice per
+  record.
+- Lazy materialization of the Rademacher projection matrix, SIMD dense dot
+  products, ordered batch encoding, and a sparse-input encoder path.
+- An explicit encoder contract bump from `v1` to `v2`. Dense SIMD, scalar, and
+  sparse paths now share a fixed eight-lane reduction order so persisted
+  signatures do not depend on the runtime backend; changing from the old
+  scalar accumulation order is nevertheless behavior-affecting.
+- An experimental `MultiProbeHammingIndex` with configurable projected-bit
+  tables and bounded radius probing.
+- A separate `agent-memory-hamming-hot-path-bench` executable for raw-kernel,
+  selection, flat-index, and multi-probe measurements.
+
+Eigen was still not added. The measured kernels need runtime CPU dispatch and
+packed-bit handling directly; a new general matrix dependency would not remove
+the need for those paths.
+
+### Decomposed 128-bit hot path
+
+Setup: 10,000 uniformly generated signatures, 100 queries, top-10, five timing
+repeats. The selected backend was `hardware_popcount`.
+
+| Stage or strategy | Median total for 100 queries |
+| --- | ---: |
+| Raw contiguous Hamming scan | 2.00 ms |
+| Top-k with `partial_sort` only | 3.98 ms |
+| Top-k with `nth_element` plus final sort | 12.08 ms |
+| Top-k with distance buckets | 1.54 ms |
+| Complete optimized `FlatBinarySignatureIndex` | 5.12 ms |
+
+The old flat-index measurement was about `48.20 ms`. Compact storage,
+short-width POPCNT dispatch, batch scanning, distance buckets, and the empty
+filter path reduce it by roughly `9x`. The remaining difference between raw
+scan plus selection and the full index is result construction, identifiers,
+metadata, validation, and allocator effects rather than Hamming arithmetic.
+
+### Bounded multi-probe prototype
+
+The prototype establishes the API and exposes candidate/bucket diagnostics,
+but does not justify a production default:
+
+| Corpus/configuration | Mean candidates | Recall@10 vs flat | Time | Speedup vs flat |
+| --- | ---: | ---: | ---: | ---: |
+| 10k, 8 tables x 8 bits, radius 1, target 640 | 2,486 | 0.797 | 7.32 ms | 0.70x |
+| 100k, same tables, target 640 (radius 0 stopped early) | 3,087 | 0.267 | 16.85 ms | 3.01x |
+| 100k, same tables, target 4,000 | 24,898 | 0.850 | 75.82 ms | 0.67x |
+
+This simple projection scheme can be fast or high-recall, but not both in the
+tested configurations. Fixed bucket parameters also have no worst-case
+sub-linear guarantee. Production follow-up should compare proper Multi-Index
+Hashing or HNSW-Hamming rather than promote this prototype by default.
+
+### Final clustered-vector grid
+
+The final rerun used the same 10,000 documents, 100 queries, 128-dimensional
+clustered vectors, one data seed, two encoder seeds, two binary repeats, and
+five exact repeats. Exact AVX2 samples were `58.839`, `59.127`, `59.620`,
+`58.929`, and `58.692 ms`; the common median denominator was `58.929 ms`.
+
+Each cell is `exact-top-k coverage / top-1 agreement / median total speedup`:
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 6.81x | 0.6260 / 0.685 / 2.70x | 0.7795 / 0.850 / 1.60x | 0.9035 / 0.955 / 0.82x |
+| 256 | 0.5065 / 0.665 / 5.58x | 0.8260 / 0.890 / 2.62x | 0.9265 / 0.955 / 1.55x | 0.9780 / 0.990 / 0.82x |
+| 512 | 0.7435 / 0.895 / 4.01x | 0.9595 / 1.000 / 2.27x | 0.9895 / 1.000 / 1.43x | 0.9990 / 1.000 / 0.82x |
+| 1024 | 0.9010 / 1.000 / 2.29x | 0.9960 / 1.000 / 1.58x | 1.0000 / 1.000 / 1.15x | 1.0000 / 1.000 / 0.72x |
+
+Representative stage medians:
+
+| Configuration | Query encode | Hamming search | Exact rerank | Total |
+| --- | ---: | ---: | ---: | ---: |
+| 128 bits x 100 | 0.50 ms | 6.81 ms | 1.26 ms | 8.65 ms |
+| 256 bits x 500 | 0.90 ms | 16.35 ms | 5.57 ms | 22.49 ms |
+| 512 bits x 500 | 1.76 ms | 18.80 ms | 5.27 ms | 25.95 ms |
+| 1024 bits x 500 | 3.50 ms | 27.75 ms | 5.78 ms | 37.33 ms |
+
+### Updated conclusion
+
+The earlier "no latency win" conclusion is superseded. The arithmetic was not
+the problem; container layout, short-code dispatch, selection, metadata calls,
+and on-the-fly hyperplane generation dominated the hot path.
+
+At this scale, `512 bits x 500 candidates` is again a strong balanced point:
+`0.9595` exact-top-k coverage, perfect top-1 agreement, and `2.27x` total
+speedup against the SIMD exact baseline. `1024 x 500` is the quality-oriented
+point at `0.996` coverage and `1.57x`. Candidate sets of 2,000 are still too
+large: exact reranking and result selection erase the gain.
+
+The next evidence gate is no longer basic flat-scan viability. It is:
+
+- real 384/768/1536-dimensional embeddings and qrels;
+- persisted float-vector fetch/read amplification during rerank;
+- more data and encoder seeds with confidence intervals;
+- a mature high-recall Hamming ANN implementation, because the first bounded
+  multi-probe prototype did not beat the optimized flat scan at useful recall.

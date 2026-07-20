@@ -146,6 +146,22 @@ int main() {
     if(agent_memory::hamming_distance(a, b) != 3) {
         return fail("hamming_distance must count differing bits only");
     }
+    const agent_memory::HammingDistanceComputer short_distance(a.word_count());
+    const std::vector<std::uint64_t> short_records{
+        a.words().front(),
+        b.words().front(),
+    };
+    std::vector<std::size_t> batch_distances(2);
+    short_distance.compute_distances(
+        a.words().data(),
+        short_records.data(),
+        batch_distances.size(),
+        batch_distances.data()
+    );
+    if(batch_distances != std::vector<std::size_t>{0, 3}
+       || agent_memory::hamming_distance_backend_name(short_distance.backend()).empty()) {
+        return fail("reusable Hamming batch kernels must match the checked free function");
+    }
     const auto wide_a = make_signature(256, {0, 63, 64, 127, 128, 191, 192, 255});
     const auto wide_b = make_signature(256, {1, 63, 65, 127, 129, 191, 193, 255});
     if(agent_memory::hamming_distance(wide_a, wide_b) != 8) {

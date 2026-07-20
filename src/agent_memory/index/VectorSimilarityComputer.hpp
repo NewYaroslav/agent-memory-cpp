@@ -39,6 +39,14 @@ namespace agent_memory {
             const Embedding& rhs
         ) const;
 
+        /// \brief Dot product over raw equally-sized contiguous float arrays.
+        /// \pre Both pointers address at least `size` values.
+        [[nodiscard]] float dot_product_values(
+            const float* lhs,
+            const float* rhs,
+            std::size_t size
+        ) const noexcept;
+
         /// \brief Computes the squared L2 norm of an embedding.
         [[nodiscard]] float squared_norm(const Embedding& embedding) const noexcept;
 

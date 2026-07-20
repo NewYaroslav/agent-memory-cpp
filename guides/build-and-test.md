@@ -89,6 +89,28 @@ Binary grid reports also record `exact_vector_similarity_backend`. On supported
 x86 builds the exact scan and reranker select AVX2 at runtime, fall back to SSE2
 when available, and otherwise use the scalar C++17 implementation.
 
+They also record `binary_hamming_backend` and
+`binary_encoder_similarity_backend`. Short packed signatures prefer hardware
+POPCNT, sufficiently wide signatures may select the AVX2 nibble-LUT kernel, and
+all platforms retain a lookup-table fallback. The random-hyperplane `v2`
+encoder materializes its deterministic projection lazily and uses the same
+AVX2/SSE2/scalar vector backend for dense inputs. Every dense backend and the
+sparse path use the same eight-lane reduction contract, so persisted signatures
+do not change with runtime CPU dispatch.
+
+Run the decomposed Hamming hot-path benchmark:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-hamming-hot-path-bench \
+    tools/agent-memory-bench/hamming-hot-path.example.json \
+    tmp/hamming-hot-path-report.json
+```
+
+The report separates raw contiguous distance calculation, `partial_sort`,
+`nth_element`, distance-bucket selection, the complete flat-index API, and the
+experimental bounded multi-probe index. Use the 100k fixtures only for manual
+directional runs; the tiny smoke fixture is the one registered in CTest.
+
 Run the deterministic staircase sweep helper:
 
 ```bash

@@ -486,6 +486,13 @@ Never first: hand-written AVX matrix-vector encoder.
 Hot path: Hamming scan (real bottleneck), не encoder (1 matrix-vector per query).
 Детальная спецификация: см. [`guides/optimization-roadmap.md`](optimization-roadmap.md) → "Eigen и SIMD стратегия".
 
+> **Measured update (PR #57).** Do not assume that Hamming scan is always the
+> only bottleneck. Before projection materialization, encoder work dominated;
+> after hot-path optimization, top-k selection, result construction, and exact
+> rerank can dominate depending on bit width and candidate count. The current
+> dependency-free implementation uses runtime-dispatched float SIMD,
+> width-aware Hamming kernels, and a scalar fallback without requiring Eigen.
+
 CMake flags (planned):
 - `AGENT_MEMORY_ENABLE_EIGEN` (default OFF)
 - `AGENT_MEMORY_ENABLE_ZSTD` (default OFF)

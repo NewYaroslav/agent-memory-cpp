@@ -120,6 +120,8 @@ namespace {
         double exact_build_ms = 0.0;
         double binary_build_ms = 0.0;
         std::string exact_similarity_backend;
+        std::string binary_hamming_backend;
+        std::string binary_encoder_similarity_backend;
         SearchTiming exact_query;
         std::vector<double> exact_query_total_ms_samples;
         SearchTiming binary_query;
@@ -1565,6 +1567,8 @@ namespace {
             {"data_generation_ms", result.data_generation_ms},
             {"exact_float_build_ms", result.exact_build_ms},
             {"exact_vector_similarity_backend", result.exact_similarity_backend},
+            {"binary_hamming_backend", result.binary_hamming_backend},
+            {"binary_encoder_similarity_backend", result.binary_encoder_similarity_backend},
             {"binary_encode_and_build_ms", result.binary_build_ms},
             {"exact_float_query_search_ms", result.exact_query.search_ms},
             {"exact_float_query_total_ms", result.exact_query.total_ms},
@@ -1740,10 +1744,11 @@ namespace {
         );
 
         const auto binary_build_start = Clock::now();
+        const auto document_signatures = encoder.encode_batch(oracle.data.documents);
         for(std::size_t index = 0; index < oracle.data.documents.size(); ++index) {
             binary_index.upsert(agent_memory::BinarySignatureRecord{
                 make_chunk_id(index),
-                encoder.encode(oracle.data.documents[index]),
+                document_signatures[index],
                 signature_info,
                 {}
             });
@@ -1755,6 +1760,12 @@ namespace {
         result.exact_build_ms = oracle.exact_build_ms;
         result.binary_build_ms = elapsed_ms(binary_build_start, binary_build_end);
         result.exact_similarity_backend = oracle.exact_similarity_backend;
+        result.binary_hamming_backend = std::string(
+            agent_memory::hamming_distance_backend_name(*binary_index.hamming_backend())
+        );
+        result.binary_encoder_similarity_backend = std::string(
+            agent_memory::vector_similarity_backend_name(encoder.similarity_backend())
+        );
         result.exact_query = oracle.exact_query;
         result.exact_query_total_ms_samples = oracle.exact_query_total_ms_samples;
         result.exact_payload_bytes = oracle.exact_payload_bytes;

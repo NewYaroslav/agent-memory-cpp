@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace agent_memory {
@@ -53,6 +54,69 @@ namespace agent_memory {
 
         std::size_t m_bit_count = 0;
         std::vector<std::uint64_t> m_words;
+    };
+
+    /// \brief Runtime-selected implementation used for packed Hamming distance.
+    enum class HammingDistanceBackend {
+        LookupTable,
+        HardwarePopcount,
+        Avx2Simd
+    };
+
+    /// \brief Stable diagnostic name for a Hamming-distance backend.
+    [[nodiscard]] std::string_view hamming_distance_backend_name(
+        HammingDistanceBackend backend
+    ) noexcept;
+
+    /// \brief Reusable same-width Hamming-distance kernel.
+    ///
+    /// Backend selection happens once at construction and accounts for both CPU
+    /// capabilities and signature width. Batch scans avoid validation and
+    /// dispatch inside the per-record hot loop.
+    class HammingDistanceComputer final {
+    public:
+        explicit HammingDistanceComputer(std::size_t word_count) noexcept;
+
+        [[nodiscard]] std::size_t word_count() const noexcept;
+        [[nodiscard]] HammingDistanceBackend backend() const noexcept;
+
+        /// \brief Computes one distance over exactly `word_count()` packed words.
+        /// \pre Both pointers address at least `word_count()` words.
+        [[nodiscard]] std::size_t distance_words(
+            const std::uint64_t* lhs,
+            const std::uint64_t* rhs
+        ) const noexcept;
+
+        /// \brief Computes distances from one query to contiguous row-major signatures.
+        /// \param query_words Query row containing `word_count()` words.
+        /// \param record_words `record_count` consecutive rows of `word_count()` words.
+        /// \param record_count Number of record rows.
+        /// \param output_distances Output array containing at least `record_count` entries.
+        void compute_distances(
+            const std::uint64_t* query_words,
+            const std::uint64_t* record_words,
+            std::size_t record_count,
+            std::size_t* output_distances
+        ) const noexcept;
+
+    private:
+        using SingleKernel = std::size_t (*)(
+            const std::uint64_t*,
+            const std::uint64_t*,
+            std::size_t
+        ) noexcept;
+        using BatchKernel = void (*)(
+            const std::uint64_t*,
+            const std::uint64_t*,
+            std::size_t,
+            std::size_t,
+            std::size_t*
+        ) noexcept;
+
+        std::size_t m_word_count = 0;
+        HammingDistanceBackend m_backend = HammingDistanceBackend::LookupTable;
+        SingleKernel m_single_kernel = nullptr;
+        BatchKernel m_batch_kernel = nullptr;
     };
 
     /// \brief Hamming distance between two equal-width binary signatures.

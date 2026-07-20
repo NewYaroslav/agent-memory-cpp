@@ -59,13 +59,13 @@ int main() {
     if(info.encoder_id != "random_hyperplane_rademacher") {
         return fail("random hyperplane encoder must expose a stable encoder id");
     }
-    if(info.encoder_version != "v1") {
+    if(info.encoder_version != "v2") {
         return fail("random hyperplane encoder must expose a stable encoder version");
     }
     if(info.input_dimension != 3 || info.bit_count != 16 || info.seed != 42) {
         return fail("random hyperplane encoder info must mirror construction options");
     }
-    if(info.config_fingerprint != "random_hyperplane_rademacher_v1:dim=3:bits=16:seed=42") {
+    if(info.config_fingerprint != "random_hyperplane_rademacher_v2:dim=3:bits=16:seed=42") {
         return fail("random hyperplane encoder must expose a stable config fingerprint");
     }
 
@@ -76,7 +76,7 @@ int main() {
     );
     std::locale::global(previous_locale);
     if(locale_encoder.info().config_fingerprint !=
-       "random_hyperplane_rademacher_v1:dim=3000:bits=16000:seed=1000000") {
+       "random_hyperplane_rademacher_v2:dim=3000:bits=16000:seed=1000000") {
         return fail("encoder config fingerprint must not depend on the global locale");
     }
 
@@ -90,7 +90,26 @@ int main() {
         return fail("encoded signature must use the configured bit count");
     }
     if(signature.words().front() != 0xE4FBULL) {
-        return fail("random hyperplane encoder output must match the pinned v1 contract");
+        return fail("random hyperplane encoder output must match the pinned v2 contract");
+    }
+
+    const auto batch = encoder->encode_batch({vector, agent_memory::Embedding{{-1.0F, 2.0F, -0.5F}}});
+    if(batch.size() != 2 || batch.front() != signature) {
+        return fail("batch encoding must preserve order and the single-vector contract");
+    }
+    if(!encoder->encode_batch({}).empty()) {
+        return fail("empty batch encoding must return an empty result");
+    }
+
+    const auto sparse_signature = static_cast<agent_memory::RandomHyperplaneBinaryEncoder&>(
+        *encoder
+    ).encode_sparse(3, {
+        {0, 1.0F},
+        {1, -2.0F},
+        {2, 0.5F},
+    });
+    if(sparse_signature != signature) {
+        return fail("sparse encoding must match the equivalent dense input");
     }
 
     const agent_memory::RandomHyperplaneBinaryEncoder seed_variant(make_options(3, 16, 43));
@@ -153,6 +172,12 @@ int main() {
            }});
        })) {
         return fail("encoder must reject NaN input values");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)static_cast<agent_memory::RandomHyperplaneBinaryEncoder&>(*encoder)
+               .encode_sparse(3, {{1, 1.0F}, {1, 2.0F}});
+       })) {
+        return fail("sparse encoding must reject duplicate indices");
     }
 
     return 0;

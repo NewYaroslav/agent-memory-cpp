@@ -95,6 +95,13 @@ Hot path analysis (ВАЖНО):
 - Hamming scan: thousands of XOR+popcount per query (128-bit × N candidates).
 - Реальный bottleneck — Hamming, НЕ encoder.
 
+> **Current implementation note (PR #57).** Runtime AVX2/SSE2/scalar float
+> similarity, width-aware POPCNT/AVX2/lookup Hamming dispatch, contiguous batch
+> Hamming scans, distance-bucket top-k, and the materialized/SIMD
+> `RandomHyperplaneBinaryEncoder` v2 are implemented. Measurements show that
+> encoder and selection costs can dominate short-code Hamming arithmetic, so
+> bottlenecks must be reported per stage rather than assumed in advance.
+
 Maturity breakdown:
 
 - M0/M1: std-only baseline (float math через `std::vector` + scalar loops);
@@ -1810,6 +1817,13 @@ storage estimates, quality targets и per-stack defaults).
       production.
 
 ### Steps 26-28: SIMD abstraction и HammingTopK kernel (M2 → M3)
+
+> **Status update.** Step 26 and the flat-scan portion of Step 27 are
+> implemented dependency-free with runtime fallbacks. The experimental
+> `MultiProbeHammingIndex` is not yet the planned production high-recall bucket
+> backend: at useful recall it did not beat the optimized flat scan in the first
+> directional experiment. AVX-512 and persisted bucket integration remain
+> planned.
 
 26. **Step 26 (M2): SIMD abstraction layer.**
     - `simd::popcount64()` — cross-platform wrapper (MSVC / GCC / Clang /

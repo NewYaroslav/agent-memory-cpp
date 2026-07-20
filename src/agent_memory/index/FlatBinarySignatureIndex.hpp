@@ -9,6 +9,7 @@
 
 #include <map>
 #include <optional>
+#include <vector>
 
 namespace agent_memory {
 
@@ -34,6 +35,9 @@ namespace agent_memory {
         [[nodiscard]] std::size_t bit_count() const noexcept override;
         [[nodiscard]] std::size_t size() const noexcept override;
 
+        /// \brief Hamming backend selected for the configured signature width.
+        [[nodiscard]] std::optional<HammingDistanceBackend> hamming_backend() const noexcept;
+
         void upsert(BinarySignatureRecord record) override;
 
         [[nodiscard]] std::optional<BinarySignatureRecord> find(
@@ -53,6 +57,13 @@ namespace agent_memory {
         void clear() override;
 
     private:
+        struct StoredRecord final {
+            ChunkId chunk_id;
+            Metadata metadata;
+        };
+
+        [[nodiscard]] const std::uint64_t* signature_words(std::size_t position) const noexcept;
+        [[nodiscard]] std::uint64_t* signature_words(std::size_t position) noexcept;
         void validate_record_signature(const BinarySignature& signature);
         void validate_query_signature(const BinarySignature& signature) const;
         void validate_record(BinarySignatureRecord& record);
@@ -60,7 +71,10 @@ namespace agent_memory {
         void require_matching_identity(const BinarySignatureInfo& info) const;
 
         FlatBinarySignatureIndexOptions m_options;
-        std::map<ChunkId, BinarySignatureRecord> m_records;
+        std::vector<StoredRecord> m_records;
+        std::vector<std::uint64_t> m_signature_words;
+        std::map<ChunkId, std::size_t> m_positions;
+        std::optional<HammingDistanceComputer> m_distance;
     };
 
 } // namespace agent_memory

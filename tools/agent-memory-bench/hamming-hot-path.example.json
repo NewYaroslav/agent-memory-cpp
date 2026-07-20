@@ -1,0 +1,13 @@
+{
+  "record_count": 10000,
+  "query_count": 100,
+  "bit_count": 128,
+  "result_limit": 10,
+  "repeat_count": 5,
+  "seed": 42,
+  "multi_table_count": 8,
+  "multi_bits_per_table": 8,
+  "multi_probe_radius": 1,
+  "multi_candidate_multiplier": 64,
+  "multi_minimum_candidate_count": 128
+}

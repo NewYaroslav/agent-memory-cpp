@@ -226,6 +226,20 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
                     "got ${stored_repeat_index}"
                 )
             endif()
+            string(JSON hamming_backend GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} speed binary_hamming_backend
+            )
+            string(JSON encoder_backend GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} speed binary_encoder_similarity_backend
+            )
+            if(NOT hamming_backend MATCHES "^(lookup_table|hardware_popcount|avx2_simd)$")
+                message(FATAL_ERROR "unexpected Hamming backend: ${hamming_backend}")
+            endif()
+            if(NOT encoder_backend MATCHES "^(scalar|sse2|avx2)$")
+                message(FATAL_ERROR "unexpected encoder vector backend: ${encoder_backend}")
+            endif()
             string(JSON rerank_count LENGTH
                 "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
                 repeats ${repeat_index} rerank
