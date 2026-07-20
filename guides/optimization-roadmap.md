@@ -1828,6 +1828,14 @@ storage estimates, quality targets и per-stack defaults).
 > run, despite remaining `2.25x` faster than the current `ExactVectorIndex`.
 > Treat this as directional evidence, not a production default. AVX-512 and
 > persisted bucket integration remain planned.
+>
+> **Post-PR57 follow-up order.** Do not treat random-hyperplane LSH as the
+> final binary encoder. The next binary PRs should follow
+> [`binary-embeddings-roadmap.md`](binary-embeddings-roadmap.md) §"Post-PR57
+> encoder and index taxonomy": first compare zero-training encoder families
+> (`sign(x)`, random hyperplanes, Faiss-style orthogonal/tight-frame
+> projection), then evaluate a global learned projection, then evaluate
+> cluster/document-local projections only behind a global routing stage.
 
 26. **Step 26 (M2): SIMD abstraction layer.**
     - `simd::popcount64()` — cross-platform wrapper (MSVC / GCC / Clang /
