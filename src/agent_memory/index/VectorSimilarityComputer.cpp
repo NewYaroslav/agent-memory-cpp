@@ -221,6 +221,36 @@ namespace agent_memory {
             return VectorSimilarityBackend::Scalar;
         }
 
+        [[nodiscard]] bool is_vector_backend_supported(
+            VectorSimilarityBackend backend
+        ) noexcept {
+            switch(backend) {
+                case VectorSimilarityBackend::Scalar:
+                    return true;
+                case VectorSimilarityBackend::Sse2:
+#if AGENT_MEMORY_HAS_GNU_X86_VECTOR_INTRINSICS
+                {
+                    static const bool supported = runtime_supports_sse2();
+                    return supported;
+                }
+#elif AGENT_MEMORY_HAS_MSVC_X64_VECTOR_INTRINSICS
+                    return true;
+#else
+                    return false;
+#endif
+                case VectorSimilarityBackend::Avx2:
+#if AGENT_MEMORY_HAS_GNU_X86_VECTOR_INTRINSICS
+                {
+                    static const bool supported = runtime_supports_avx2();
+                    return supported;
+                }
+#else
+                    return false;
+#endif
+            }
+            return false;
+        }
+
         [[nodiscard]] BinaryKernel dot_product_kernel(
             VectorSimilarityBackend backend
         ) noexcept {
@@ -283,8 +313,21 @@ namespace agent_memory {
         return "unknown";
     }
 
+    bool vector_similarity_backend_supported(VectorSimilarityBackend backend) noexcept {
+        return is_vector_backend_supported(backend);
+    }
+
     VectorSimilarityComputer::VectorSimilarityComputer(bool enable_simd) noexcept
         : m_backend(select_backend(enable_simd)) {}
+
+    VectorSimilarityComputer::VectorSimilarityComputer(VectorSimilarityBackend backend)
+        : m_backend(backend) {
+        if(!is_vector_backend_supported(backend)) {
+            throw std::invalid_argument(
+                "requested vector-similarity backend is not supported by this build and CPU"
+            );
+        }
+    }
 
     VectorSimilarityBackend VectorSimilarityComputer::backend() const noexcept {
         return m_backend;

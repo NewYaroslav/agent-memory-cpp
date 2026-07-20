@@ -256,33 +256,73 @@ namespace agent_memory {
         }
 #endif
 
+        [[nodiscard]] bool is_hamming_backend_supported(
+            HammingDistanceBackend backend
+        ) noexcept {
+            switch(backend) {
+                case HammingDistanceBackend::LookupTable:
+                    return true;
+                case HammingDistanceBackend::HardwarePopcount:
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
+                {
+                    static const bool supported = runtime_supports_popcnt();
+                    return supported;
+                }
+#else
+                    return false;
+#endif
+                case HammingDistanceBackend::Avx2Simd:
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
+                {
+                    static const bool supported = runtime_supports_avx2();
+                    return supported;
+                }
+#else
+                    return false;
+#endif
+            }
+            return false;
+        }
+
+        [[nodiscard]] HammingKernelSelection hamming_kernel_for_backend(
+            HammingDistanceBackend backend
+        ) noexcept {
+            switch(backend) {
+                case HammingDistanceBackend::LookupTable:
+                    return {};
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
+                case HammingDistanceBackend::HardwarePopcount:
+                    return {
+                        HammingDistanceBackend::HardwarePopcount,
+                        hamming_distance_words_popcnt,
+                        hamming_distances_popcnt
+                    };
+#endif
+#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
+                case HammingDistanceBackend::Avx2Simd:
+                    return {
+                        HammingDistanceBackend::Avx2Simd,
+                        hamming_distance_words_avx2,
+                        hamming_distances_avx2
+                    };
+#endif
+                default:
+                    return {};
+            }
+        }
+
         [[nodiscard]] HammingKernelSelection select_hamming_distance_kernel(
             std::size_t word_count
         ) noexcept {
-#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
-            static const bool has_popcnt = runtime_supports_popcnt();
-#else
-            const bool has_popcnt = false;
-#endif
-#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS
-            static const bool has_avx2 = runtime_supports_avx2();
-            if(word_count >= kMinimumAvx2WordCount && has_avx2) {
-                return {
-                    HammingDistanceBackend::Avx2Simd,
-                    hamming_distance_words_avx2,
-                    hamming_distances_avx2
-                };
+            if(word_count >= kMinimumAvx2WordCount
+               && is_hamming_backend_supported(HammingDistanceBackend::Avx2Simd)) {
+                return hamming_kernel_for_backend(HammingDistanceBackend::Avx2Simd);
             }
-#endif
-#if AGENT_MEMORY_HAS_GNU_X86_INTRINSICS || AGENT_MEMORY_HAS_MSVC_X86_INTRINSICS
-            if(has_popcnt) {
-                return {
-                    HammingDistanceBackend::HardwarePopcount,
-                    hamming_distance_words_popcnt,
-                    hamming_distances_popcnt
-                };
+            if(is_hamming_backend_supported(HammingDistanceBackend::HardwarePopcount)) {
+                return hamming_kernel_for_backend(
+                    HammingDistanceBackend::HardwarePopcount
+                );
             }
-#endif
             return {};
         }
 
@@ -468,9 +508,29 @@ namespace agent_memory {
         return "unknown";
     }
 
+    bool hamming_distance_backend_supported(HammingDistanceBackend backend) noexcept {
+        return is_hamming_backend_supported(backend);
+    }
+
     HammingDistanceComputer::HammingDistanceComputer(std::size_t word_count) noexcept
         : m_word_count(word_count) {
         const auto selection = select_hamming_distance_kernel(word_count);
+        m_backend = selection.backend;
+        m_single_kernel = selection.single;
+        m_batch_kernel = selection.batch;
+    }
+
+    HammingDistanceComputer::HammingDistanceComputer(
+        std::size_t word_count,
+        HammingDistanceBackend backend
+    )
+        : m_word_count(word_count) {
+        if(!is_hamming_backend_supported(backend)) {
+            throw std::invalid_argument(
+                "requested Hamming-distance backend is not supported by this build and CPU"
+            );
+        }
+        const auto selection = hamming_kernel_for_backend(backend);
         m_backend = selection.backend;
         m_single_kernel = selection.single;
         m_batch_kernel = selection.batch;

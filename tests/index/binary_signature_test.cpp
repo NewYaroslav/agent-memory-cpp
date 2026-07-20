@@ -1,5 +1,6 @@
 #include <agent_memory.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -19,7 +20,8 @@ namespace {
         return std::fabs(lhs - rhs) <= tolerance;
     }
 
-    bool throws_invalid_argument(void (*fn)()) {
+    template <typename Function>
+    bool throws_invalid_argument(Function&& fn) {
         try {
             fn();
         } catch(const std::invalid_argument&) {
@@ -52,6 +54,19 @@ namespace {
         agent_memory::BinarySignature signature(8);
         for(std::size_t bit = 0; bit < signature.bit_count(); ++bit) {
             signature.set_bit(bit, ((value >> bit) & std::size_t{1}) != 0);
+        }
+        return signature;
+    }
+
+    agent_memory::BinarySignature make_pattern_signature(
+        std::size_t bit_count,
+        std::size_t salt
+    ) {
+        agent_memory::BinarySignature signature(bit_count);
+        for(std::size_t bit = 0; bit < bit_count; ++bit) {
+            const auto mixed = bit * std::size_t{2654435761U}
+                + salt * std::size_t{2246822519U};
+            signature.set_bit(bit, ((mixed >> (bit % 13U)) & 1U) != 0U);
         }
         return signature;
     }
@@ -171,6 +186,81 @@ int main() {
     const auto avx_tail_b = make_signature(320, {1, 63, 65, 127, 129, 191, 193, 255, 257, 319});
     if(agent_memory::hamming_distance(avx_tail_a, avx_tail_b) != 10) {
         return fail("hamming_distance must count differing bits in non-four-word tails");
+    }
+
+    constexpr std::array<agent_memory::HammingDistanceBackend, 3> backends{
+        agent_memory::HammingDistanceBackend::LookupTable,
+        agent_memory::HammingDistanceBackend::HardwarePopcount,
+        agent_memory::HammingDistanceBackend::Avx2Simd,
+    };
+    constexpr std::array<std::size_t, 4> backend_test_widths{
+        1024,
+        1025,
+        1088,
+        1216,
+    };
+    for(const auto width : backend_test_widths) {
+        const auto query = make_pattern_signature(width, 1);
+        std::vector<agent_memory::BinarySignature> records;
+        std::vector<std::uint64_t> packed_records;
+        for(std::size_t record = 0; record < 7; ++record) {
+            records.push_back(make_pattern_signature(width, record + 2));
+            packed_records.insert(
+                packed_records.end(),
+                records.back().words().begin(),
+                records.back().words().end()
+            );
+        }
+
+        const agent_memory::HammingDistanceComputer reference(
+            query.word_count(),
+            agent_memory::HammingDistanceBackend::LookupTable
+        );
+        std::vector<std::size_t> expected(records.size());
+        reference.compute_distances(
+            query.words().data(),
+            packed_records.data(),
+            records.size(),
+            expected.data()
+        );
+
+        for(const auto backend : backends) {
+            if(!agent_memory::hamming_distance_backend_supported(backend)) {
+                continue;
+            }
+            const agent_memory::HammingDistanceComputer computer(
+                query.word_count(),
+                backend
+            );
+            std::vector<std::size_t> actual(records.size());
+            computer.compute_distances(
+                query.words().data(),
+                packed_records.data(),
+                records.size(),
+                actual.data()
+            );
+            if(actual != expected) {
+                return fail("forced Hamming batch backends must match the lookup reference");
+            }
+            for(std::size_t record = 0; record < records.size(); ++record) {
+                if(computer.distance_words(
+                       query.words().data(),
+                       records[record].words().data()
+                   ) != expected[record]) {
+                    return fail(
+                        "forced Hamming single backends must match the lookup reference"
+                    );
+                }
+            }
+        }
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::HammingDistanceComputer(
+               16,
+               static_cast<agent_memory::HammingDistanceBackend>(255)
+           );
+       })) {
+        return fail("forced Hamming construction must reject unknown backends");
     }
     if(!throws_invalid_argument(hamming_width_mismatch)) {
         return fail("hamming_distance must reject width mismatches");

@@ -5,6 +5,7 @@
 /// \file VectorSimilarityComputer.hpp
 /// \brief Runtime-selected vector similarity primitives.
 
+#include <cstddef>
 #include <string_view>
 
 namespace agent_memory {
@@ -23,11 +24,19 @@ namespace agent_memory {
         VectorSimilarityBackend backend
     ) noexcept;
 
+    /// \brief Returns whether this build and CPU can execute `backend` safely.
+    [[nodiscard]] bool vector_similarity_backend_supported(
+        VectorSimilarityBackend backend
+    ) noexcept;
+
     /// \brief Computes vector similarity primitives through a runtime-selected backend.
     /// \note SIMD can be disabled to provide a portable reference implementation for tests.
     class VectorSimilarityComputer final {
     public:
         explicit VectorSimilarityComputer(bool enable_simd = true) noexcept;
+        /// \brief Uses an explicitly selected backend for tests and diagnostics.
+        /// \throws std::invalid_argument when the backend is unavailable.
+        explicit VectorSimilarityComputer(VectorSimilarityBackend backend);
 
         /// \brief Returns the backend selected for this computer.
         [[nodiscard]] VectorSimilarityBackend backend() const noexcept;

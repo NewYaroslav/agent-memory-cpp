@@ -1,6 +1,7 @@
 #include <agent_memory/index.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -64,6 +65,49 @@ int main() {
         expected_distance
     )) {
         return fail("SIMD squared distance must match the scalar tail-aware reference");
+    }
+
+    constexpr std::array<agent_memory::VectorSimilarityBackend, 3> backends{
+        agent_memory::VectorSimilarityBackend::Scalar,
+        agent_memory::VectorSimilarityBackend::Sse2,
+        agent_memory::VectorSimilarityBackend::Avx2,
+    };
+    for(const auto backend : backends) {
+        if(!agent_memory::vector_similarity_backend_supported(backend)) {
+            if(!throws_invalid_argument([backend] {
+                   (void)agent_memory::VectorSimilarityComputer(backend);
+               })) {
+                return fail("forced vector construction must reject unavailable backends");
+            }
+            continue;
+        }
+
+        const agent_memory::VectorSimilarityComputer forced(backend);
+        if(forced.backend() != backend
+           || forced.dot_product(lhs, rhs) != expected_dot
+           || forced.squared_norm(lhs) != expected_norm
+           || forced.dot_product_values(
+               lhs.values.data(),
+               rhs.values.data(),
+               lhs.values.size()
+           ) != expected_dot) {
+            return fail(
+                "forced vector dot-product backends must share the eight-lane contract"
+            );
+        }
+        if(!almost_equal(
+               forced.negative_squared_distance(lhs, rhs),
+               expected_distance
+           )) {
+            return fail("forced vector distance backends must match the scalar reference");
+        }
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::VectorSimilarityComputer(
+               static_cast<agent_memory::VectorSimilarityBackend>(255)
+           );
+       })) {
+        return fail("forced vector construction must reject unknown backends");
     }
 
     const agent_memory::Embedding mismatched{{1.0F, 2.0F}};

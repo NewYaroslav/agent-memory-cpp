@@ -110,6 +110,47 @@ int main() {
         return fail("multi-probe erase must preserve swapped record positions");
     }
 
+    agent_memory::MultiProbeHammingIndex churn_index(options);
+    for(std::size_t record = 0; record < 6; ++record) {
+        churn_index.upsert(make_record(
+            "chunk:churn-" + std::to_string(record),
+            {1, 3},
+            "keep"
+        ));
+    }
+    if(!churn_index.erase(agent_memory::ChunkId{"chunk:churn-0"})
+       || !churn_index.erase(agent_memory::ChunkId{"chunk:churn-1"})) {
+        return fail("multi-probe churn fixture must erase non-final records");
+    }
+    const auto after_churn = churn_index.search_with_diagnostics(make_query(10));
+    if(after_churn.results.size() != churn_index.size()
+       || after_churn.visited_posting_count != churn_index.size() * options.table_count) {
+        return fail("multi-probe erase must not duplicate moved-record postings");
+    }
+
+    agent_memory::MultiProbeHammingIndexOptions filtered_options;
+    filtered_options.signature_info = make_info();
+    filtered_options.table_count = 1;
+    filtered_options.bits_per_table = 4;
+    filtered_options.max_probe_radius = 1;
+    filtered_options.candidate_multiplier = 1;
+    filtered_options.minimum_candidate_count = 0;
+    agent_memory::MultiProbeHammingIndex filtered_index(filtered_options);
+    filtered_index.upsert(make_record("chunk:drop-a", {}, "drop"));
+    filtered_index.upsert(make_record("chunk:drop-b", {1}, "drop"));
+    filtered_index.upsert(make_record("chunk:keep-a", {0}, "keep"));
+    filtered_index.upsert(make_record("chunk:keep-b", {0, 1}, "keep"));
+
+    auto filtered_query = make_query(2);
+    filtered_query.metadata_filters.push_back({"scope", "keep"});
+    const auto filtered = filtered_index.search_with_diagnostics(filtered_query);
+    if(filtered.results.size() != 2 || filtered.candidate_count != 2
+       || filtered.probed_bucket_count <= 1) {
+        return fail(
+            "multi-probe search must continue probing until the filtered target is reached"
+        );
+    }
+
     if(!throws_invalid_argument([] {
            agent_memory::MultiProbeHammingIndexOptions invalid;
            invalid.signature_info = make_info();

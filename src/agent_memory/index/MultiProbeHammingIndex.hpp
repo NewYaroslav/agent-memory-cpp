@@ -39,6 +39,8 @@ namespace agent_memory {
         std::size_t candidate_count = 0;
         /// \brief Number of table buckets looked up, including empty buckets.
         std::size_t probed_bucket_count = 0;
+        /// \brief Number of posting entries visited before deduplication.
+        std::size_t visited_posting_count = 0;
     };
 
     /// \brief Approximate Hamming index using deterministic projected-bit buckets.

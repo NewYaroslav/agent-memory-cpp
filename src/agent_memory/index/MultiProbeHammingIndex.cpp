@@ -148,8 +148,16 @@ namespace agent_memory {
                 return;
             }
             for(const auto position : bucket->second) {
+                ++output.visited_posting_count;
                 if(seen[position] == 0) {
                     seen[position] = 1;
+                    if(!query.metadata_filters.empty()
+                       && !matches_metadata_filters(
+                           m_records[position].metadata,
+                           query.metadata_filters
+                       )) {
+                        continue;
+                    }
                     candidates.push_back(position);
                 }
             }
@@ -189,12 +197,6 @@ namespace agent_memory {
         std::vector<ScoredPosition> scored;
         scored.reserve(candidates.size());
         for(const auto position : candidates) {
-            if(!matches_metadata_filters(
-                   m_records[position].metadata,
-                   query.metadata_filters
-               )) {
-                continue;
-            }
             scored.push_back({
                 position,
                 m_distance->distance_words(
@@ -272,7 +274,6 @@ namespace agent_memory {
                 signature_words(position)
             );
             m_positions.find(m_records[position].chunk_id)->second = position;
-            add_to_tables(position);
         }
 
         m_records.pop_back();

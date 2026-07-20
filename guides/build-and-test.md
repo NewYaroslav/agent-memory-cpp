@@ -85,18 +85,27 @@ controls repeated timing of the common exact baseline. Quality is sampled once
 per data/encoder seed pair; timing repeats are not treated as independent
 quality observations.
 
-Binary grid reports also record `exact_vector_similarity_backend`. On supported
-x86 builds the exact scan and reranker select AVX2 at runtime, fall back to SSE2
-when available, and otherwise use the scalar C++17 implementation.
+Binary grid reports also record `exact_vector_similarity_backend`. GNU/Clang
+x86 builds select AVX2 at runtime, fall back to SSE2 when available, and
+otherwise use the scalar C++17 implementation. The current MSVC x64 build uses
+SSE2 for vector arithmetic; an isolated `/arch:AVX2` translation unit and
+dispatch path remain future work.
 
 They also record `binary_hamming_backend` and
 `binary_encoder_similarity_backend`. Short packed signatures prefer hardware
-POPCNT, sufficiently wide signatures may select the AVX2 nibble-LUT kernel, and
-all platforms retain a lookup-table fallback. The random-hyperplane `v2`
+POPCNT, sufficiently wide signatures may select the AVX2 nibble-LUT kernel on
+GNU/Clang x86, and all platforms retain a lookup-table fallback. The current
+MSVC x86/x64 implementation selects POPCNT when available and does not compile
+the AVX2 Hamming kernel. The random-hyperplane `v2`
 encoder materializes its deterministic projection lazily and uses the same
 AVX2/SSE2/scalar vector backend for dense inputs. Every dense backend and the
 sparse path use the same eight-lane reduction contract, so persisted signatures
 do not change with runtime CPU dispatch.
+
+Tests and diagnostic tools can query backend availability and request a
+specific backend through `HammingDistanceComputer` and
+`VectorSimilarityComputer`. Forced construction rejects unavailable backends;
+it never executes an unsupported instruction speculatively.
 
 Run the decomposed Hamming hot-path benchmark:
 

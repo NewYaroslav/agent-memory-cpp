@@ -68,6 +68,11 @@ namespace agent_memory {
         HammingDistanceBackend backend
     ) noexcept;
 
+    /// \brief Returns whether this build and CPU can execute `backend` safely.
+    [[nodiscard]] bool hamming_distance_backend_supported(
+        HammingDistanceBackend backend
+    ) noexcept;
+
     /// \brief Reusable same-width Hamming-distance kernel.
     ///
     /// Backend selection happens once at construction and accounts for both CPU
@@ -76,6 +81,12 @@ namespace agent_memory {
     class HammingDistanceComputer final {
     public:
         explicit HammingDistanceComputer(std::size_t word_count) noexcept;
+        /// \brief Uses an explicitly selected backend for tests and diagnostics.
+        /// \throws std::invalid_argument when the backend is unavailable.
+        HammingDistanceComputer(
+            std::size_t word_count,
+            HammingDistanceBackend backend
+        );
 
         [[nodiscard]] std::size_t word_count() const noexcept;
         [[nodiscard]] HammingDistanceBackend backend() const noexcept;
