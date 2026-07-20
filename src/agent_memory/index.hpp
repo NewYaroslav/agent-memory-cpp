@@ -12,6 +12,7 @@
 #include "index/BinarySignatureInfo.hpp"
 #include "index/BinarySignatureEncoderRegistry.hpp"
 #include "index/BinarySignatureIndex.hpp"
+#include "index/CoordinateSignBinaryEncoder.hpp"
 #include "index/ExactVectorIndex.hpp"
 #include "index/FlatBinarySignatureIndex.hpp"
 #include "index/IBinarySignatureEncoder.hpp"
@@ -19,6 +20,7 @@
 #include "index/IVectorIndex.hpp"
 #include "index/MultiProbeHammingIndex.hpp"
 #include "index/RandomHyperplaneBinaryEncoder.hpp"
+#include "index/RandomizedHadamardBinaryEncoder.hpp"
 #include "index/VectorSimilarityComputer.hpp"
 #include "index/VectorIndex.hpp"
 

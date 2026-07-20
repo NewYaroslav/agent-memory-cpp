@@ -1,6 +1,6 @@
 {
   "mode": "synthetic_binary_rerank_grid",
-  "benchmark_name": "synthetic_binary_rerank_grid_v1_stat",
+  "benchmark_name": "synthetic_binary_rerank_grid_v2_stat",
   "dataset_name": "synthetic_clustered_dense_v1_stat",
   "document_count": 10000,
   "query_count": 100,
@@ -10,6 +10,11 @@
   "rerank_candidate_limits": [100, 500, 1000, 2000],
   "data_seeds": [42],
   "encoder_seeds": [1001, 1002],
+  "encoder_families": [
+    "random_hyperplane_rademacher",
+    "coordinate_sign",
+    "randomized_hadamard_projection"
+  ],
   "repeat_count": 5,
   "exact_timing_repeat_count": 7,
   "randomize_execution_order": true,

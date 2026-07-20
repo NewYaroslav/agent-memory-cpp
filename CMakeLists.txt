@@ -45,12 +45,14 @@ add_library(agent_memory STATIC
     src/agent_memory/index/BinarySignature.cpp
     src/agent_memory/index/BinarySignatureEncoderRegistry.cpp
     src/agent_memory/index/BinarySignatureInfo.cpp
+    src/agent_memory/index/CoordinateSignBinaryEncoder.cpp
     src/agent_memory/index/ExactVectorIndex.cpp
     src/agent_memory/index/FlatBinarySignatureIndex.cpp
     src/agent_memory/index/IBinarySignatureEncoder.cpp
     src/agent_memory/index/IBinarySignatureIndex.cpp
     src/agent_memory/index/IVectorIndex.cpp
     src/agent_memory/index/MultiProbeHammingIndex.cpp
+    src/agent_memory/index/RandomizedHadamardBinaryEncoder.cpp
     src/agent_memory/index/RandomHyperplaneBinaryEncoder.cpp
     src/agent_memory/index/VectorSimilarityComputer.cpp
     src/agent_memory/index/VectorIndex.cpp

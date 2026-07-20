@@ -7,6 +7,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -35,6 +36,60 @@ namespace {
         options.bit_count = bit_count;
         options.seed = seed;
         return options;
+    }
+
+    agent_memory::RandomizedHadamardBinaryEncoderOptions make_hadamard_options(
+        std::size_t input_dimension,
+        std::size_t bit_count,
+        std::uint64_t seed
+    ) {
+        agent_memory::RandomizedHadamardBinaryEncoderOptions options;
+        options.input_dimension = input_dimension;
+        options.bit_count = bit_count;
+        options.seed = seed;
+        return options;
+    }
+
+    std::vector<std::vector<int>> materialize_effective_rows(
+        const agent_memory::RandomizedHadamardBinaryEncoder& encoder,
+        std::size_t input_dimension,
+        std::size_t bit_count
+    ) {
+        std::vector<std::vector<int>> rows(bit_count, std::vector<int>(input_dimension));
+        for(std::size_t coordinate = 0; coordinate < input_dimension; ++coordinate) {
+            agent_memory::Embedding basis;
+            basis.values.assign(input_dimension, 0.0F);
+            basis.values[coordinate] = 1.0F;
+            const auto signature = encoder.encode(basis);
+            for(std::size_t bit = 0; bit < bit_count; ++bit) {
+                rows[bit][coordinate] = signature.bit(bit) ? 1 : -1;
+            }
+        }
+        return rows;
+    }
+
+    int dot_rows(
+        const std::vector<std::vector<int>>& rows,
+        std::size_t lhs,
+        std::size_t rhs
+    ) {
+        int dot = 0;
+        for(std::size_t coordinate = 0; coordinate < rows[lhs].size(); ++coordinate) {
+            dot += rows[lhs][coordinate] * rows[rhs][coordinate];
+        }
+        return dot;
+    }
+
+    int dot_columns(
+        const std::vector<std::vector<int>>& rows,
+        std::size_t lhs,
+        std::size_t rhs
+    ) {
+        int dot = 0;
+        for(const auto& row : rows) {
+            dot += row[lhs] * row[rhs];
+        }
+        return dot;
     }
 
     class GroupedNumpunct final : public std::numpunct<char> {
@@ -178,6 +233,187 @@ int main() {
                .encode_sparse(3, {{1, 1.0F}, {1, 2.0F}});
        })) {
         return fail("sparse encoding must reject duplicate indices");
+    }
+
+    const agent_memory::CoordinateSignBinaryEncoder coordinate_encoder(
+        agent_memory::CoordinateSignBinaryEncoderOptions{4}
+    );
+    const auto& coordinate_info = coordinate_encoder.info();
+    if(coordinate_info.encoder_id != "coordinate_sign"
+       || coordinate_info.encoder_version != "v1"
+       || coordinate_info.input_dimension != 4
+       || coordinate_info.bit_count != 4
+       || coordinate_info.seed != 0
+       || coordinate_info.config_fingerprint != "coordinate_sign_v1:dim=4") {
+        return fail("coordinate-sign encoder info must expose its fixed-width contract");
+    }
+    const auto coordinate_signature =
+        coordinate_encoder.encode(agent_memory::Embedding{{1.0F, -2.0F, 0.0F, 3.0F}});
+    if(coordinate_signature.bit_count() != 4
+       || coordinate_signature.words().front() != 0x9ULL) {
+        return fail("coordinate-sign encoder must set only strictly positive coordinate bits");
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::CoordinateSignBinaryEncoder(
+               agent_memory::CoordinateSignBinaryEncoderOptions{0}
+           );
+       })) {
+        return fail("coordinate-sign encoder construction must reject zero dimension");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)coordinate_encoder.encode(agent_memory::Embedding{{1.0F, 2.0F}});
+       })) {
+        return fail("coordinate-sign encoder must reject dimension mismatches");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)coordinate_encoder.encode(agent_memory::Embedding{{
+               1.0F,
+               std::numeric_limits<float>::quiet_NaN(),
+               0.0F,
+               3.0F,
+           }});
+       })) {
+        return fail("coordinate-sign encoder must reject NaN input values");
+    }
+
+    const agent_memory::RandomizedHadamardBinaryEncoder hadamard_encoder(
+        make_hadamard_options(3, 10, 7)
+    );
+    const auto& hadamard_info = hadamard_encoder.info();
+    if(hadamard_info.encoder_id != "randomized_hadamard_projection"
+       || hadamard_info.encoder_version != "v1"
+       || hadamard_info.input_dimension != 3
+       || hadamard_info.bit_count != 10
+       || hadamard_info.seed != 7
+       || hadamard_info.config_fingerprint !=
+           "randomized_hadamard_projection_v1:dim=3:padded_dim=4:bits=10:seed=7") {
+        return fail("randomized Hadamard encoder info must expose its projection contract");
+    }
+    if(hadamard_encoder.padded_dimension() != 4
+       || std::string_view{
+              agent_memory::RandomizedHadamardBinaryEncoder::compute_backend_name()
+          } != "fwht_scalar") {
+        return fail("randomized Hadamard encoder must expose its padded transform backend");
+    }
+    const auto hadamard_signature = hadamard_encoder.encode(vector);
+    const auto hadamard_repeated = hadamard_encoder.encode(vector);
+    if(hadamard_signature != hadamard_repeated) {
+        return fail("randomized Hadamard encoder must be deterministic");
+    }
+    if(hadamard_signature.bit_count() != 10 || hadamard_signature.word_count() != 1) {
+        return fail("randomized Hadamard encoder must use the configured bit count");
+    }
+    const auto hadamard_prefix =
+        agent_memory::RandomizedHadamardBinaryEncoder(
+            make_hadamard_options(3, 8, 7)
+        ).encode(vector);
+    if((hadamard_signature.words().front() & 0xFFULL)
+       != hadamard_prefix.words().front()) {
+        return fail("randomized Hadamard shorter signatures must be prefix-stable");
+    }
+    const auto hadamard_zero = hadamard_encoder.encode(zero_vector);
+    if(hadamard_zero.words().front() != 0ULL) {
+        return fail("randomized Hadamard zero-vector ties must encode as zero bits");
+    }
+    const auto hadamard_wide =
+        agent_memory::RandomizedHadamardBinaryEncoder(
+            make_hadamard_options(3, 70, 7)
+        ).encode(vector);
+    if(hadamard_wide.bit_count() != 70 || hadamard_wide.word_count() != 2) {
+        return fail("randomized Hadamard wide signatures must expose packed storage");
+    }
+    if((hadamard_wide.words().back() & ~meaningful_tail_mask) != 0ULL) {
+        return fail("randomized Hadamard signatures must keep unused tail bits cleared");
+    }
+    const agent_memory::RandomizedHadamardBinaryEncoder hadamard_seed_variant(
+        make_hadamard_options(3, 70, 8)
+    );
+    if(hadamard_seed_variant.encode(vector) == hadamard_wide) {
+        return fail("changing the randomized Hadamard seed must change output bits");
+    }
+    const auto hadamard_batch = hadamard_encoder.encode_batch({
+        vector,
+        zero_vector,
+        agent_memory::Embedding{{-1.0F, 2.0F, -0.5F}},
+    });
+    if(hadamard_batch.size() != 3
+       || hadamard_batch[0] != hadamard_encoder.encode(vector)
+       || hadamard_batch[1] != hadamard_encoder.encode(zero_vector)
+       || hadamard_batch[2] !=
+           hadamard_encoder.encode(agent_memory::Embedding{{-1.0F, 2.0F, -0.5F}})) {
+        return fail("randomized Hadamard batch encoding must match sequential encode");
+    }
+
+    const agent_memory::RandomizedHadamardBinaryEncoder power_of_two_hadamard(
+        make_hadamard_options(4, 4, 9)
+    );
+    const auto power_of_two_rows =
+        materialize_effective_rows(power_of_two_hadamard, 4, 4);
+    for(std::size_t lhs = 0; lhs < 4; ++lhs) {
+        for(std::size_t rhs = 0; rhs < 4; ++rhs) {
+            const auto expected = lhs == rhs ? 4 : 0;
+            if(dot_rows(power_of_two_rows, lhs, rhs) != expected) {
+                return fail(
+                    "randomized Hadamard rows must be orthogonal for power-of-two input"
+                );
+            }
+        }
+    }
+
+    const agent_memory::RandomizedHadamardBinaryEncoder padded_hadamard(
+        make_hadamard_options(3, 4, 9)
+    );
+    const auto padded_rows = materialize_effective_rows(padded_hadamard, 3, 4);
+    for(std::size_t lhs = 0; lhs < 3; ++lhs) {
+        for(std::size_t rhs = 0; rhs < 3; ++rhs) {
+            const auto expected = lhs == rhs ? 4 : 0;
+            if(dot_columns(padded_rows, lhs, rhs) != expected) {
+                return fail(
+                    "a full padded randomized Hadamard block must be a tight frame"
+                );
+            }
+        }
+    }
+    bool saw_non_orthogonal_truncated_rows = false;
+    for(std::size_t lhs = 0; lhs < 4; ++lhs) {
+        for(std::size_t rhs = lhs + 1; rhs < 4; ++rhs) {
+            saw_non_orthogonal_truncated_rows =
+                saw_non_orthogonal_truncated_rows
+                || dot_rows(padded_rows, lhs, rhs) != 0;
+        }
+    }
+    if(!saw_non_orthogonal_truncated_rows) {
+        return fail(
+            "non-power-of-two randomized Hadamard rows must not be assumed orthogonal"
+        );
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::RandomizedHadamardBinaryEncoder(
+               make_hadamard_options(0, 16, 7)
+           );
+       })) {
+        return fail("randomized Hadamard construction must reject zero dimension");
+    }
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::RandomizedHadamardBinaryEncoder(
+               make_hadamard_options(3, 0, 7)
+           );
+       })) {
+        return fail("randomized Hadamard construction must reject zero bit count");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)hadamard_encoder.encode(agent_memory::Embedding{{1.0F, 2.0F}});
+       })) {
+        return fail("randomized Hadamard encoder must reject dimension mismatches");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)hadamard_encoder.encode(agent_memory::Embedding{{
+               1.0F,
+               -2.0F,
+               std::numeric_limits<float>::infinity(),
+           }});
+       })) {
+        return fail("randomized Hadamard encoder must reject non-finite input values");
     }
 
     return 0;

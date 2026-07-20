@@ -744,3 +744,139 @@ row-major rerank store may improve the complete filter pipeline.
 - Compare a mature sub-linear Hamming ANN implementation with both flat scans.
 - Add more data seeds, confidence intervals, and randomized warm-up protocol
   before choosing a production default.
+
+## 2026-07-20: zero-training encoder family grid
+
+### Why this continuation was needed
+
+PR #57 made random hyperplanes viable as a binary candidate filter, but it did
+not prove that independent random projection is the best zero-training encoder
+family. PR #59 adds two additional baselines:
+
+- `coordinate_sign`: `bit_i = sign(x_i)`, exactly one bit per source
+  coordinate;
+- `randomized_hadamard_projection`: a dependency-free randomized
+  Walsh-Hadamard structured projection inspired by the Faiss `IndexLSH`
+  direction, but not a Faiss-compatible orthogonal/tight-frame implementation
+  for arbitrary dimensions.
+
+The question is whether the promising `500-1000` candidate band was specific
+to random hyperplanes or whether a more structured zero-training projection
+improves exact-top-k candidate coverage at the same bit budget.
+
+### Expected result
+
+Coordinate sign was expected to be very cheap and useful mostly as a diagnostic
+baseline, because it preserves only source-coordinate polarity and cannot
+change the bit budget. Randomized Hadamard projection was expected to beat
+independent random hyperplanes on coverage at equal bit counts in this 128D
+power-of-two fixture, especially at smaller candidate limits, while keeping
+similar Hamming-search costs.
+
+### Configuration
+
+- PR context: PR #59 branch, local head before review.
+- Command:
+
+  ```bash
+  ./build-codex-pr59/tools/agent-memory-bench/agent-memory-bench \
+      tools/agent-memory-bench/synthetic-binary-rerank-grid.example.json \
+      tmp/synthetic-binary-rerank-grid-pr59-fixed.json
+  ```
+
+- 10,000 documents and 100 queries;
+- 128-dimensional clustered normalized vectors;
+- data seed `42`;
+- encoder families: `random_hyperplane_rademacher`, `coordinate_sign`,
+  `randomized_hadamard_projection`;
+- encoder seeds `1001` and `1002` for seedable families;
+- signature widths `128`, `256`, `512`, and `1024` bits;
+- candidate limits `100`, `500`, `1000`, and `2000`;
+- five binary timing repeats per encoder seed;
+- seven timing repeats for each exact baseline.
+
+`coordinate_sign` emits exactly `128` bits in this fixture and is skipped for
+the other bit counts by contract.
+
+### Exact-baseline result
+
+| Baseline | Median for 100 queries | Samples, ms |
+| --- | ---: | --- |
+| Current `ExactVectorIndex` | 58.0553 ms | 57.7324, 58.1823, 57.2652, 58.0553, 58.1381, 58.4762, 57.4997 |
+| Contiguous exact cosine | 27.9438 ms | 27.9525, 27.7392, 28.2203, 27.5157, 27.9438, 27.4866, 28.1706 |
+
+Each cell below is
+`exact-top-k coverage / top-1 agreement / speedup vs current index / speedup vs contiguous exact`.
+
+### Random hyperplane baseline
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3200 / 0.395 / 6.64x / 3.20x | 0.6260 / 0.685 / 2.70x / 1.30x | 0.7795 / 0.850 / 1.49x / 0.72x | 0.9035 / 0.955 / 0.81x / 0.39x |
+| 256 | 0.5065 / 0.665 / 5.38x / 2.59x | 0.8260 / 0.890 / 2.49x / 1.20x | 0.9265 / 0.955 / 1.51x / 0.73x | 0.9780 / 0.990 / 0.82x / 0.40x |
+| 512 | 0.7435 / 0.895 / 3.94x / 1.90x | 0.9595 / 1.000 / 2.23x / 1.07x | 0.9895 / 1.000 / 1.41x / 0.68x | 0.9990 / 1.000 / 0.79x / 0.38x |
+| 1024 | 0.9010 / 1.000 / 2.19x / 1.05x | 0.9960 / 1.000 / 1.51x / 0.73x | 1.0000 / 1.000 / 1.11x / 0.53x | 1.0000 / 1.000 / 0.71x / 0.34x |
+
+### Coordinate sign baseline
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.4500 / 0.640 / 6.75x / 3.25x | 0.7800 / 0.910 / 2.76x / 1.33x | 0.8800 / 0.960 / 1.50x / 0.72x | 0.9590 / 0.970 / 0.83x / 0.40x |
+
+### Randomized Hadamard baseline
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.4660 / 0.655 / 6.54x / 3.15x | 0.7860 / 0.890 / 2.61x / 1.26x | 0.8965 / 0.955 / 1.46x / 0.70x | 0.9590 / 0.995 / 0.81x / 0.39x |
+| 256 | 0.6980 / 0.900 / 5.74x / 2.76x | 0.9390 / 0.970 / 2.61x / 1.26x | 0.9790 / 1.000 / 1.49x / 0.72x | 0.9930 / 1.000 / 0.81x / 0.39x |
+| 512 | 0.8735 / 0.975 / 4.27x / 2.05x | 0.9895 / 1.000 / 2.31x / 1.11x | 0.9990 / 1.000 / 1.45x / 0.70x | 1.0000 / 1.000 / 0.81x / 0.39x |
+| 1024 | 0.9805 / 1.000 / 2.38x / 1.15x | 0.9995 / 1.000 / 1.61x / 0.77x | 1.0000 / 1.000 / 1.15x / 0.55x | 1.0000 / 1.000 / 0.72x / 0.35x |
+
+### Interpretation
+
+The structured zero-training encoder is better than the independent random
+hyperplane baseline in this synthetic 128D fixture. The clearest practical
+points are:
+
+- `randomized_hadamard_projection 256 bits x 500 candidates` reaches
+  `0.9390` exact-top-k coverage at `2.61x` vs current exact and `1.26x` vs
+  contiguous exact;
+- `randomized_hadamard_projection 512 bits x 500 candidates` reaches
+  `0.9895` coverage with perfect top-1 agreement and still keeps a small
+  `1.11x` compute-oriented speedup;
+- `randomized_hadamard_projection 1024 bits x 100 candidates` reaches
+  `0.9805` coverage and `1.15x` vs contiguous exact, suggesting that a wider
+  code with a smaller candidate set can be competitive;
+- `coordinate_sign 128 bits` beats random hyperplanes at 128 bits in this
+  fixture, but it is not a general bit-budget mechanism: it is tied to source
+  dimensionality and should remain a diagnostic/lower-complexity baseline.
+
+The useful system shape is still binary candidate filtering plus exact dense
+rerank. Direct binary top-k remains too weak as the final ranker, and large
+candidate sets such as `2000` erase the compute-only win even when quality is
+excellent.
+
+### Limitations
+
+- One synthetic clustered dataset and one data seed.
+- Two encoder seeds for seedable families.
+- 128 source dimensions only.
+- In-memory flat Hamming scan, not a production sub-linear binary index.
+- Dense vectors are still available in memory for rerank; persisted-vector
+  fetch cost is not measured.
+- The randomized Hadamard implementation is dependency-free and Faiss-inspired,
+  not a byte-for-byte Faiss `IndexLSH` port. This experiment uses 128 source
+  dimensions, so complete Hadamard blocks are orthogonal in the tested fixture;
+  the result must not be generalized to padded non-power-of-two dimensions
+  without rerunning the benchmark.
+
+### Follow-up experiments
+
+- Repeat the zero-training family grid on 384/768/1536-dimensional real
+  embeddings and qrels.
+- Add learned global projection/ITQ-like encoder and compare it against the
+  zero-training winners at the same bit/candidate budgets.
+- Test local projection only behind an explicit global routing stage, because
+  local code spaces are not globally comparable.
+- Add a production-shaped candidate store that counts persisted float-vector
+  bytes fetched during rerank.
