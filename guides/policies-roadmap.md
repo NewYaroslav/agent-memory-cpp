@@ -107,6 +107,31 @@ Argon2id is unavailable. KDF parameters (`memory_cost`, `time_cost`,
 `parallelism`, `salt`, and `kdf_version`) are part of the encrypted record or
 profile metadata. Plain `SHA-256(password)` is not an acceptable password KDF.
 
+Validation matrix:
+
+| Scope / provider combination | Validity |
+|---|---|
+| `EncryptionScope::Disabled` | requires `KeyProviderKind::None` |
+| `ArtifactsOnly`, `SensitivePayloadValues`, `AllValuePayloads` | require `key_provider != None` |
+| `KeyProviderKind::UserPassword` | requires a versioned password KDF and salt |
+| `MachineLocal` or `ExternalKms` | must not require a password KDF for normal operation |
+| `ExternalVolumeEncryption` | library does not create `EncryptedRecordHeader`; deployment owns encryption |
+| any encrypted payload scope with `KeyProviderKind::None` | invalid |
+
+## 1.2. Crypto references
+
+- RFC 5116 — Authenticated Encryption with Associated Data (AEAD):
+  https://datatracker.ietf.org/doc/html/rfc5116
+- NIST SP 800-38D — GCM and GMAC:
+  https://csrc.nist.gov/pubs/sp/800/38/d/final
+- RFC 9106 — Argon2 memory-hard function:
+  https://datatracker.ietf.org/doc/rfc9106/
+- RFC 7914 — scrypt password-based key derivation:
+  https://datatracker.ietf.org/doc/html/rfc7914
+- RFC 8452 — AES-GCM-SIV nonce-misuse-resistant AEAD, useful if nonce
+  uniqueness cannot be guaranteed by design:
+  https://datatracker.ietf.org/doc/html/rfc8452
+
 ## 2. DecayPolicy
 
 ### 2.1. DecayMode

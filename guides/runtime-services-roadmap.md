@@ -534,6 +534,7 @@ struct ContextPlanDecision {
     ContextTierPlan plan;
     std::vector<std::string> reasons;
     std::string policy_version;
+    std::optional<std::string> error;
     bool recall_trigger_detected = false;
     bool latency_limited = false;
     bool token_limited = false;
@@ -562,6 +563,15 @@ the retrieval/context plan that those components execute. Applications may
 override the defaults when correctness requires full recall. Decision reasons
 must be traceable so failures can be attributed to planning, retrieval,
 reranking, context trimming, or policy denial.
+
+Mandatory invariant:
+
+```text
+output.plan must include every tier from input.minimum_required_tiers.
+If the planner cannot satisfy that requirement within policy/latency/token
+constraints, it must set ContextPlanDecision::error instead of silently
+returning a shallow plan.
+```
 
 ## 6. Service Lifecycle
 

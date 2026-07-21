@@ -383,7 +383,7 @@ struct ActionOutcomeComponent {
     std::optional<double> predicted_utility;
     std::optional<double> predicted_success_probability;
     std::optional<double> actual_utility;
-    std::optional<double> prediction_error;
+    std::optional<double> utility_prediction_error;
 
     bool completed = false;
     bool resolved_trigger = false;
@@ -396,9 +396,11 @@ struct ActionOutcomeComponent {
 };
 ```
 
-`prediction_error` is the signed difference between observed utility and the
-utility predicted by `utility_model_id` under that model's normalization
-contract. If either side is absent, `prediction_error` is absent too.
+`utility_prediction_error = actual_utility - predicted_utility` under
+`utility_model_id` and that model's normalization contract. If either side is
+absent, `utility_prediction_error` is absent too. Use the longer field name to
+avoid confusing this value with temporal-difference error, sensory prediction
+error, or state-prediction error.
 
 This makes the causal chain inspectable:
 
@@ -418,7 +420,7 @@ struct SalienceComponent {
     std::optional<double> goal_relevance;
     std::optional<double> social_significance;
     std::optional<double> unresolvedness;
-    std::optional<double> prediction_error;
+    std::optional<double> utility_prediction_error;
     std::optional<double> encoding_strength;
 };
 ```
@@ -519,7 +521,7 @@ Useful features:
 - similar controllability/certainty/responsibility;
 - unresolved episode match;
 - same coping strategy;
-- similar prediction error;
+- similar utility prediction error;
 - relationship evidence proximity;
 - capped mood-congruence.
 
@@ -533,7 +535,7 @@ score =
 + w_goal     * goal_overlap
 + w_appraise * appraisal_similarity
 + w_unres    * unresolvedness
-+ w_error    * prediction_error_similarity
++ w_error    * utility_prediction_error_similarity
 + capped(w_mood * mood_congruence)
 - w_repeat   * repetition_penalty
 ```
@@ -597,7 +599,7 @@ Add:
 
 - affective episode summaries;
 - coping effectiveness statistics;
-- prediction-error aggregation;
+- utility-prediction-error aggregation;
 - relationship evidence-chain maintenance.
 
 ### E4 — Security and live-context planning
@@ -610,6 +612,35 @@ Add optional, profile-gated support for:
 - urgency-aware context planning;
 - short/medium/long/base retrieval tier plans;
 - benchmark traces that report skipped deep retrieval due to latency budget.
+
+## Research anchors
+
+These references are anchors for future implementation research. They are not
+new mandatory dependencies and do not turn this roadmap into a psychology
+framework.
+
+Appraisal and affective-agent models:
+
+- Scherer, K. R. — Component Process Model / stimulus evaluation checks.
+  Start from "Appraisal considered as a process of multilevel sequential
+  checking" in *Appraisal Processes in Emotion* and follow later CPM work:
+  https://repository.law.umich.edu/cgi/viewcontent.cgi?params=%2Fcontext%2Fbook_chapters%2Farticle%2F1228%2F&path_info=Ellsworth_Appraisal.pdf
+- Marsella, S. C., and Gratch, J. — EMA process model of appraisal dynamics:
+  https://people.ict.usc.edu/~gratch/CSCI534/Readings/COGSYS-RS-EMOTION-2008-6.pdf
+- Dias, J., Mascarenhas, S., and Paiva, A. — FAtiMA Modular, a generic
+  appraisal framework for emotional agents:
+  https://doi.org/10.1007/978-3-319-12973-0_3
+- Popescu, A., Broekens, J., and van Someren, M. — GAMYGDALA, an appraisal
+  engine for games:
+  https://doi.org/10.1109/T-AFFC.2013.24
+- Simonov, P. V. — need-informational theory of emotions:
+  https://pubmed.ncbi.nlm.nih.gov/6542912/
+- Keramati, M., and Gutkin, B. — homeostatic reinforcement learning:
+  https://elifesciences.org/articles/04811
+
+Crypto references live in [`policies-roadmap.md`](policies-roadmap.md) because
+encryption-at-rest is a general policy, not an affective-memory-specific
+mechanism.
 
 ## Non-goals
 
