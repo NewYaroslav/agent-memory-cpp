@@ -66,6 +66,11 @@ rerank over selected candidates.
 - ITQ improves the strongest 128-bit candidate coverage in this fixture:
   `0.8990` at top-1000 versus PCA `0.8745`, random hyperplane `0.7795`, and
   pair-difference `0.7705`.
+- The same result is more informative as a candidate-stage miss-rate reduction:
+  PCA misses `1 - 0.8745 = 0.1255` of exact top-10 neighbours at top-1000,
+  while ITQ misses `1 - 0.8990 = 0.1010`. On this synthetic fixture, ITQ
+  therefore reduces missed exact top-10 neighbours by about `19.5%` relative to
+  PCA.
 - The gain is directional and modest. With only two encoder seeds, it should be
   treated as a baseline signal, not a stable ranking of encoder families.
 - Direct binary top-10 recall remains low. The useful mode is over-fetching
