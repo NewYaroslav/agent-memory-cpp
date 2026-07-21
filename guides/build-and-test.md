@@ -79,6 +79,14 @@ Run the binary rerank statistical grid fixture:
     tmp/synthetic-binary-rerank-grid-report.json
 ```
 
+Run the PCA-focused 128D learned-projection fixture:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/synthetic-binary-rerank-grid-pca.example.json \
+    tmp/synthetic-binary-rerank-grid-pca-report.json
+```
+
 Run the high-dimensional synthetic variants when investigating projection
 scaling beyond the default 128D fixture:
 
@@ -108,7 +116,8 @@ in the grid. Supported values are:
 - `random_hyperplane_rademacher`;
 - `coordinate_sign`;
 - `randomized_hadamard_projection`;
-- `learned_pair_difference_projection`.
+- `learned_pair_difference_projection`;
+- `pca_projection`.
 
 If omitted, the grid keeps the historical random-hyperplane-only behavior.
 `coordinate_sign` is unseeded and emits exactly `embedding_dimensions` bits, so
@@ -122,6 +131,10 @@ without retraining the same artifact. With `randomize_execution_order=true`,
 the runner shuffles the full `encoder_family x encoder_seed x bit_count x
 repeat` task list for each data seed; JSON reports remain grouped by family and
 encoder seed for readability.
+
+`pca_projection` also trains only on document vectors and supports
+`bit_count <= embedding_dimensions`; the runner skips larger bit widths for
+that family. Its training cost is not included in query timing.
 
 The two exact baselines answer different questions:
 

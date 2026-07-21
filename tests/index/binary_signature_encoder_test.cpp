@@ -64,6 +64,20 @@ namespace {
         return options;
     }
 
+    agent_memory::PcaProjectionTrainingOptions make_pca_options(
+        std::size_t input_dimension,
+        std::size_t bit_count,
+        std::uint64_t seed
+    ) {
+        agent_memory::PcaProjectionTrainingOptions options;
+        options.input_dimension = input_dimension;
+        options.bit_count = bit_count;
+        options.seed = seed;
+        options.power_iterations = 16;
+        options.max_training_vectors = 0;
+        return options;
+    }
+
     bool almost_equal(double lhs, double rhs, double epsilon = 1.0e-5) {
         return std::fabs(lhs - rhs) <= epsilon;
     }
@@ -589,6 +603,150 @@ int main() {
            }});
        })) {
         return fail("learned projection encoder must reject NaN input values");
+    }
+
+    const std::vector<agent_memory::Embedding> pca_training{
+        agent_memory::Embedding{{3.0F, 0.1F}},
+        agent_memory::Embedding{{2.0F, -0.1F}},
+        agent_memory::Embedding{{1.0F, 0.0F}},
+        agent_memory::Embedding{{-1.0F, 0.0F}},
+        agent_memory::Embedding{{-2.0F, 0.1F}},
+        agent_memory::Embedding{{-3.0F, -0.1F}},
+    };
+    const auto pca_artifact = agent_memory::train_pca_projection_encoder(
+        pca_training,
+        make_pca_options(2, 2, 321)
+    );
+    if(pca_artifact.input_dimension != 2
+       || pca_artifact.bit_count != 2
+       || pca_artifact.seed != 321
+       || pca_artifact.training_vector_count != pca_training.size()
+       || pca_artifact.power_iterations != 16
+       || pca_artifact.mean.size() != 2
+       || pca_artifact.projection_rows.size() != 4
+       || pca_artifact.thresholds.size() != 2) {
+        return fail("PCA projection training must produce a complete artifact");
+    }
+    const auto first_axis_x = std::fabs(pca_artifact.projection_rows[0]);
+    const auto first_axis_y = std::fabs(pca_artifact.projection_rows[1]);
+    if(first_axis_x < 0.95 || first_axis_y > 0.35) {
+        return fail("PCA projection first row must follow the dominant variance axis");
+    }
+    for(std::size_t bit = 0; bit < pca_artifact.bit_count; ++bit) {
+        const auto row = pca_artifact.projection_rows.data()
+            + bit * pca_artifact.input_dimension;
+        const auto norm =
+            std::sqrt(static_cast<double>(row[0]) * row[0]
+                      + static_cast<double>(row[1]) * row[1]);
+        if(!almost_equal(norm, 1.0)) {
+            return fail("PCA projection rows must be normalized");
+        }
+        if(!std::isfinite(pca_artifact.thresholds[bit])) {
+            return fail("PCA projection thresholds must be finite");
+        }
+    }
+
+    const agent_memory::PcaProjectionBinaryEncoder pca_encoder(pca_artifact);
+    const auto& pca_info = pca_encoder.info();
+    if(pca_info.encoder_id != "pca_projection"
+       || pca_info.encoder_version != "v1"
+       || pca_info.input_dimension != 2
+       || pca_info.bit_count != 2
+       || pca_info.seed != 321) {
+        return fail("PCA projection encoder info must mirror the artifact");
+    }
+    const std::string pca_prefix =
+        "pca_projection_v1:dim=2:bits=2:seed=321:train=6:iters=16:artifact=";
+    if(pca_info.config_fingerprint.compare(0, pca_prefix.size(), pca_prefix) != 0
+       || pca_info.config_fingerprint.size() != pca_prefix.size() + 16U) {
+        return fail("PCA projection fingerprint must include artifact identity");
+    }
+
+    const auto pca_signature =
+        pca_encoder.encode(agent_memory::Embedding{{2.5F, 0.0F}});
+    if(pca_signature != pca_encoder.encode(agent_memory::Embedding{{2.5F, 0.0F}})) {
+        return fail("PCA projection encoder must be deterministic");
+    }
+    if(pca_signature.bit_count() != 2 || pca_signature.word_count() != 1) {
+        return fail("PCA projection signature must use the configured width");
+    }
+    const auto pca_batch = pca_encoder.encode_batch({
+        agent_memory::Embedding{{2.5F, 0.0F}},
+        agent_memory::Embedding{{-2.5F, 0.0F}},
+    });
+    if(pca_batch.size() != 2 || pca_batch.front() != pca_signature) {
+        return fail("PCA projection batch encoding must match single encode");
+    }
+
+    const auto pca_seed_variant = agent_memory::train_pca_projection_encoder(
+        pca_training,
+        make_pca_options(2, 2, 322)
+    );
+    const agent_memory::PcaProjectionBinaryEncoder pca_variant_encoder(
+        pca_seed_variant
+    );
+    if(pca_variant_encoder.info().config_fingerprint
+       == pca_encoder.info().config_fingerprint) {
+        return fail("PCA projection seed must affect artifact identity");
+    }
+
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::train_pca_projection_encoder(
+               std::vector<agent_memory::Embedding>{
+                   agent_memory::Embedding{{1.0F, 0.0F}},
+                   agent_memory::Embedding{{-1.0F, 0.0F}},
+               },
+               make_pca_options(2, 3, 321)
+           );
+       })) {
+        return fail("PCA projection training must reject bit_count > dimension");
+    }
+    if(!throws_invalid_argument([] {
+           auto options = make_pca_options(2, 2, 321);
+           options.power_iterations = 0;
+           (void)agent_memory::train_pca_projection_encoder(
+               std::vector<agent_memory::Embedding>{
+                   agent_memory::Embedding{{1.0F, 0.0F}},
+                   agent_memory::Embedding{{-1.0F, 0.0F}},
+               },
+               options
+           );
+       })) {
+        return fail("PCA projection training must reject zero power iterations");
+    }
+    if(!throws_invalid_argument([&] {
+           auto options = make_pca_options(2, 2, 321);
+           options.max_training_vectors = 1;
+           (void)agent_memory::train_pca_projection_encoder(pca_training, options);
+       })) {
+        return fail("PCA projection training must reject one-vector samples");
+    }
+    if(!throws_invalid_argument([&] {
+           auto invalid_artifact = pca_artifact;
+           invalid_artifact.mean.pop_back();
+           (void)agent_memory::PcaProjectionBinaryEncoder(invalid_artifact);
+       })) {
+        return fail("PCA projection encoder must reject mean size mismatch");
+    }
+    if(!throws_invalid_argument([&] {
+           auto invalid_artifact = pca_artifact;
+           invalid_artifact.projection_rows.pop_back();
+           (void)agent_memory::PcaProjectionBinaryEncoder(invalid_artifact);
+       })) {
+        return fail("PCA projection encoder must reject matrix size mismatch");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)pca_encoder.encode(agent_memory::Embedding{{1.0F, 2.0F, 3.0F}});
+       })) {
+        return fail("PCA projection encoder must reject dimension mismatches");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)pca_encoder.encode(agent_memory::Embedding{{
+               1.0F,
+               std::numeric_limits<float>::quiet_NaN(),
+           }});
+       })) {
+        return fail("PCA projection encoder must reject NaN input values");
     }
 
     return 0;

@@ -9,6 +9,7 @@
 #include <agent_memory/index/FlatBinarySignatureIndex.hpp>
 #include <agent_memory/index/IBinarySignatureEncoder.hpp>
 #include <agent_memory/index/LearnedProjectionBinaryEncoder.hpp>
+#include <agent_memory/index/PcaProjectionBinaryEncoder.hpp>
 #include <agent_memory/index/RandomHyperplaneBinaryEncoder.hpp>
 #include <agent_memory/index/RandomizedHadamardBinaryEncoder.hpp>
 #include <agent_memory/index/VectorSimilarityComputer.hpp>
@@ -70,6 +71,7 @@ namespace {
         "randomized_hadamard_projection";
     constexpr std::string_view kEncoderFamilyLearnedPairDifference =
         "learned_pair_difference_projection";
+    constexpr std::string_view kEncoderFamilyPcaProjection = "pca_projection";
 
     struct BenchmarkConfig final {
         std::string mode{kModeRandomExact};
@@ -503,7 +505,8 @@ namespace {
         return family == kEncoderFamilyRandomHyperplane
             || family == kEncoderFamilyCoordinateSign
             || family == kEncoderFamilyRandomizedHadamard
-            || family == kEncoderFamilyLearnedPairDifference;
+            || family == kEncoderFamilyLearnedPairDifference
+            || family == kEncoderFamilyPcaProjection;
     }
 
     [[nodiscard]] bool encoder_family_uses_seed(const std::string& family) noexcept {
@@ -523,6 +526,9 @@ namespace {
         if(family == kEncoderFamilyLearnedPairDifference) {
             return 0xC2B2AE35U;
         }
+        if(family == kEncoderFamilyPcaProjection) {
+            return 0x27D4EB2FU;
+        }
         return 0x85EBCA6BU;
     }
 
@@ -533,6 +539,9 @@ namespace {
     ) noexcept {
         if(family == kEncoderFamilyCoordinateSign) {
             return bit_count == input_dimension;
+        }
+        if(family == kEncoderFamilyPcaProjection) {
+            return bit_count <= input_dimension;
         }
         return true;
     }
@@ -553,6 +562,19 @@ namespace {
                 throw std::runtime_error(
                     "coordinate_sign encoder family requires bit_counts to include "
                     "embedding_dimensions"
+                );
+            }
+            if(family == kEncoderFamilyPcaProjection
+               && std::none_of(
+                   config.bit_counts.begin(),
+                   config.bit_counts.end(),
+                   [&](std::size_t bit_count) {
+                       return bit_count <= config.embedding_dimensions;
+                   }
+               )) {
+                throw std::runtime_error(
+                    "pca_projection encoder family requires at least one bit_count "
+                    "not greater than embedding_dimensions"
                 );
             }
         }
@@ -2190,6 +2212,19 @@ namespace {
                 std::move(artifact)
             );
         }
+        if(family == kEncoderFamilyPcaProjection) {
+            agent_memory::PcaProjectionTrainingOptions options;
+            options.input_dimension = input_dimension;
+            options.bit_count = bit_count;
+            options.seed = seed;
+            auto artifact = agent_memory::train_pca_projection_encoder(
+                training_vectors,
+                options
+            );
+            return std::make_unique<agent_memory::PcaProjectionBinaryEncoder>(
+                std::move(artifact)
+            );
+        }
         throw std::runtime_error("unsupported binary encoder family: " + family);
     }
 
@@ -2223,6 +2258,16 @@ namespace {
             return std::string{
                 agent_memory::vector_similarity_backend_name(
                     learned->similarity_backend()
+                )
+            };
+        }
+        if(const auto* pca =
+               dynamic_cast<const agent_memory::PcaProjectionBinaryEncoder*>(
+                   &encoder
+               )) {
+            return std::string{
+                agent_memory::vector_similarity_backend_name(
+                    pca->similarity_backend()
                 )
             };
         }
@@ -2726,6 +2771,7 @@ namespace {
             "Synthetic binary rerank grid reuses one exact oracle per data seed across all bit widths.",
             "data_seeds control synthetic data; encoder_seeds control seedable encoder families.",
             "learned_pair_difference_projection trains only on document vectors for the current data_seed; evaluation queries are not training input.",
+            "pca_projection trains only on document vectors for the current data_seed and supports bit_count <= embedding_dimensions.",
             "coordinate_sign emits only embedding_dimensions bits and is skipped for other bit_counts.",
             "repeat_count repeats binary timings; quality is sampled once per data/encoder seed pair.",
             "Current ExactVectorIndex and contiguous exact timing use separate repeated medians.",
