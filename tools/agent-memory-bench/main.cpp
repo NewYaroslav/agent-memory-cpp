@@ -2,6 +2,7 @@
 #include <agent_memory/eval/DatasetLoader.hpp>
 #include <agent_memory/eval/Evaluation.hpp>
 #include <agent_memory/eval/IRetrieverAdapter.hpp>
+#include <agent_memory/eval/PrecomputedEmbeddingDataset.hpp>
 #include <agent_memory/eval/RetrievalEvalRunner.hpp>
 #include <agent_memory/index/BinarySignatureInfo.hpp>
 #include <agent_memory/index/CoordinateSignBinaryEncoder.hpp>
@@ -39,6 +40,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -64,6 +66,8 @@ namespace {
         "synthetic_binary_flat_vs_float";
     constexpr std::string_view kModeSyntheticBinaryRerankGrid =
         "synthetic_binary_rerank_grid";
+    constexpr std::string_view kModePrecomputedEmbeddingBinaryRerankGrid =
+        "precomputed_embedding_binary_rerank_grid";
     constexpr std::string_view kBaselineNameBm25Exact = "bm25_exact";
     constexpr std::string_view kEncoderFamilyRandomHyperplane =
         "random_hyperplane_rademacher";
@@ -198,6 +202,41 @@ namespace {
     struct BinaryEncoderBuild final {
         std::unique_ptr<agent_memory::IBinarySignatureEncoder> encoder;
         BinaryEncoderBuildMetrics metrics;
+    };
+
+    struct PrecomputedExactOracle final {
+        double exact_build_ms = 0.0;
+        double exact_query_ms = 0.0;
+        std::string exact_similarity_backend;
+        std::vector<std::vector<std::string>> exact_top_k;
+        std::vector<std::unordered_set<std::string>> exact_top_k_sets;
+        agent_memory::RetrievalMetrics qrels_quality;
+        std::uint64_t exact_payload_bytes = 0;
+    };
+
+    struct PrecomputedRerankResult final {
+        std::size_t candidate_limit = 0;
+        SearchTiming binary_candidate_query;
+        double exact_rerank_ms = 0.0;
+        double total_ms = 0.0;
+        double exact_top_k_candidate_coverage = 0.0;
+        double qrels_candidate_relevant_coverage = 0.0;
+        double reranked_recall_at_10 = 0.0;
+        double reranked_ndcg_at_10 = 0.0;
+        double reranked_mrr = 0.0;
+    };
+
+    struct PrecomputedEncoderResult final {
+        std::string encoder_family;
+        std::uint32_t encoder_seed = 0;
+        std::size_t bit_count = 0;
+        agent_memory::BinarySignatureEncoderInfo encoder_info;
+        BinaryEncoderBuildMetrics encoder_build;
+        double binary_build_ms = 0.0;
+        std::string binary_hamming_backend;
+        std::string binary_encoder_similarity_backend;
+        std::uint64_t binary_payload_bytes = 0;
+        std::vector<PrecomputedRerankResult> rerank;
     };
 
     [[nodiscard]] double elapsed_ms(Clock::time_point start, Clock::time_point end) {
@@ -639,11 +678,68 @@ namespace {
             config.mode == kModeSyntheticBinaryFlatVsFloat;
         const bool binary_rerank_grid =
             config.mode == kModeSyntheticBinaryRerankGrid;
-        if(config.mode != kModeRandomExact && !binary_flat_vs_float && !binary_rerank_grid) {
+        const bool precomputed_binary_rerank_grid =
+            config.mode == kModePrecomputedEmbeddingBinaryRerankGrid;
+        if(config.mode != kModeRandomExact
+           && !binary_flat_vs_float
+           && !binary_rerank_grid
+           && !precomputed_binary_rerank_grid) {
             throw std::runtime_error(
                 "config field 'mode' must be synthetic_random_exact, synthetic_sweep, "
-                "synthetic_binary_flat_vs_float, or synthetic_binary_rerank_grid"
+                "synthetic_binary_flat_vs_float, synthetic_binary_rerank_grid, "
+                "or precomputed_embedding_binary_rerank_grid"
             );
+        }
+
+        if(precomputed_binary_rerank_grid) {
+            config.dataset_path = require_string(document, "dataset_path");
+            config.result_limit = checked_size(
+                require_positive_integer(document, "result_limit"),
+                "result_limit"
+            );
+            config.bit_counts = read_optional_size_list(document, "bit_counts");
+            if(config.bit_counts.empty()) {
+                throw std::runtime_error(
+                    "config field 'bit_counts' must be provided for "
+                    "precomputed_embedding_binary_rerank_grid"
+                );
+            }
+            config.rerank_candidate_limits = read_optional_size_list(
+                document,
+                "rerank_candidate_limits"
+            );
+            config.encoder_families = read_optional_string_list(
+                document,
+                "encoder_families"
+            );
+            if(config.encoder_families.empty()) {
+                config.encoder_families = {std::string{kEncoderFamilyRandomHyperplane}};
+            }
+            if(find_optional(document, "seed") != nullptr) {
+                const auto seed = require_positive_integer(document, "seed");
+                if(seed > std::numeric_limits<std::uint32_t>::max()) {
+                    throw std::runtime_error("config field 'seed' exceeds uint32_t");
+                }
+                config.seed = static_cast<std::uint32_t>(seed);
+                config.encoder_seeds = {config.seed};
+            }
+            auto seeds = read_optional_uint32_list(document, "seeds");
+            if(!seeds.empty()) {
+                config.encoder_seeds = std::move(seeds);
+                config.seed = config.encoder_seeds.front();
+            }
+            auto encoder_seeds = read_optional_uint32_list(document, "encoder_seeds");
+            if(!encoder_seeds.empty()) {
+                config.encoder_seeds = std::move(encoder_seeds);
+                config.seed = config.encoder_seeds.front();
+            }
+            if(config.encoder_seeds.empty()) {
+                throw std::runtime_error(
+                    "precomputed_embedding_binary_rerank_grid requires 'seed', "
+                    "'seeds', or 'encoder_seeds'"
+                );
+            }
+            return config;
         }
 
         if(!binary_flat_vs_float && !binary_rerank_grid) {
@@ -2647,6 +2743,627 @@ namespace {
         );
     }
 
+    [[nodiscard]] std::unordered_map<std::string, agent_memory::Embedding>
+    embeddings_by_id(const std::vector<agent_memory::PrecomputedEmbeddingRecord>& records) {
+        std::unordered_map<std::string, agent_memory::Embedding> result;
+        result.reserve(records.size());
+        for(const auto& record : records) {
+            result.emplace(record.id, record.embedding);
+        }
+        return result;
+    }
+
+    [[nodiscard]] std::vector<agent_memory::Embedding> embedding_vectors(
+        const std::vector<agent_memory::PrecomputedEmbeddingRecord>& records
+    ) {
+        std::vector<agent_memory::Embedding> result;
+        result.reserve(records.size());
+        for(const auto& record : records) {
+            result.push_back(record.embedding);
+        }
+        return result;
+    }
+
+    [[nodiscard]] std::unordered_map<std::string, std::unordered_set<std::string>>
+    positive_qrels_by_query(const agent_memory::RetrievalEvalDataset& dataset) {
+        std::unordered_map<std::string, std::unordered_set<std::string>> result;
+        for(const auto& judgment : dataset.judgments) {
+            if(judgment.relevant()) {
+                result[judgment.query_id].insert(judgment.item_id);
+            }
+        }
+        return result;
+    }
+
+    [[nodiscard]] double qrels_candidate_relevant_coverage(
+        const agent_memory::RetrievalEvalDataset& dataset,
+        const std::unordered_map<std::string, std::unordered_set<std::string>>& qrels,
+        const std::vector<std::unordered_set<std::string>>& candidate_sets
+    ) {
+        double coverage_sum = 0.0;
+        std::size_t evaluated_count = 0;
+        for(std::size_t index = 0; index < dataset.queries.size(); ++index) {
+            const auto& query = dataset.queries[index];
+            if(query.answer_mode != agent_memory::EvalQueryAnswerMode::JudgedRetrieval) {
+                continue;
+            }
+            const auto qrel_it = qrels.find(query.id);
+            if(qrel_it == qrels.end() || qrel_it->second.empty()) {
+                continue;
+            }
+            std::size_t found = 0;
+            for(const auto& item_id : qrel_it->second) {
+                if(candidate_sets[index].find(item_id) != candidate_sets[index].end()) {
+                    ++found;
+                }
+            }
+            coverage_sum += static_cast<double>(found)
+                / static_cast<double>(qrel_it->second.size());
+            ++evaluated_count;
+        }
+        return evaluated_count == 0
+            ? 0.0
+            : coverage_sum / static_cast<double>(evaluated_count);
+    }
+
+    [[nodiscard]] nlohmann::json retrieval_metrics_to_json(
+        const agent_memory::RetrievalMetrics& metrics
+    ) {
+        return {
+            {"recall_at_1", agent_memory::metric_value_at(metrics.recall_at, 1).value_or(0.0)},
+            {"recall_at_5", agent_memory::metric_value_at(metrics.recall_at, 5).value_or(0.0)},
+            {"recall_at_10", agent_memory::metric_value_at(metrics.recall_at, 10).value_or(0.0)},
+            {"recall_at_50", agent_memory::metric_value_at(metrics.recall_at, 50).value_or(0.0)},
+            {"ndcg_at_10", agent_memory::metric_value_at(metrics.ndcg_at, 10).value_or(0.0)},
+            {"mrr", metrics.mrr},
+            {"empty_result_fraction", metrics.empty_result_fraction},
+            {"evaluated_query_count", metrics.evaluated_query_count}
+        };
+    }
+
+    [[nodiscard]] agent_memory::RetrievalRun make_retrieval_run(
+        std::string name,
+        const agent_memory::RetrievalEvalDataset& dataset,
+        const std::vector<std::vector<agent_memory::RetrievalRunHit>>& hits_by_query
+    ) {
+        if(hits_by_query.size() != dataset.queries.size()) {
+            throw std::runtime_error("precomputed run/query size mismatch");
+        }
+        agent_memory::RetrievalRun run;
+        run.name = std::move(name);
+        run.queries.reserve(dataset.queries.size());
+        for(std::size_t index = 0; index < dataset.queries.size(); ++index) {
+            agent_memory::RetrievalQueryRun query_run;
+            query_run.query_id = dataset.queries[index].id;
+            query_run.hits = hits_by_query[index];
+            run.queries.push_back(std::move(query_run));
+        }
+        return run;
+    }
+
+    [[nodiscard]] PrecomputedExactOracle prepare_precomputed_exact_oracle(
+        const BenchmarkConfig& config,
+        const agent_memory::PrecomputedEmbeddingEvalDataset& dataset
+    ) {
+        const auto query_embeddings = embeddings_by_id(dataset.query_embeddings);
+
+        agent_memory::ExactVectorIndex exact_index(agent_memory::ExactVectorIndexOptions{
+            dataset.embedding_model.dimension,
+            dataset.embedding_model.similarity_metric
+        });
+        PrecomputedExactOracle oracle;
+        oracle.exact_similarity_backend = std::string{
+            agent_memory::vector_similarity_backend_name(exact_index.similarity_backend())
+        };
+
+        const auto build_start = Clock::now();
+        for(const auto& document : dataset.document_embeddings) {
+            exact_index.upsert(agent_memory::VectorRecord{
+                agent_memory::ChunkId{document.id},
+                document.embedding,
+                {}
+            });
+        }
+        const auto build_end = Clock::now();
+        oracle.exact_build_ms = elapsed_ms(build_start, build_end);
+
+        std::vector<std::vector<agent_memory::RetrievalRunHit>> hits_by_query;
+        hits_by_query.reserve(dataset.retrieval.queries.size());
+        oracle.exact_top_k.reserve(dataset.retrieval.queries.size());
+        const auto query_start = Clock::now();
+        for(const auto& query : dataset.retrieval.queries) {
+            const auto query_embedding = query_embeddings.at(query.id);
+            const auto hits = exact_index.search(agent_memory::VectorSearchQuery{
+                query_embedding,
+                config.result_limit,
+                {}
+            });
+
+            std::vector<std::string> ids;
+            ids.reserve(hits.size());
+            std::vector<agent_memory::RetrievalRunHit> run_hits;
+            run_hits.reserve(hits.size());
+            for(const auto& hit : hits) {
+                ids.push_back(hit.chunk_id.value());
+                run_hits.push_back(agent_memory::RetrievalRunHit{
+                    hit.chunk_id.value(),
+                    hit.score,
+                    0,
+                    "exact_vector"
+                });
+            }
+            oracle.exact_top_k.push_back(std::move(ids));
+            hits_by_query.push_back(std::move(run_hits));
+        }
+        const auto query_end = Clock::now();
+        oracle.exact_query_ms = elapsed_ms(query_start, query_end);
+
+        oracle.exact_top_k_sets.reserve(oracle.exact_top_k.size());
+        for(const auto& ids : oracle.exact_top_k) {
+            oracle.exact_top_k_sets.emplace_back(ids.begin(), ids.end());
+        }
+        const auto exact_run = make_retrieval_run(
+            "precomputed_exact_vector",
+            dataset.retrieval,
+            hits_by_query
+        );
+        oracle.qrels_quality = agent_memory::evaluate_retrieval(
+            dataset.retrieval,
+            exact_run
+        );
+        oracle.exact_payload_bytes = checked_payload_bytes(
+            dataset.document_embeddings.size(),
+            dataset.embedding_model.dimension,
+            sizeof(float)
+        );
+        return oracle;
+    }
+
+    [[nodiscard]] float score_embedding_pair(
+        const agent_memory::Embedding& query,
+        const agent_memory::Embedding& document,
+        agent_memory::SimilarityMetric metric,
+        const agent_memory::VectorSimilarityComputer& similarity
+    ) {
+        if(metric == agent_memory::SimilarityMetric::Euclidean) {
+            return similarity.negative_squared_distance(query, document);
+        }
+        const auto dot = similarity.dot_product(query, document);
+        if(metric == agent_memory::SimilarityMetric::DotProduct) {
+            return dot;
+        }
+        const auto query_norm = similarity.squared_norm(query);
+        const auto document_norm = similarity.squared_norm(document);
+        if(query_norm <= 0.0F || document_norm <= 0.0F) {
+            return 0.0F;
+        }
+        return dot / std::sqrt(query_norm * document_norm);
+    }
+
+    [[nodiscard]] std::vector<agent_memory::RetrievalRunHit> rerank_precomputed_candidates(
+        const agent_memory::Embedding& query,
+        const std::unordered_map<std::string, agent_memory::Embedding>& document_embeddings,
+        const std::vector<agent_memory::BinarySignatureSearchResult>& candidates,
+        std::size_t result_limit,
+        agent_memory::SimilarityMetric metric,
+        const agent_memory::VectorSimilarityComputer& similarity
+    ) {
+        struct ScoredId final {
+            std::string id;
+            float score = 0.0F;
+        };
+        std::vector<ScoredId> scored;
+        scored.reserve(candidates.size());
+        for(const auto& candidate : candidates) {
+            const auto id = candidate.chunk_id.value();
+            const auto document_it = document_embeddings.find(id);
+            if(document_it == document_embeddings.end()) {
+                throw std::runtime_error(
+                    "binary candidate references unknown precomputed document id: "
+                    + id
+                );
+            }
+            scored.push_back(ScoredId{
+                id,
+                score_embedding_pair(query, document_it->second, metric, similarity)
+            });
+        }
+        const auto compare = [](const ScoredId& lhs, const ScoredId& rhs) {
+            if(lhs.score == rhs.score) {
+                return lhs.id < rhs.id;
+            }
+            return lhs.score > rhs.score;
+        };
+        if(scored.size() > result_limit) {
+            std::partial_sort(
+                scored.begin(),
+                scored.begin() + static_cast<std::ptrdiff_t>(result_limit),
+                scored.end(),
+                compare
+            );
+            scored.resize(result_limit);
+        } else {
+            std::sort(scored.begin(), scored.end(), compare);
+        }
+
+        std::vector<agent_memory::RetrievalRunHit> hits;
+        hits.reserve(scored.size());
+        for(const auto& item : scored) {
+            hits.push_back(agent_memory::RetrievalRunHit{
+                item.id,
+                item.score,
+                0,
+                "binary_candidate_exact_rerank"
+            });
+        }
+        return hits;
+    }
+
+    [[nodiscard]] PrecomputedEncoderResult run_precomputed_encoder_benchmark(
+        const BenchmarkConfig& config,
+        const agent_memory::PrecomputedEmbeddingEvalDataset& dataset,
+        const PrecomputedExactOracle& oracle,
+        const std::string& encoder_family,
+        std::uint32_t encoder_seed,
+        std::size_t bit_count
+    ) {
+        auto build = make_binary_encoder(
+            encoder_family,
+            dataset.embedding_model.dimension,
+            bit_count,
+            encoder_seed,
+            embedding_vectors(dataset.document_embeddings)
+        );
+        const auto signature_info = agent_memory::make_binary_signature_info(
+            build.encoder->info(),
+            dataset.embedding_model,
+            "precomputed_dense_projection"
+        );
+        agent_memory::FlatBinarySignatureIndex binary_index(
+            agent_memory::FlatBinarySignatureIndexOptions{signature_info}
+        );
+
+        const auto binary_build_start = Clock::now();
+        for(const auto& record : dataset.document_embeddings) {
+            binary_index.upsert(agent_memory::BinarySignatureRecord{
+                agent_memory::ChunkId{record.id},
+                build.encoder->encode(record.embedding),
+                signature_info,
+                {}
+            });
+        }
+        const auto binary_build_end = Clock::now();
+
+        PrecomputedEncoderResult result;
+        result.encoder_family = encoder_family;
+        result.encoder_seed = encoder_seed;
+        result.bit_count = bit_count;
+        result.encoder_info = build.encoder->info();
+        result.encoder_build = std::move(build.metrics);
+        result.binary_build_ms = elapsed_ms(binary_build_start, binary_build_end);
+        result.binary_hamming_backend = std::string{
+            agent_memory::hamming_distance_backend_name(*binary_index.hamming_backend())
+        };
+        result.binary_encoder_similarity_backend =
+            binary_encoder_compute_backend_name(*build.encoder);
+        result.binary_payload_bytes = checked_payload_bytes(
+            dataset.document_embeddings.size(),
+            agent_memory::binary_signature_word_count(bit_count),
+            sizeof(std::uint64_t)
+        );
+
+        const auto query_embeddings = embeddings_by_id(dataset.query_embeddings);
+        const auto document_embeddings = embeddings_by_id(dataset.document_embeddings);
+        const auto positive_qrels = positive_qrels_by_query(dataset.retrieval);
+        const agent_memory::VectorSimilarityComputer rerank_similarity;
+
+        result.rerank.reserve(config.rerank_candidate_limits.size());
+        for(const auto candidate_limit : config.rerank_candidate_limits) {
+            PrecomputedRerankResult row;
+            row.candidate_limit = candidate_limit;
+            double exact_candidate_coverage_sum = 0.0;
+            std::vector<std::unordered_set<std::string>> candidate_sets;
+            candidate_sets.reserve(dataset.retrieval.queries.size());
+            std::vector<std::vector<agent_memory::RetrievalRunHit>> reranked_hits;
+            reranked_hits.reserve(dataset.retrieval.queries.size());
+
+            for(std::size_t query_index = 0;
+                query_index < dataset.retrieval.queries.size();
+                ++query_index) {
+                const auto& query = dataset.retrieval.queries[query_index];
+                const auto& query_embedding = query_embeddings.at(query.id);
+
+                const auto encode_start = Clock::now();
+                const auto query_signature = build.encoder->encode(query_embedding);
+                const auto encode_end = Clock::now();
+                row.binary_candidate_query.encode_ms += elapsed_ms(
+                    encode_start,
+                    encode_end
+                );
+
+                const auto search_start = Clock::now();
+                const auto candidates = binary_index.search(
+                    agent_memory::BinarySignatureSearchQuery{
+                        query_signature,
+                        signature_info,
+                        candidate_limit,
+                        {}
+                    }
+                );
+                const auto search_end = Clock::now();
+                row.binary_candidate_query.search_ms += elapsed_ms(
+                    search_start,
+                    search_end
+                );
+
+                std::vector<std::string> candidate_ids;
+                candidate_ids.reserve(candidates.size());
+                std::unordered_set<std::string> candidate_set;
+                candidate_set.reserve(candidates.size());
+                for(const auto& candidate : candidates) {
+                    candidate_ids.push_back(candidate.chunk_id.value());
+                    candidate_set.insert(candidate.chunk_id.value());
+                }
+                exact_candidate_coverage_sum += recall_against_exact_top_k(
+                    candidate_ids,
+                    oracle.exact_top_k_sets[query_index]
+                );
+                candidate_sets.push_back(std::move(candidate_set));
+
+                const auto rerank_start = Clock::now();
+                reranked_hits.push_back(rerank_precomputed_candidates(
+                    query_embedding,
+                    document_embeddings,
+                    candidates,
+                    config.result_limit,
+                    dataset.embedding_model.similarity_metric,
+                    rerank_similarity
+                ));
+                const auto rerank_end = Clock::now();
+                row.exact_rerank_ms += elapsed_ms(rerank_start, rerank_end);
+            }
+
+            row.binary_candidate_query.total_ms =
+                row.binary_candidate_query.encode_ms
+                + row.binary_candidate_query.search_ms;
+            row.total_ms = row.binary_candidate_query.total_ms + row.exact_rerank_ms;
+            if(!dataset.retrieval.queries.empty()) {
+                row.exact_top_k_candidate_coverage =
+                    exact_candidate_coverage_sum
+                    / static_cast<double>(dataset.retrieval.queries.size());
+            }
+            row.qrels_candidate_relevant_coverage = qrels_candidate_relevant_coverage(
+                dataset.retrieval,
+                positive_qrels,
+                candidate_sets
+            );
+            const auto reranked_run = make_retrieval_run(
+                encoder_family + "_reranked_" + std::to_string(bit_count)
+                    + "b_candidates_" + std::to_string(candidate_limit),
+                dataset.retrieval,
+                reranked_hits
+            );
+            const auto metrics = agent_memory::evaluate_retrieval(
+                dataset.retrieval,
+                reranked_run
+            );
+            row.reranked_recall_at_10 =
+                agent_memory::metric_value_at(metrics.recall_at, 10).value_or(0.0);
+            row.reranked_ndcg_at_10 =
+                agent_memory::metric_value_at(metrics.ndcg_at, 10).value_or(0.0);
+            row.reranked_mrr = metrics.mrr;
+            result.rerank.push_back(row);
+        }
+
+        return result;
+    }
+
+    [[nodiscard]] nlohmann::json precomputed_encoder_result_to_json(
+        const agent_memory::PrecomputedEmbeddingEvalDataset& dataset,
+        const PrecomputedExactOracle& oracle,
+        const PrecomputedEncoderResult& result
+    ) {
+        nlohmann::json row;
+        row["encoder_family"] = result.encoder_family;
+        row["encoder_seed"] = result.encoder_seed;
+        row["bit_count"] = result.bit_count;
+        row["encoder"] = {
+            {"encoder_id", result.encoder_info.encoder_id},
+            {"encoder_version", result.encoder_info.encoder_version},
+            {"config_fingerprint", result.encoder_info.config_fingerprint},
+            {"training", encoder_build_metrics_to_json(result.encoder_build)}
+        };
+        row["speed"] = {
+            {"binary_hamming_backend", result.binary_hamming_backend},
+            {"binary_encoder_similarity_backend", result.binary_encoder_similarity_backend},
+            {"encoder_training_ms", result.encoder_build.encoder_training_ms},
+            {"binary_encode_and_build_ms", result.binary_build_ms}
+        };
+        row["index"] = {
+            {"exact_vector_payload_bytes", oracle.exact_payload_bytes},
+            {"binary_signature_payload_bytes", result.binary_payload_bytes},
+            {"payload_compression_ratio_exact_over_binary",
+                result.binary_payload_bytes == 0
+                    ? 0.0
+                    : static_cast<double>(oracle.exact_payload_bytes)
+                        / static_cast<double>(result.binary_payload_bytes)}
+        };
+        row["rerank"] = nlohmann::json::array();
+        for(const auto& candidate : result.rerank) {
+            row["rerank"].push_back({
+                {"candidate_limit", candidate.candidate_limit},
+                {"exact_top_k_candidate_coverage",
+                    candidate.exact_top_k_candidate_coverage},
+                {"qrels_candidate_relevant_coverage",
+                    candidate.qrels_candidate_relevant_coverage},
+                {"reranked_recall_at_10", candidate.reranked_recall_at_10},
+                {"reranked_ndcg_at_10", candidate.reranked_ndcg_at_10},
+                {"reranked_mrr", candidate.reranked_mrr},
+                {"binary_candidate_encode_ms",
+                    candidate.binary_candidate_query.encode_ms},
+                {"binary_candidate_search_ms",
+                    candidate.binary_candidate_query.search_ms},
+                {"exact_rerank_ms", candidate.exact_rerank_ms},
+                {"total_ms", candidate.total_ms},
+                {"mean_query_ms", per_query_ms(
+                    candidate.total_ms,
+                    dataset.retrieval.queries.size()
+                )},
+                {"queries_per_second", queries_per_second(
+                    candidate.total_ms,
+                    dataset.retrieval.queries.size()
+                )},
+                {"total_speedup_vs_exact_index",
+                    candidate.total_ms <= 0.0
+                        ? 0.0
+                        : oracle.exact_query_ms / candidate.total_ms}
+            });
+        }
+        return row;
+    }
+
+    void write_precomputed_binary_rerank_grid_json_report(
+        const fs::path& path,
+        const BenchmarkConfig& config,
+        const agent_memory::PrecomputedEmbeddingEvalDataset& dataset,
+        const PrecomputedExactOracle& oracle,
+        const std::vector<PrecomputedEncoderResult>& reports
+    ) {
+        nlohmann::json document;
+        document["schema_version"] = 1;
+        document["mode"] = std::string{kModePrecomputedEmbeddingBinaryRerankGrid};
+        document["benchmark_name"] = config.benchmark_name;
+        document["dataset_name"] = dataset.retrieval.name;
+        document["dataset_path"] = config.dataset_path.string();
+        document["corpus_size"] = dataset.retrieval.corpus.size();
+        document["query_count"] = dataset.retrieval.queries.size();
+        document["result_limit"] = config.result_limit;
+        document["bit_counts"] = config.bit_counts;
+        document["rerank_candidate_limits"] = config.rerank_candidate_limits;
+        document["encoder_families"] = config.encoder_families;
+        document["encoder_seeds"] = config.encoder_seeds;
+        document["embedding_model"] = {
+            {"model_id", dataset.embedding_model.model_id},
+            {"dimension", dataset.embedding_model.dimension},
+            {"max_tokens", dataset.embedding_model.max_tokens},
+            {"similarity_metric",
+                std::string{agent_memory::to_string(dataset.embedding_model.similarity_metric)}},
+            {"pooling_mode",
+                std::string{agent_memory::to_string(dataset.embedding_model.pooling_mode)}},
+            {"normalized", dataset.embedding_model.normalized}
+        };
+        document["exact_oracle"] = {
+            {"quality", retrieval_metrics_to_json(oracle.qrels_quality)},
+            {"speed", {
+                {"exact_index_build_ms", oracle.exact_build_ms},
+                {"exact_index_query_total_ms", oracle.exact_query_ms},
+                {"exact_index_mean_query_ms", per_query_ms(
+                    oracle.exact_query_ms,
+                    dataset.retrieval.queries.size()
+                )},
+                {"exact_index_queries_per_second", queries_per_second(
+                    oracle.exact_query_ms,
+                    dataset.retrieval.queries.size()
+                )},
+                {"exact_index_similarity_backend", oracle.exact_similarity_backend}
+            }}
+        };
+        document["reports"] = nlohmann::json::array();
+        for(const auto& report : reports) {
+            document["reports"].push_back(precomputed_encoder_result_to_json(
+                dataset,
+                oracle,
+                report
+            ));
+        }
+        document["process"] = {
+            {"peak_resident_set_bytes", peak_resident_set_bytes()}
+        };
+        document["notes"] = nlohmann::json::array({
+            "Precomputed embeddings and qrels are loaded from a frozen JSON fixture; no embedding backend or network call is used.",
+            "Exact oracle quality is evaluated against qrels with the shared RetrievalMetrics pipeline.",
+            "exact_top_k_candidate_coverage measures how much of the exact vector top-K entered the binary candidate set.",
+            "qrels_candidate_relevant_coverage measures how many positively judged qrel documents entered the binary candidate set.",
+            "Reranked quality is measured against qrels after exact float reranking of binary candidates.",
+            "Encoder training uses document vectors only; query embeddings are evaluation input, not training input.",
+            "This mode is intended as a locked real-embedding regression gate, not as a statistically stable production benchmark."
+        });
+        write_text_file(path, document.dump(2) + "\n");
+    }
+
+    int run_precomputed_binary_rerank_grid(BenchmarkConfig config) {
+        const auto dataset =
+            agent_memory::load_precomputed_embedding_dataset_from_json_file(
+                config.dataset_path
+            );
+        config.dataset_name = dataset.retrieval.name;
+        config.document_count = dataset.retrieval.corpus.size();
+        config.query_count = dataset.retrieval.queries.size();
+        config.embedding_dimensions = dataset.embedding_model.dimension;
+        if(config.rerank_candidate_limits.empty()) {
+            config.rerank_candidate_limits = default_rerank_candidate_limits(
+                config.result_limit,
+                config.document_count
+            );
+        }
+        validate_rerank_candidate_limits(config);
+        validate_encoder_families(config);
+
+        const auto oracle = prepare_precomputed_exact_oracle(config, dataset);
+        std::vector<PrecomputedEncoderResult> reports;
+        for(const auto& encoder_family : config.encoder_families) {
+            const std::vector<std::uint32_t> active_encoder_seeds =
+                encoder_family_uses_seed(encoder_family)
+                    ? config.encoder_seeds
+                    : std::vector<std::uint32_t>{0};
+            for(const auto encoder_seed : active_encoder_seeds) {
+                for(const auto bit_count : config.bit_counts) {
+                    if(!encoder_family_supports_bit_count(
+                           encoder_family,
+                           config.embedding_dimensions,
+                           bit_count
+                       )) {
+                        continue;
+                    }
+                    reports.push_back(run_precomputed_encoder_benchmark(
+                        config,
+                        dataset,
+                        oracle,
+                        encoder_family,
+                        encoder_seed,
+                        bit_count
+                    ));
+                }
+            }
+        }
+        if(reports.empty()) {
+            throw std::runtime_error(
+                "precomputed_embedding_binary_rerank_grid produced no reports"
+            );
+        }
+
+        write_precomputed_binary_rerank_grid_json_report(
+            config.output_path,
+            config,
+            dataset,
+            oracle,
+            reports
+        );
+        std::cout << "Precomputed exact qrels Recall@10="
+                  << agent_memory::metric_value_at(
+                         oracle.qrels_quality.recall_at,
+                         10
+                     ).value_or(0.0)
+                  << " nDCG@10="
+                  << agent_memory::metric_value_at(
+                         oracle.qrels_quality.ndcg_at,
+                         10
+                     ).value_or(0.0)
+                  << '\n';
+        std::cout << "JSON output: " << config.output_path.string() << '\n';
+        return 0;
+    }
+
     int run_random_exact(const BenchmarkConfig& config) {
         const auto ingest_start = Clock::now();
         const auto dataset = make_random_exact_dataset(config);
@@ -3182,6 +3899,9 @@ namespace {
         }
         if(config.mode == kModeSyntheticBinaryRerankGrid) {
             return run_binary_rerank_grid(config);
+        }
+        if(config.mode == kModePrecomputedEmbeddingBinaryRerankGrid) {
+            return run_precomputed_binary_rerank_grid(config);
         }
         return run_random_exact(config);
     }
