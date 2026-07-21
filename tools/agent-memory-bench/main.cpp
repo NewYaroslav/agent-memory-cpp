@@ -3252,6 +3252,19 @@ namespace {
                 std::string{agent_memory::to_string(dataset.embedding_model.pooling_mode)}},
             {"normalized", dataset.embedding_model.normalized}
         };
+        if(dataset.embedding_artifact) {
+            const auto& artifact = *dataset.embedding_artifact;
+            document["embedding_artifact"] = {
+                {"generator_id", artifact.generator_id},
+                {"generator_version", artifact.generator_version},
+                {"source_revision", artifact.source_revision},
+                {"projection_kind", artifact.projection_kind},
+                {"config_hash", artifact.config_hash},
+                {"artifact_hash", artifact.artifact_hash}
+            };
+        } else {
+            document["embedding_artifact"] = nullptr;
+        }
         document["exact_oracle"] = {
             {"quality", retrieval_metrics_to_json(oracle.qrels_quality)},
             {"speed", {

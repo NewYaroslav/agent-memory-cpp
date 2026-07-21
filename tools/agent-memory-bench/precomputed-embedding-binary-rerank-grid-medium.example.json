@@ -1,0 +1,16 @@
+{
+  "mode": "precomputed_embedding_binary_rerank_grid",
+  "benchmark_name": "precomputed_embedding_binary_rerank_grid_medium",
+  "dataset_path": "tests/eval/fixtures/precomputed-embedding-medium.json",
+  "output_path": "precomputed-embedding-binary-rerank-grid-medium.json",
+  "result_limit": 5,
+  "bit_counts": [4, 8],
+  "rerank_candidate_limits": [5, 8, 12],
+  "encoder_families": [
+    "random_hyperplane_rademacher",
+    "coordinate_sign",
+    "pca_projection",
+    "itq_rotation_projection"
+  ],
+  "encoder_seeds": [42]
+}

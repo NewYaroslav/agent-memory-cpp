@@ -17,6 +17,14 @@ namespace {
     "pooling_mode": "mean",
     "normalized": true
   },
+  "embedding_artifact": {
+    "generator_id": "agent-memory.fixture.loader-test",
+    "generator_version": "v1",
+    "source_revision": "unit-test",
+    "projection_kind": "semantic_axes_3d",
+    "config_hash": "fixture-config-loader-test",
+    "artifact_hash": "fixture-artifact-loader-test"
+  },
   "corpus": [
     {"id": "doc:a", "title": "A", "text": "alpha"},
     {"id": "doc:b", "title": "B", "text": "beta"}
@@ -71,10 +79,43 @@ int main() {
     if(!dataset.embedding_model.normalized) {
         fail("embedding model normalized flag was not loaded");
     }
+    if(!dataset.embedding_artifact) {
+        fail("embedding artifact provenance was not loaded");
+    }
+    if(dataset.embedding_artifact->generator_id
+       != "agent-memory.fixture.loader-test") {
+        fail("embedding artifact generator id was not loaded");
+    }
+    if(dataset.embedding_artifact->artifact_hash
+       != "fixture-artifact-loader-test") {
+        fail("embedding artifact hash was not loaded");
+    }
     if(dataset.document_embeddings.size() != 2 || dataset.query_embeddings.size() != 1) {
         fail("embedding record counts are wrong");
     }
 
+    {
+        auto dataset_without_artifact =
+            agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                valid_dataset_json()
+            );
+        dataset_without_artifact.embedding_artifact.reset();
+        agent_memory::validate_precomputed_embedding_eval_dataset(
+            dataset_without_artifact
+        );
+    }
+
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.embedding_artifact->artifact_hash.clear();
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "empty embedding artifact hash must be rejected"
+    );
     expect_runtime_error(
         [] {
             auto dataset =
