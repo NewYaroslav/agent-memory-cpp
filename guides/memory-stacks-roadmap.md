@@ -227,6 +227,29 @@ struct ContextBudget {
     size_t evidence_tokens = 256;
 };
 
+enum class ContextTier : uint8_t {
+    Short,   // current session, recent turns, active unresolved events
+    Medium,  // recent summaries, commitments, short-term relationship evidence
+    Long,    // durable facts, older episodes, graph relations, semantic KB
+    Base     // read-only persona, policy, compiled project knowledge
+};
+
+struct ContextTierPolicy {
+    bool enable_short = true;
+    bool enable_medium = true;
+    bool enable_long = true;
+    bool enable_base = true;
+
+    uint64_t short_window_ms = 0;
+    uint64_t medium_window_ms = 0;
+    size_t short_k = 8;
+    size_t medium_k = 12;
+    size_t long_k = 20;
+
+    bool allow_graph_expansion = false;
+    bool allow_compiled_wiki = false;
+};
+
 enum class DenseIndexMode : uint8_t {
     Exact = 0,                      // brute-force float cosine, ground truth
     BinaryCandidateFilter = 1,      // binary filter + float rerank (M1 default)
@@ -295,14 +318,18 @@ struct MemoryProfileSpec {
     bool enable_embedding_meta = false;
     bool enable_compaction = false;
     bool enable_prompt_cache = false;
+    bool enable_context_planner = false;
+    bool enable_encrypted_storage = false;
 
     std::optional<DecayPolicy> decay_policy;
     std::optional<WritePolicy> write_policy;
     std::optional<SpeakerScopePolicy> speaker_policy;
     std::optional<HybridRetrievalConfig> hybrid_config;
     std::optional<ContextBudget> context_budget;
+    std::optional<ContextTierPolicy> context_tier_policy;
     std::optional<RetrievalMode> default_retrieval_mode;
     std::optional<DenseIndexConfig> dense_index_config;
+    std::optional<EncryptionPolicy> encryption_policy;
 
     uint32_t envelope_schema_version = 1;
     uint32_t component_schema_versions[kNumComponentKinds] = {};
@@ -312,6 +339,19 @@ struct MemoryProfileSpec {
 ```
 
 `capabilities` bitmask вычисляется из high-level флагов при `MemoryStack::open()` для единообразия проверок.
+
+`ContextTierPolicy` is a planning overlay, not a storage layout. The same
+`MemoryStack` may satisfy `short`, `medium`, `long`, and `base` tiers through
+recency filters, compiled summaries, graph expansion, and read-only knowledge
+packs. `MemoryAwareContextPlanner` from
+[`runtime-services-roadmap.md`](runtime-services-roadmap.md) chooses which tiers
+are queried for a turn based on urgency, trigger features, latency budget, and
+token budget.
+
+`EncryptionPolicy` is defined in
+[`policies-roadmap.md`](policies-roadmap.md). `enable_encrypted_storage` is an
+opt-in security/storage capability for local deployments and sensitive memory
+profiles; it is not required by default profiles.
 
 ## 7. MemoryStack — runtime API
 

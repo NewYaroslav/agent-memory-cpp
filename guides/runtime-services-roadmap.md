@@ -456,6 +456,68 @@ private:
 - supersede check (bi-temporal).
 - Flush trigger (OnTimer / OnSizeThreshold / OnImportance).
 
+## 5.5. MemoryAwareContextPlanner
+
+`MemoryAwareContextPlanner` is a planned policy service that runs before
+retrieval and before final `ContextBuilder` formatting. It decides how deeply
+the memory stack should be queried for a single turn.
+
+It is useful for live agents where a fast answer may be more important than
+deep recall. The service consumes application-level signals such as:
+
+- incoming event urgency;
+- direct mention / interruption flags;
+- question-like trigger words;
+- explicit recall triggers such as "remember", "before", "yesterday",
+  "history", or "how did we decide";
+- latency budget;
+- token budget;
+- enabled context tiers.
+
+Conceptual API:
+
+```cpp
+struct ContextPlanningInput {
+    std::string raw_query;
+    double urgency = 0.0;
+    bool direct_mention = false;
+    bool background_task = false;
+    uint64_t latency_budget_ms = 0;
+    ContextBudget budget;
+};
+
+struct ContextTierPlan {
+    bool include_short = true;
+    bool include_medium = true;
+    bool include_long = true;
+    bool include_base = true;
+    bool allow_graph_expansion = false;
+    bool allow_compiled_wiki = false;
+    size_t short_k = 8;
+    size_t medium_k = 12;
+    size_t long_k = 20;
+};
+
+class IMemoryAwareContextPlanner {
+public:
+    virtual ~IMemoryAwareContextPlanner() = default;
+    virtual ContextTierPlan plan(const ContextPlanningInput& input) = 0;
+};
+```
+
+Suggested live-agent defaults:
+
+| Situation | Urgency | Context depth |
+|---|---:|---|
+| Direct live mention / interruption | 9-10 | `short + base`, no deep retrieval |
+| User question in chat | 7-8 | `short + medium`, targeted long only if triggered |
+| Ordinary message | 4-6 | `short + medium + capped long` |
+| Reflection / background synthesis | 0-3 | full long retrieval, graph expansion, compiled wiki |
+
+The planner does not replace `HybridRetriever` or `ContextBuilder`. It produces
+the retrieval/context plan that those components execute. Applications may
+override the defaults when correctness requires full recall.
+
 ## 6. Service Lifecycle
 
 ### 6.1. Опциональность
@@ -469,6 +531,7 @@ private:
 | AsyncIndexer | (always on for write perf) | always |
 | WriteGate | (always on if WritePolicy set) | conditional |
 | CompactionWorker | `enable_compaction = true` | opt-in |
+| MemoryAwareContextPlanner | `enable_context_planner = true` | opt-in |
 
 Уточнение по defaults:
 - `PromptPrefixCache` default **ON** для профилей с hybrid retrieval (BasicRag, AgentLTM, QAKnowledgeBase) — provider-side кэш даёт прямую экономию токенов без consistency рисков.
@@ -484,6 +547,7 @@ private:
    - `AsyncIndexer` — всегда.
    - `WriteGate` — если `spec.write_policy` задан.
    - `CompactionWorker` — если `enable_compaction=true`.
+   - `IMemoryAwareContextPlanner` — если `enable_context_planner=true`.
 3. Lifecycle ordering: `IPromptPrefixCache` создаётся ДО первого LLM call; `IResponseCache` создаётся как singleton (даже если выключен) с no-op stub.
 
 ### 6.3. Shutdown
@@ -530,6 +594,8 @@ Application
 IResponseCache.lookup(response_cache_key)  // ТОЛЬКО если opt-in (default OFF)
   ├── hit → return cached response_text
   └── miss (или выключен) → continue
+  ↓
+MemoryAwareContextPlanner.plan(input)  // если opt-in: sets tier/depth/latency plan
   ↓
 HybridRetriever.retrieve(plan)
   ├── LexicalRetriever (per lexical-search-roadmap.md)
@@ -614,6 +680,7 @@ Per memory-stacks-roadmap.md секция 16, конкретизация:
 | 12.5 | `IPromptPrefixCache` (in-memory LRU key dedup) + `AnthropicCacheControlAdapter` |
 | 12.6 | `IResponseCache` stub (default OFF, no-op implementation для safe by default) |
 | M2.x | `IResponseCache` full implementation + MDBX persistence (`response_cache` DBI) |
+| M2.x | `IMemoryAwareContextPlanner` + urgency-gated retrieval depth policy |
 
 ## 10. Open Issues
 

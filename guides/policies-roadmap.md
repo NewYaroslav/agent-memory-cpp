@@ -15,6 +15,46 @@ and model-training opt-out. These are tracked in
 [`affective-memory-roadmap.md`](affective-memory-roadmap.md) ADR-A07 and should
 not be folded into `priority_weight` or ordinary usage statistics.
 
+## 1.1. EncryptionPolicy (planned)
+
+`EncryptionPolicy` is an opt-in storage/security policy for local memory stacks.
+It is especially relevant for affective memory, private conversation history,
+and persisted summaries, but it is not mandatory for every use of
+`agent-memory-cpp`.
+
+The policy should describe authenticated encryption-at-rest without binding the
+whole project to one implementation too early:
+
+```cpp
+enum class EncryptionMode : uint8_t {
+    Disabled,
+    LocalMachineSecret,
+    UserPassword,
+    ExternalKeyProvider
+};
+
+struct EncryptionPolicy {
+    EncryptionMode mode = EncryptionMode::Disabled;
+    std::string aead_scheme = "aes-256-gcm";
+    std::string kdf_scheme = "scrypt";
+    std::string key_id;
+    uint32_t key_version = 0;
+    bool encrypt_artifacts = true;
+    bool encrypt_mdbx_values = false;
+    bool require_authenticated_metadata = true;
+};
+```
+
+Guidance:
+
+- use AEAD encryption so corrupted or tampered ciphertext is rejected;
+- keep key derivation and key storage outside retrieval/indexing code;
+- record scheme and key identity in profile metadata for future rotation;
+- use temp-file plus atomic replace for encrypted file-backed artifacts;
+- rely on MDBX transactions for database durability, while optionally
+  encrypting value payloads before write;
+- do not treat encryption as a substitute for retention, erasure, or consent.
+
 ## 2. DecayPolicy
 
 ### 2.1. DecayMode

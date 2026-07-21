@@ -157,6 +157,54 @@ struct RetentionPolicyComponent {
 Every inferred user-state component should also carry confidence, provenance,
 model/version, observation time, and deletion support.
 
+## ADR-A08 — Sensitive local memory needs optional encryption-at-rest
+
+Affective memory is likely to contain unusually sensitive material: inferred
+emotional state, relationship evidence, conflict episodes, mental-health
+signals, and private conversation summaries. Projects that enable this lane
+should be able to opt into encrypted local persistence.
+
+The memory library should expose encryption as a storage/security capability,
+not as a mandatory behaviour of every profile:
+
+- use authenticated encryption, not unauthenticated ciphertext;
+- keep key derivation and key storage policy outside the retrieval layer;
+- record encryption scheme, key identity, and rotation metadata in profile
+  metadata;
+- support machine-local secrets for local single-user deployments;
+- support user-password or external-KMS key providers for stricter deployments;
+- preserve crash safety for file-backed artifacts through temp-file plus atomic
+  replace where applicable;
+- rely on MDBX transaction durability for database pages, while still allowing
+  encrypted value payloads or encrypted artifact blobs.
+
+AES-256-GCM with a memory-hard password KDF is a reasonable first candidate for
+local encrypted artifacts, but the roadmap should name the capability as AEAD
+encryption-at-rest rather than freezing one crypto construction too early.
+
+Encryption does not replace retention, deletion, provenance, or consent
+policies. It only reduces exposure if local files are copied or inspected
+outside the running process.
+
+## ADR-A09 — Live-agent context depth is urgency-gated
+
+Affective agents often run in low-latency conversations. A direct live-chat
+mention should not pay the same retrieval cost as a background reflection job.
+
+The runtime should provide a policy layer that maps incoming-event urgency,
+trigger features, and latency budget to a memory access plan:
+
+```text
+direct mention / urgent interruption -> short + base context only
+normal user question                 -> short + medium, optional targeted long
+reflective/background task           -> short + medium + long + graph/wiki
+```
+
+This is not a replacement for retrieval. It is a pre-retrieval planning step
+that decides which tiers and retrievers are allowed for this turn. The memory
+library provides the plan/result contracts; the application runtime owns the
+urgency score and the final conversational behaviour.
+
 ## Optional capabilities
 
 These capabilities are opt-in extensions to `AgentLongTermMemory`, not a new
@@ -169,7 +217,9 @@ enum class MemoryCapability : std::uint64_t {
     GoalAttribution   = 1ull << 14,
     OutcomeTracking   = 1ull << 15,
     RelationshipState = 1ull << 16,
-    SensitiveInferencePolicy = 1ull << 17
+    SensitiveInferencePolicy = 1ull << 17,
+    EncryptedLocalStorage = 1ull << 18,
+    UrgencyAwareContextPlanning = 1ull << 19
 };
 ```
 
@@ -359,6 +409,29 @@ inline MemoryProfileSpec AffectiveAgentMemory() {
 This profile is not a universal default. It is for agents that need durable
 relationship and affective episode memory.
 
+## Live-agent context tier overlay
+
+The affective profile should be able to use the same durable stores as ordinary
+agent memory while exposing a latency-oriented context tier overlay:
+
+| Context tier | Intended contents | Typical use |
+|---|---|---|
+| `short` | current session, recent turns, active goals, unresolved immediate events | live response, direct mention, interruption |
+| `medium` | recent episode summaries, active relationship evidence, short-term commitments | ordinary user questions, continuity |
+| `long` | durable facts, older episodes, graph relations, semantic KB | deliberate recall, reflection, planning |
+| `base` | read-only persona, policy, project facts, stable compiled knowledge | always-available grounding |
+
+These are context-planning tiers, not necessarily separate database files. A
+single `MemoryStack` may back several tiers through filters, recency windows,
+compiled summaries, and retrieval budgets.
+
+This gives a clean hybrid:
+
+- live-agent tiers provide low latency and avoid prompt bloat;
+- compiled wiki/base layers provide slow-cycle long-term synthesis and
+  cross-agent reusable knowledge;
+- the runtime planner chooses the depth per turn.
+
 ## Retrieval roadmap
 
 Affect-aware retrieval should start as rerank/evaluator policy over normal
@@ -451,6 +524,17 @@ Add:
 - coping effectiveness statistics;
 - prediction-error aggregation;
 - relationship evidence-chain maintenance.
+
+### E4 — Security and live-context planning
+
+Add optional, profile-gated support for:
+
+- encrypted local artifact/value storage;
+- key identity and rotation metadata;
+- retention/deletion tests for sensitive inferred affect;
+- urgency-aware context planning;
+- short/medium/long/base retrieval tier plans;
+- benchmark traces that report skipped deep retrieval due to latency budget.
 
 ## Non-goals
 
