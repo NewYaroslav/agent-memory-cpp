@@ -95,6 +95,14 @@ Run the ITQ-focused 128D learned-projection fixture:
     tmp/synthetic-binary-rerank-grid-itq-report.json
 ```
 
+Run the precomputed-embedding qrels smoke fixture:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/precomputed-embedding-binary-rerank-grid-smoke.example.json \
+    tmp/precomputed-embedding-binary-rerank-grid-smoke-report.json
+```
+
 Run the high-dimensional synthetic variants when investigating projection
 scaling beyond the default 128D fixture:
 
@@ -156,6 +164,13 @@ zero-training families report `training_source = "none"` and zero
 training/artifact payload.
 Training remains excluded from query timing and binary materialization timing,
 but the cold-start cost is visible in the report.
+
+The `precomputed_embedding_binary_rerank_grid` mode uses the same encoder
+families and candidate-rerank structure, but loads frozen document/query
+embeddings and qrels from JSON instead of generating synthetic vectors. It is
+intended for deterministic real-embedding regression gates: exact-vector oracle
+and reranked binary results are both evaluated with the shared qrels metric
+pipeline, while embedding generation remains outside the C++ test run.
 
 The two exact baselines answer different questions:
 

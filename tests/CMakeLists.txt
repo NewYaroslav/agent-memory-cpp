@@ -163,6 +163,22 @@ if(AGENT_MEMORY_ENABLE_JSON)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/eval
     )
 
+    add_executable(agent_memory_precomputed_embedding_dataset_loader_test
+        eval/precomputed_embedding_dataset_loader_test.cpp
+    )
+
+    target_link_libraries(agent_memory_precomputed_embedding_dataset_loader_test
+        PRIVATE
+            agent_memory::agent_memory
+            agent_memory::json
+    )
+
+    add_test(
+        NAME agent_memory_precomputed_embedding_dataset_loader_test
+        COMMAND agent_memory_precomputed_embedding_dataset_loader_test
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/eval
+    )
+
     add_executable(agent_memory_synthetic_sweep_test
         eval/synthetic_sweep_test.cpp
     )

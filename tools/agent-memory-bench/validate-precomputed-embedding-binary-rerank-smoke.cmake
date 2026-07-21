@@ -1,0 +1,130 @@
+foreach(required_var
+    AGENT_MEMORY_BENCH_EXE
+    AGENT_MEMORY_BENCH_CONFIG
+    AGENT_MEMORY_BENCH_OUTPUT
+    AGENT_MEMORY_BENCH_WORKDIR
+)
+    if(NOT DEFINED ${required_var})
+        message(FATAL_ERROR "${required_var} must be defined")
+    endif()
+endforeach()
+
+execute_process(
+    COMMAND
+        "${AGENT_MEMORY_BENCH_EXE}"
+        "${AGENT_MEMORY_BENCH_CONFIG}"
+        "${AGENT_MEMORY_BENCH_OUTPUT}"
+    WORKING_DIRECTORY "${AGENT_MEMORY_BENCH_WORKDIR}"
+    RESULT_VARIABLE bench_result
+    OUTPUT_VARIABLE bench_stdout
+    ERROR_VARIABLE bench_stderr
+)
+if(NOT bench_result EQUAL 0)
+    message(STATUS "benchmark stdout:\n${bench_stdout}")
+    message(STATUS "benchmark stderr:\n${bench_stderr}")
+    message(FATAL_ERROR "precomputed embedding binary rerank smoke benchmark failed")
+endif()
+
+file(READ "${AGENT_MEMORY_BENCH_OUTPUT}" report_json)
+string(JSON schema_version GET "${report_json}" schema_version)
+if(NOT schema_version EQUAL 1)
+    message(FATAL_ERROR "unexpected schema_version: ${schema_version}")
+endif()
+
+string(JSON mode GET "${report_json}" mode)
+if(NOT mode STREQUAL "precomputed_embedding_binary_rerank_grid")
+    message(FATAL_ERROR "unexpected mode: ${mode}")
+endif()
+
+string(JSON corpus_size GET "${report_json}" corpus_size)
+string(JSON query_count GET "${report_json}" query_count)
+if(NOT corpus_size EQUAL 6 OR NOT query_count EQUAL 3)
+    message(FATAL_ERROR "unexpected precomputed smoke dataset dimensions")
+endif()
+
+string(JSON exact_recall GET "${report_json}" exact_oracle quality recall_at_10)
+string(JSON exact_ndcg GET "${report_json}" exact_oracle quality ndcg_at_10)
+if(NOT exact_recall EQUAL 1 OR NOT exact_ndcg EQUAL 1)
+    message(FATAL_ERROR "exact oracle must recover all qrels in the smoke fixture")
+endif()
+
+string(JSON report_count LENGTH "${report_json}" reports)
+if(NOT report_count EQUAL 5)
+    message(FATAL_ERROR "expected 5 encoder/bit reports, got ${report_count}")
+endif()
+
+set(saw_random_4 FALSE)
+set(saw_random_8 FALSE)
+set(saw_coordinate_4 FALSE)
+set(saw_pca_4 FALSE)
+set(saw_itq_4 FALSE)
+math(EXPR last_report "${report_count} - 1")
+foreach(report_index RANGE 0 ${last_report})
+    string(JSON encoder_family GET
+        "${report_json}" reports ${report_index} encoder_family
+    )
+    string(JSON bit_count GET "${report_json}" reports ${report_index} bit_count)
+    if(encoder_family STREQUAL "random_hyperplane_rademacher")
+        if(bit_count EQUAL 4)
+            set(saw_random_4 TRUE)
+        elseif(bit_count EQUAL 8)
+            set(saw_random_8 TRUE)
+        else()
+            message(FATAL_ERROR "unexpected random-hyperplane bit_count")
+        endif()
+    elseif(encoder_family STREQUAL "coordinate_sign")
+        if(NOT bit_count EQUAL 4)
+            message(FATAL_ERROR "coordinate_sign must emit 4 bits for this fixture")
+        endif()
+        set(saw_coordinate_4 TRUE)
+    elseif(encoder_family STREQUAL "pca_projection")
+        if(NOT bit_count EQUAL 4)
+            message(FATAL_ERROR "PCA must only report supported bit_count")
+        endif()
+        set(saw_pca_4 TRUE)
+    elseif(encoder_family STREQUAL "itq_rotation_projection")
+        if(NOT bit_count EQUAL 4)
+            message(FATAL_ERROR "ITQ must only report supported bit_count")
+        endif()
+        set(saw_itq_4 TRUE)
+    else()
+        message(FATAL_ERROR "unexpected encoder_family: ${encoder_family}")
+    endif()
+
+    string(JSON rerank_count LENGTH "${report_json}" reports ${report_index} rerank)
+    if(NOT rerank_count EQUAL 3)
+        message(FATAL_ERROR "each report must contain 3 candidate-limit rows")
+    endif()
+
+    string(JSON full_candidate_limit GET
+        "${report_json}" reports ${report_index} rerank 2 candidate_limit
+    )
+    string(JSON full_exact_coverage GET
+        "${report_json}" reports ${report_index} rerank 2
+        exact_top_k_candidate_coverage
+    )
+    string(JSON full_qrels_coverage GET
+        "${report_json}" reports ${report_index} rerank 2
+        qrels_candidate_relevant_coverage
+    )
+    string(JSON full_recall GET
+        "${report_json}" reports ${report_index} rerank 2 reranked_recall_at_10
+    )
+    string(JSON full_ndcg GET
+        "${report_json}" reports ${report_index} rerank 2 reranked_ndcg_at_10
+    )
+    if(NOT full_candidate_limit EQUAL 6
+       OR NOT full_exact_coverage EQUAL 1
+       OR NOT full_qrels_coverage EQUAL 1
+       OR NOT full_recall EQUAL 1
+       OR NOT full_ndcg EQUAL 1)
+        message(FATAL_ERROR
+            "full-corpus candidate row must recover exact top-k and qrels quality"
+        )
+    endif()
+endforeach()
+
+if(NOT saw_random_4 OR NOT saw_random_8 OR NOT saw_coordinate_4
+   OR NOT saw_pca_4 OR NOT saw_itq_4)
+    message(FATAL_ERROR "precomputed smoke report is missing an expected encoder row")
+endif()

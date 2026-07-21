@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "name": "precomputed-embedding-tiny",
+  "embedding_model": {
+    "model_id": "fixture-dense-4d-v1",
+    "dimension": 4,
+    "similarity_metric": "cosine",
+    "pooling_mode": "mean",
+    "normalized": true
+  },
+  "corpus": [
+    {"id": "doc:alpha", "title": "Alpha", "text": "alpha topic"},
+    {"id": "doc:alpha-near", "title": "Alpha near", "text": "alpha neighbor"},
+    {"id": "doc:beta", "title": "Beta", "text": "beta topic"},
+    {"id": "doc:gamma", "title": "Gamma", "text": "gamma topic"},
+    {"id": "doc:delta", "title": "Delta", "text": "delta topic"},
+    {"id": "doc:alpha-beta", "title": "Alpha beta", "text": "mixed alpha beta"}
+  ],
+  "queries": [
+    {"id": "q:alpha", "text": "alpha query", "query_type": "semantic", "limit": 3},
+    {"id": "q:beta", "text": "beta query", "query_type": "semantic", "limit": 3},
+    {"id": "q:gamma", "text": "gamma query", "query_type": "semantic", "limit": 3}
+  ],
+  "judgments": [
+    {"query_id": "q:alpha", "item_id": "doc:alpha", "relevance_grade": 3},
+    {"query_id": "q:alpha", "item_id": "doc:alpha-near", "relevance_grade": 2},
+    {"query_id": "q:alpha", "item_id": "doc:alpha-beta", "relevance_grade": 1},
+    {"query_id": "q:beta", "item_id": "doc:beta", "relevance_grade": 3},
+    {"query_id": "q:beta", "item_id": "doc:alpha-beta", "relevance_grade": 1},
+    {"query_id": "q:gamma", "item_id": "doc:gamma", "relevance_grade": 3}
+  ],
+  "document_embeddings": [
+    {"id": "doc:alpha", "vector": [1.0, 0.0, 0.0, 0.0]},
+    {"id": "doc:alpha-near", "vector": [0.98, 0.2, 0.0, 0.0]},
+    {"id": "doc:beta", "vector": [0.0, 1.0, 0.0, 0.0]},
+    {"id": "doc:gamma", "vector": [0.0, 0.0, 1.0, 0.0]},
+    {"id": "doc:delta", "vector": [0.0, 0.0, 0.0, 1.0]},
+    {"id": "doc:alpha-beta", "vector": [0.70710677, 0.70710677, 0.0, 0.0]}
+  ],
+  "query_embeddings": [
+    {"id": "q:alpha", "vector": [1.0, 0.0, 0.0, 0.0]},
+    {"id": "q:beta", "vector": [0.0, 1.0, 0.0, 0.0]},
+    {"id": "q:gamma", "vector": [0.0, 0.0, 1.0, 0.0]}
+  ]
+}

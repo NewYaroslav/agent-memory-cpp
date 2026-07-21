@@ -13,6 +13,7 @@
 
 #if defined(AGENT_MEMORY_ENABLE_JSON) && AGENT_MEMORY_ENABLE_JSON
 #include "eval/DatasetLoader.hpp"
+#include "eval/PrecomputedEmbeddingDataset.hpp"
 #endif
 
 #endif

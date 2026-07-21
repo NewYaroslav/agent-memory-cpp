@@ -47,12 +47,12 @@ add_library(agent_memory STATIC
     src/agent_memory/index/BinarySignatureInfo.cpp
     src/agent_memory/index/CoordinateSignBinaryEncoder.cpp
     src/agent_memory/index/ExactVectorIndex.cpp
-     src/agent_memory/index/FlatBinarySignatureIndex.cpp
-     src/agent_memory/index/IBinarySignatureEncoder.cpp
-     src/agent_memory/index/IBinarySignatureIndex.cpp
-     src/agent_memory/index/ItqRotationBinaryEncoder.cpp
-     src/agent_memory/index/IVectorIndex.cpp
-     src/agent_memory/index/LearnedProjectionBinaryEncoder.cpp
+    src/agent_memory/index/FlatBinarySignatureIndex.cpp
+    src/agent_memory/index/IBinarySignatureEncoder.cpp
+    src/agent_memory/index/IBinarySignatureIndex.cpp
+    src/agent_memory/index/ItqRotationBinaryEncoder.cpp
+    src/agent_memory/index/IVectorIndex.cpp
+    src/agent_memory/index/LearnedProjectionBinaryEncoder.cpp
     src/agent_memory/index/MultiProbeHammingIndex.cpp
     src/agent_memory/index/PcaProjectionBinaryEncoder.cpp
     src/agent_memory/index/RandomizedHadamardBinaryEncoder.cpp
@@ -130,6 +130,7 @@ if(AGENT_MEMORY_ENABLE_JSON)
     target_sources(agent_memory
         PRIVATE
             src/agent_memory/eval/DatasetLoader.cpp
+            src/agent_memory/eval/PrecomputedEmbeddingDataset.cpp
     )
     target_link_libraries(agent_memory
         PRIVATE
@@ -173,6 +174,17 @@ if(AGENT_MEMORY_BUILD_TESTS)
                 -DAGENT_MEMORY_BENCH_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/synthetic-binary-rerank-grid-ctest.json
                 -DAGENT_MEMORY_BENCH_WORKDIR=${CMAKE_CURRENT_SOURCE_DIR}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-binary-rerank-grid-smoke.cmake
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        add_test(
+            NAME agent_memory_benchmark_cli_precomputed_embedding_binary_rerank_grid
+            COMMAND
+                ${CMAKE_COMMAND}
+                -DAGENT_MEMORY_BENCH_EXE=$<TARGET_FILE:agent-memory-bench>
+                -DAGENT_MEMORY_BENCH_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/precomputed-embedding-binary-rerank-grid-smoke.example.json
+                -DAGENT_MEMORY_BENCH_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/precomputed-embedding-binary-rerank-grid-ctest.json
+                -DAGENT_MEMORY_BENCH_WORKDIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-precomputed-embedding-binary-rerank-smoke.cmake
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
         add_test(
