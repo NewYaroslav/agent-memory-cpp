@@ -874,9 +874,113 @@ excellent.
 
 - Repeat the zero-training family grid on 384/768/1536-dimensional real
   embeddings and qrels.
-- Add learned global projection/ITQ-like encoder and compare it against the
-  zero-training winners at the same bit/candidate budgets.
+- Evaluate stronger learned global projection families, such as PCA/ITQ-style
+  rotation or supervised/data-dependent hashing, against the zero-training
+  winners at the same bit/candidate budgets.
 - Test local projection only behind an explicit global routing stage, because
   local code spaces are not globally comparable.
 - Add a production-shaped candidate store that counts persisted float-vector
   bytes fetched during rerank.
+
+## 2026-07-20 continuation: PR60 global learned pair-difference baseline
+
+### Question
+
+Does a simple dependency-free learned global projection improve candidate
+coverage over the zero-training encoders when trained only on document vectors?
+
+This experiment is intentionally a first learned baseline, not a final learned
+hashing method. The encoder trains one global artifact per
+`data_seed x encoder_seed x bit_count` from document vectors only, then encodes
+both documents and queries with that same artifact. Evaluation queries are not
+used as training input.
+
+### Configuration
+
+- PR context: PR #60 stacked on PR #59.
+- Command:
+
+  ```bash
+  ./build-codex-pr59/tools/agent-memory-bench/agent-memory-bench \
+      tools/agent-memory-bench/synthetic-binary-rerank-grid.example.json \
+      tmp/synthetic-binary-rerank-grid-pr60.json
+  ```
+
+- 10,000 documents and 100 queries;
+- 128-dimensional clustered normalized vectors;
+- data seed `42`;
+- encoder families: `random_hyperplane_rademacher`, `coordinate_sign`,
+  `randomized_hadamard_projection`, and
+  `learned_pair_difference_projection`;
+- encoder seeds `1001` and `1002` for seedable families;
+- signature widths `128`, `256`, `512`, and `1024` bits;
+- candidate limits `100`, `500`, `1000`, and `2000`;
+- five binary timing repeats per encoder seed;
+- seven timing repeats for each exact baseline.
+
+Encoder artifacts are cached within the benchmark grid for each
+`family x encoder_seed x bit_count`, so binary timing repeats do not retrain the
+same artifact. Training time is not included in the query-time numbers.
+
+### Exact-baseline result
+
+| Baseline | Median for 100 queries | Samples, ms |
+| --- | ---: | --- |
+| Current `ExactVectorIndex` | 59.9260 ms | 58.8863, 60.3179, 59.3402, 60.9495, 59.9260, 61.2679, 59.7992 |
+| Contiguous exact cosine | 29.8173 ms | 28.6337, 28.4074, 29.8748, 30.0288, 29.6081, 29.9143, 29.8173 |
+
+Each cell below is
+`exact-top-k coverage / top-1 agreement / speedup vs current index / speedup vs contiguous exact`.
+
+### Learned pair-difference projection
+
+| Bits | 100 candidates | 500 candidates | 1000 candidates | 2000 candidates |
+| ---: | --- | --- | --- | --- |
+| 128 | 0.3180 / 0.415 / 6.58x / 3.27x | 0.6160 / 0.750 / 2.82x / 1.40x | 0.7705 / 0.880 / 1.61x / 0.80x | 0.8940 / 0.965 / 0.85x / 0.42x |
+| 256 | 0.4945 / 0.655 / 5.72x / 2.84x | 0.8250 / 0.950 / 2.63x / 1.31x | 0.9210 / 0.985 / 1.59x / 0.79x | 0.9785 / 1.000 / 0.85x / 0.42x |
+| 512 | 0.7100 / 0.910 / 4.03x / 2.00x | 0.9450 / 0.995 / 2.26x / 1.12x | 0.9885 / 1.000 / 1.43x / 0.71x | 0.9985 / 1.000 / 0.83x / 0.41x |
+| 1024 | 0.8630 / 0.985 / 2.27x / 1.13x | 0.9910 / 1.000 / 1.56x / 0.78x | 0.9975 / 1.000 / 1.15x / 0.57x | 1.0000 / 1.000 / 0.72x / 0.36x |
+
+### Key comparison against previous winners
+
+| Config | Learned pair-difference | Random hyperplane | Randomized Hadamard |
+| --- | --- | --- | --- |
+| 256 bits x 500 candidates | 0.8250 coverage, 1.31x vs contiguous | 0.8260 coverage, 1.31x vs contiguous | 0.9390 coverage, 1.33x vs contiguous |
+| 512 bits x 500 candidates | 0.9450 coverage, 1.12x vs contiguous | 0.9595 coverage, 1.13x vs contiguous | 0.9895 coverage, 1.15x vs contiguous |
+| 1024 bits x 100 candidates | 0.8630 coverage, 1.13x vs contiguous | 0.9010 coverage, 1.12x vs contiguous | 0.9805 coverage, 1.24x vs contiguous |
+
+### Interpretation
+
+The simple learned pair-difference encoder does not beat the structured
+zero-training Hadamard baseline in this fixture. At `256 bits x 500 candidates`
+it is roughly tied with independent random hyperplanes and clearly behind
+Randomized Hadamard. At `512` and `1024` bits it becomes useful as a binary
+candidate filter, but still remains weaker than Hadamard at the same
+candidate budget.
+
+This is still a useful negative result: merely making `R` data-dependent is not
+enough. The current trainer learns directions from deterministic farthest
+pairs and median thresholds, but it does not optimize quantization loss,
+balance all bits jointly, decorrelate bits, or use relevance supervision.
+
+The practical system conclusion remains unchanged:
+
+- binary codes are useful as a candidate filter plus exact dense rerank;
+- direct binary top-k is still not the final ranker;
+- `500` candidates is still the most interesting speed/quality band for this
+  synthetic 128D fixture;
+- `2000` candidates recover excellent quality but usually lose the
+  compute-oriented speedup;
+- stronger learned hashing should be compared against Randomized Hadamard, not
+  only against random hyperplanes.
+
+### Follow-up experiments
+
+- Add PCA/ITQ-style global learned projection with explicit validation split
+  and bit-health diagnostics.
+- Evaluate supervised or metric-aware learned hashing only after defining
+  train/test qrels and leakage rules.
+- Repeat the grid on real 384/768/1536-dimensional embeddings; the 128D
+  synthetic result is directional, not a production decision.
+- Keep local projection experiments behind an explicit global router, because
+  local code spaces are not globally comparable.
