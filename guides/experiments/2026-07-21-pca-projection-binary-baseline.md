@@ -114,13 +114,14 @@ PCA + ITQ-style rotation, supervised/data-dependent hashing, or an autoencoder.
 - Two encoder seeds.
 - 128D only.
 - PCA supports only `bit_count <= input_dimension`.
-- PCA training time is not reported separately yet; query/build timings exclude
+- The original PR #62 run did not report PCA training time separately;
+  PR #63 adds `encoder_training_ms` and keeps query/build timings excluding
   training cost.
 - No real embeddings or qrels.
 
 ## Follow-up
 
-- Implement benchmark fields for learned training cost:
+- Use the PR #63 benchmark training fields when comparing learned encoders:
   `encoder_training_ms`, `training_vector_count`, and artifact byte size.
 - Add PCA + ITQ-style rotation as a separately named encoder family.
 - Run real-embedding/qrels experiments before making production choices.
