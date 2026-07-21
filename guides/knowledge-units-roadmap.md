@@ -529,6 +529,12 @@ DBI `compiled_article_payloads`. Включается через `enable_compile
 
 Контракты будут определены, когда соответствующие use-cases материализуются (M2+).
 
+`Decision` also becomes relevant for affective-agent memory once action,
+coping, outcome, and prediction-error payloads stabilize. See
+[`affective-memory-roadmap.md`](affective-memory-roadmap.md) for the optional
+`ActionOutcomeComponent` direction; it is not part of the base KnowledgeUnit
+contract yet.
+
 ### 5.8. Custom (escape hatch)
 
 ```cpp
@@ -539,6 +545,11 @@ DBI `compiled_article_payloads`. Включается через `enable_compile
 ```
 
 Используется для экспериментальных типов до добавления dedicated payload. Custom unit обязан нести `KnowledgeUnitId`, `KnowledgeUnitKind`, `SourceRef[]`, lifecycle fields и проходит стандартные validation rules. Custom payload хранится в `metadata_typed["payload"]` через typed value (variant).
+
+The affective-memory roadmap uses this `Custom` escape hatch for E0
+experiments with appraisal, affect snapshots, goal impacts, action outcomes,
+salience, and relationship evidence before any dedicated component schema is
+frozen.
 
 ## 6. Lifecycle FSM
 

@@ -165,6 +165,18 @@ enum class MemoryCapability : uint64_t {
 using CapabilitySet = std::underlying_type_t<MemoryCapability>;
 ```
 
+Optional affective-agent capabilities are intentionally not part of the default
+baseline above. They are tracked separately in
+[`affective-memory-roadmap.md`](affective-memory-roadmap.md) as an overlay on
+`AgentLongTermMemory`: `AffectiveEpisodes`, `GoalAttribution`,
+`OutcomeTracking`, `RelationshipState`, and `SensitiveInferencePolicy`.
+
+General cross-cutting opt-ins such as encrypted local storage and context
+planning are not affective capabilities. They are represented by
+`enable_encrypted_storage`/`EncryptionPolicy` and
+`enable_context_planner`/`ContextTierPolicy` in `MemoryProfileSpec` because
+ordinary RAG and agent-memory profiles may use them too.
+
 ### 6.2. Политики
 
 ```cpp
@@ -219,6 +231,29 @@ struct ContextBudget {
     size_t graph_tokens = 512;
     size_t summary_tokens = 512;
     size_t evidence_tokens = 256;
+};
+
+enum class ContextTier : uint8_t {
+    Short,   // current session, recent turns, active unresolved events
+    Medium,  // recent summaries, commitments, short-term relationship evidence
+    Long,    // durable facts, older episodes, graph relations, semantic KB
+    Base     // addressable persona, policy, compiled project knowledge
+};
+
+struct ContextTierPolicy {
+    bool enable_short = true;
+    bool enable_medium = true;
+    bool enable_long = true;
+    bool enable_base = true;
+
+    std::optional<uint64_t> short_window_ms;
+    std::optional<uint64_t> medium_window_ms;
+    size_t short_k = 8;
+    size_t medium_k = 12;
+    size_t long_k = 20;
+
+    bool allow_graph_expansion = false;
+    bool allow_compiled_wiki = false;
 };
 
 enum class DenseIndexMode : uint8_t {
@@ -289,14 +324,18 @@ struct MemoryProfileSpec {
     bool enable_embedding_meta = false;
     bool enable_compaction = false;
     bool enable_prompt_cache = false;
+    bool enable_context_planner = false;
+    bool enable_encrypted_storage = false;
 
     std::optional<DecayPolicy> decay_policy;
     std::optional<WritePolicy> write_policy;
     std::optional<SpeakerScopePolicy> speaker_policy;
     std::optional<HybridRetrievalConfig> hybrid_config;
     std::optional<ContextBudget> context_budget;
+    std::optional<ContextTierPolicy> context_tier_policy;
     std::optional<RetrievalMode> default_retrieval_mode;
     std::optional<DenseIndexConfig> dense_index_config;
+    std::optional<EncryptionPolicy> encryption_policy;
 
     uint32_t envelope_schema_version = 1;
     uint32_t component_schema_versions[kNumComponentKinds] = {};
@@ -306,6 +345,24 @@ struct MemoryProfileSpec {
 ```
 
 `capabilities` bitmask вычисляется из high-level флагов при `MemoryStack::open()` для единообразия проверок.
+
+`ContextTierPolicy` is a planning overlay, not a storage layout. The same
+`MemoryStack` may satisfy `short`, `medium`, `long`, and `base` tiers through
+recency filters, compiled summaries, graph expansion, and read-only knowledge
+packs. `MemoryAwareContextPlanner` from
+[`runtime-services-roadmap.md`](runtime-services-roadmap.md) chooses which tiers
+are queried for a turn based on urgency, trigger features, latency budget, and
+token budget.
+
+`Base` is always addressable, not always fully injected. `allow_compiled_wiki`
+controls whether large compiled knowledge packs may be queried or cached for a
+turn; a small immutable system prefix can remain enabled even when compiled
+wiki expansion is disabled.
+
+`EncryptionPolicy` is defined in
+[`policies-roadmap.md`](policies-roadmap.md). `enable_encrypted_storage` is an
+opt-in security/storage capability for local deployments and sensitive memory
+profiles; it is not required by default profiles.
 
 ## 7. MemoryStack — runtime API
 

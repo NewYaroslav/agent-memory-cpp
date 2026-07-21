@@ -218,6 +218,12 @@ does not replace them:
   [`guides/resource-reindexing.md`](resource-reindexing.md); the
   knowledge base roadmap extends the manifest with new
   `DerivedRecordKind` variants for the new unit kinds.
+- Optional affective-agent memory remains an overlay, not a core emotion
+  runtime. [`guides/affective-memory-roadmap.md`](affective-memory-roadmap.md)
+  defines how persisted appraisal, affect snapshots, goal impacts, outcomes,
+  salience, relationship evidence, sensitive-inference policies, encrypted
+  local persistence, and urgency-aware context planning can be added while
+  keeping live affect dynamics in a sibling runtime controller.
 
 LLM contextualization, cross-encoder rerank, hybrid chunkers, ASR,
 VLM document parsing, hosted vector databases, Python bindings, and

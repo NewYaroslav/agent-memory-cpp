@@ -9,6 +9,129 @@
 - Что описывает: DecayPolicy (anti-loop, забывание, soft-suppression), WritePolicy (trigger, dedupe, importance), SpeakerScopePolicy (multi-user фильтрация), RetrievalMode (associative/targeted/hybrid), HybridRetrievalConfig (RRF/weighted/learned).
 - Cross-references: memory-stacks-roadmap.md (ADR-008, ADR-009), knowledge-units-roadmap.md (SoftSuppressed lifecycle), knowledge-base-roadmap.md (DecayAwareRetriever, AntiLoopCooldown).
 
+Sensitive affective inferences add policy requirements beyond generic
+decay/write rules: provenance, confidence, retention, personalization consent,
+and model-training opt-out. These are tracked in
+[`affective-memory-roadmap.md`](affective-memory-roadmap.md) ADR-A07 and should
+not be folded into `priority_weight` or ordinary usage statistics.
+
+## 1.1. EncryptionPolicy (planned)
+
+`EncryptionPolicy` is an opt-in storage/security policy for local memory stacks.
+It is especially relevant for affective memory, private conversation history,
+and persisted summaries, but it is not mandatory for every use of
+`agent-memory-cpp`.
+
+The policy should describe authenticated encryption-at-rest without binding the
+whole project to one implementation too early:
+
+```cpp
+enum class KeyProviderKind : uint8_t {
+    None,
+    MachineLocal,
+    UserPassword,
+    ExternalKms
+};
+
+enum class EncryptionScope : uint8_t {
+    Disabled,
+    ArtifactsOnly,
+    SensitivePayloadValues,
+    AllValuePayloads,
+    ExternalVolumeEncryption
+};
+
+struct EncryptionPolicy {
+    EncryptionScope scope = EncryptionScope::Disabled;
+    KeyProviderKind key_provider = KeyProviderKind::None;
+    std::string aead_scheme = "aes-256-gcm";
+    std::string kdf_scheme = "argon2id";
+    std::string key_id;
+    uint32_t key_version = 0;
+    bool require_authenticated_metadata = true;
+};
+
+struct EncryptedRecordHeader {
+    std::string scheme_id;
+    std::string key_id;
+    uint32_t key_version = 0;
+    ByteArray nonce;
+    ByteArray salt;
+    ByteArray authentication_tag;
+    uint32_t plaintext_size = 0;
+    uint32_t schema_version = 0;
+};
+```
+
+Guidance:
+
+- use AEAD encryption so corrupted or tampered ciphertext is rejected;
+- keep key derivation and key storage outside retrieval/indexing code;
+- record scheme and key identity in profile metadata for future rotation;
+- for AES-GCM, never reuse a nonce with the same key; use a reliable CSPRNG
+  96-bit nonce or a proven unique counter/record-identity construction;
+- bind ciphertext to its record through Additional Authenticated Data such as
+  `scope_id`, `unit_id`, component kind, artifact type, and schema version;
+- verify the authentication tag before deserializing plaintext;
+- allow several `key_version` values during key rotation;
+- use temp-file plus atomic replace for encrypted file-backed artifacts;
+- distinguish atomic visibility from durable persistence: durable file-backed
+  artifacts normally need temp-file write, file flush, atomic replace, and
+  parent-directory flush where the platform exposes it;
+- rely on MDBX transactions for database durability, while optionally
+  encrypting value payloads before write;
+- document which indexes and metadata remain plaintext for each scope;
+- do not treat encryption as a substitute for retention, erasure, or consent.
+
+Threat model:
+
+| Threat | Expected protection |
+|---|---|
+| Copied encrypted artifact or DB value without key material | Protected by AEAD if nonce/key rules hold |
+| Copied whole user profile including ordinary files | Protected only if the key is in an OS-backed vault or external provider |
+| Code already running as the user | Not protected by local encryption alone |
+| Root/admin compromise | Out of scope for local software-only encryption |
+
+Machine-local keys should mean OS-backed storage such as Windows DPAPI, macOS
+Keychain, Linux Secret Service/keyring, TPM-backed keys, or an equivalent
+credential vault. A secret file stored next to the database is not sufficient
+for the "whole profile copied" threat.
+
+Encrypted values are not the same as an encrypted database. DBI names, key
+ordering, record counts, payload sizes, timestamps, update frequency, access
+patterns, and some secondary indexes may remain visible unless the deployment
+uses external volume/database encryption or redesigns the index layout.
+
+Password-derived keys should use Argon2id as the preferred KDF, or scrypt where
+Argon2id is unavailable. KDF parameters (`memory_cost`, `time_cost`,
+`parallelism`, `salt`, and `kdf_version`) are part of the encrypted record or
+profile metadata. Plain `SHA-256(password)` is not an acceptable password KDF.
+
+Validation matrix:
+
+| Scope / provider combination | Validity |
+|---|---|
+| `EncryptionScope::Disabled` | requires `KeyProviderKind::None` |
+| `ArtifactsOnly`, `SensitivePayloadValues`, `AllValuePayloads` | require `key_provider != None` |
+| `KeyProviderKind::UserPassword` | requires a versioned password KDF and salt |
+| `MachineLocal` or `ExternalKms` | must not require a password KDF for normal operation |
+| `ExternalVolumeEncryption` | requires `KeyProviderKind::None`; library does not create `EncryptedRecordHeader`; deployment owns encryption and keys |
+| any encrypted payload scope with `KeyProviderKind::None` | invalid |
+
+## 1.2. Crypto references
+
+- RFC 5116 — Authenticated Encryption with Associated Data (AEAD):
+  https://datatracker.ietf.org/doc/html/rfc5116
+- NIST SP 800-38D — GCM and GMAC:
+  https://csrc.nist.gov/pubs/sp/800/38/d/final
+- RFC 9106 — Argon2 memory-hard function:
+  https://datatracker.ietf.org/doc/rfc9106/
+- RFC 7914 — scrypt password-based key derivation:
+  https://datatracker.ietf.org/doc/html/rfc7914
+- RFC 8452 — AES-GCM-SIV nonce-misuse-resistant AEAD, useful if nonce
+  uniqueness cannot be guaranteed by design:
+  https://datatracker.ietf.org/doc/html/rfc8452
+
 ## 2. DecayPolicy
 
 ### 2.1. DecayMode
