@@ -419,8 +419,8 @@ Additional embedding-adapter techniques from the decoder-as-embedder lane:
   NV-Embed.]
 - **Instruction-aware embeddings.** Instruct embedders can condition
   query/document vectors on task instructions. Persist the instruction/prompt
-  identity as part of projection provenance before mixing such vectors with
-  ordinary embeddings.
+  identity as part of embedding and downstream projection provenance before
+  mixing such vectors with ordinary embeddings.
 - **Synthetic domain fine-tuning.** LLM-generated query-positive pairs,
   baseline filtering, hard-negative mining, and LoRA fine-tuning are promising
   for narrow domains, but they are offline training workflow tasks. Evaluation
@@ -952,8 +952,9 @@ being enabled in a production profile.
     текст. Нужен ablation: Original, SyntheticQuestions, ContextualPrefix,
     Both.
 
-14. **Decoder/instruction-aware embedding adapter evaluation.** Qwen/E5/NV-style
-    decoder embedders, LLM2Vec-style conversion, latent pooling, and
+14. **Decoder/instruction-aware embedding adapter evaluation.** Qwen/NV-style
+    decoder embedders, E5-style encoder embedders, LLM2Vec-style conversion,
+    latent pooling, and
     instruction-conditioned embeddings need an adapter-level benchmark against
     current encoder embeddings. Record prompt/instruction identity and synthetic
     fine-tuning provenance before storing or mixing vectors.
