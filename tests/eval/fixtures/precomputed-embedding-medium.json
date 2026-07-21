@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "name": "precomputed-embedding-medium",
+  "embedding_model": {
+    "model_id": "fixture-semantic-axis-8d-v1",
+    "dimension": 8,
+    "similarity_metric": "cosine",
+    "pooling_mode": "mean",
+    "normalized": true
+  },
+  "embedding_artifact": {
+    "generator_id": "agent-memory.fixture.semantic-axis",
+    "generator_version": "v1",
+    "source_revision": "hand-authored:2026-07-22",
+    "projection_kind": "semantic_axes_8d",
+    "config_hash": "sha256:aabeafaa90564c78e59e3e5b1c2f3d896804f4f91b440086990071f8148ed5ba",
+    "artifact_hash": "sha256:01e88e82ce9663a7e51a7f14958c934c478b7c5c56f389c7f329387015f04776"
+  },
+  "corpus": [
+    {"id": "doc:binary-filter", "title": "Binary filter", "text": "binary candidate filter with exact rerank"},
+    {"id": "doc:itq-rotation", "title": "ITQ rotation", "text": "ITQ rotation binary encoder"},
+    {"id": "doc:qrels-gate", "title": "Qrels gate", "text": "locked qrels evaluation gate"},
+    {"id": "doc:affective-roadmap", "title": "Affective roadmap", "text": "affective memory appraisal roadmap"},
+    {"id": "doc:encrypted-storage", "title": "Encrypted storage", "text": "AEAD encrypted local storage"},
+    {"id": "doc:sensitive-inference", "title": "Sensitive inference", "text": "sensitive affective inference policy"},
+    {"id": "doc:context-planner", "title": "Context planner", "text": "urgency recall risk context planner"},
+    {"id": "doc:urgency-routing", "title": "Urgency routing", "text": "urgency based retrieval routing"},
+    {"id": "doc:context-tiers", "title": "Context tiers", "text": "short medium long base context tiers"},
+    {"id": "doc:mdbx-storage", "title": "MDBX storage", "text": "MDBX storage primitives"},
+    {"id": "doc:bm25-lexical", "title": "BM25 lexical", "text": "BM25 lexical retrieval baseline"},
+    {"id": "doc:hybrid-retrieval", "title": "Hybrid retrieval", "text": "hybrid retrieval combines context binary and lexical signals"}
+  ],
+  "queries": [
+    {"id": "q:binary-eval", "text": "binary retrieval evaluation", "query_type": "semantic", "limit": 5},
+    {"id": "q:affective-security", "text": "affective security policy", "query_type": "semantic", "limit": 5},
+    {"id": "q:planner-context", "text": "context planner urgency tiers", "query_type": "semantic", "limit": 5},
+    {"id": "q:storage-lexical", "text": "storage lexical retrieval", "query_type": "semantic", "limit": 5}
+  ],
+  "judgments": [
+    {"query_id": "q:binary-eval", "item_id": "doc:binary-filter", "relevance_grade": 3},
+    {"query_id": "q:binary-eval", "item_id": "doc:itq-rotation", "relevance_grade": 2},
+    {"query_id": "q:binary-eval", "item_id": "doc:qrels-gate", "relevance_grade": 2},
+    {"query_id": "q:binary-eval", "item_id": "doc:hybrid-retrieval", "relevance_grade": 1},
+    {"query_id": "q:affective-security", "item_id": "doc:sensitive-inference", "relevance_grade": 3},
+    {"query_id": "q:affective-security", "item_id": "doc:affective-roadmap", "relevance_grade": 3},
+    {"query_id": "q:affective-security", "item_id": "doc:encrypted-storage", "relevance_grade": 2},
+    {"query_id": "q:planner-context", "item_id": "doc:context-planner", "relevance_grade": 3},
+    {"query_id": "q:planner-context", "item_id": "doc:urgency-routing", "relevance_grade": 2},
+    {"query_id": "q:planner-context", "item_id": "doc:context-tiers", "relevance_grade": 2},
+    {"query_id": "q:storage-lexical", "item_id": "doc:mdbx-storage", "relevance_grade": 3},
+    {"query_id": "q:storage-lexical", "item_id": "doc:bm25-lexical", "relevance_grade": 3},
+    {"query_id": "q:storage-lexical", "item_id": "doc:encrypted-storage", "relevance_grade": 1},
+    {"query_id": "q:storage-lexical", "item_id": "doc:hybrid-retrieval", "relevance_grade": 1}
+  ],
+  "document_embeddings": [
+    {"id": "doc:binary-filter", "vector": [0.0, 0.0, 0.0, 0.70710677, 0.70710677, 0.0, 0.0, 0.0]},
+    {"id": "doc:itq-rotation", "vector": [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]},
+    {"id": "doc:qrels-gate", "vector": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]},
+    {"id": "doc:affective-roadmap", "vector": [0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8660254, 0.0]},
+    {"id": "doc:encrypted-storage", "vector": [0.0, 0.8660254, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0]},
+    {"id": "doc:sensitive-inference", "vector": [0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.8660254, 0.0]},
+    {"id": "doc:context-planner", "vector": [0.5, 0.0, 0.8660254, 0.0, 0.0, 0.0, 0.0, 0.0]},
+    {"id": "doc:urgency-routing", "vector": [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+    {"id": "doc:context-tiers", "vector": [0.8660254, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0]},
+    {"id": "doc:mdbx-storage", "vector": [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]},
+    {"id": "doc:bm25-lexical", "vector": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]},
+    {"id": "doc:hybrid-retrieval", "vector": [0.5, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.70710677]}
+  ],
+  "query_embeddings": [
+    {"id": "q:binary-eval", "vector": [0.0, 0.0, 0.0, 0.70710677, 0.70710677, 0.0, 0.0, 0.0]},
+    {"id": "q:affective-security", "vector": [0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.8660254, 0.0]},
+    {"id": "q:planner-context", "vector": [0.5, 0.0, 0.8660254, 0.0, 0.0, 0.0, 0.0, 0.0]},
+    {"id": "q:storage-lexical", "vector": [0.0, 0.0, 0.0, 0.0, 0.0, 0.70710677, 0.0, 0.70710677]}
+  ]
+}

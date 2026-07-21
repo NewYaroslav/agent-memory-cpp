@@ -170,7 +170,10 @@ families and candidate-rerank structure, but loads frozen document/query
 embeddings and qrels from JSON instead of generating synthetic vectors. It is
 intended for deterministic real-embedding regression gates: exact-vector oracle
 and reranked binary results are both evaluated with the shared qrels metric
-pipeline, while embedding generation remains outside the C++ test run.
+pipeline, while embedding generation remains outside the C++ test run. Dataset
+fixtures may carry optional `embedding_artifact` provenance; benchmark reports
+preserve it so frozen vectors can be traced back to the generator/model/config
+that produced them.
 
 The two exact baselines answer different questions:
 

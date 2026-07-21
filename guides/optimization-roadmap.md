@@ -1835,8 +1835,9 @@ storage estimates, quality targets и per-stack defaults).
 > encoder and index taxonomy": first compare zero-training encoder families
 > (`sign(x)`, random hyperplanes, randomized Hadamard projection as a
 > Faiss-inspired but not Faiss-equivalent structured baseline), then evaluate
-> a global learned projection, then evaluate
-> cluster/document-local projections only behind a global routing stage.
+> a global learned projection, then pass the precomputed/frozen-embedding qrels
+> gates, then evaluate aggregate signatures and cluster/document-local
+> projections only behind a global routing stage.
 
 26. **Step 26 (M2): SIMD abstraction layer.**
     - `simd::popcount64()` — cross-platform wrapper (MSVC / GCC / Clang /

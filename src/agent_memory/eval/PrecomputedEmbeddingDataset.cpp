@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -225,6 +226,36 @@ namespace agent_memory {
             return model;
         }
 
+        [[nodiscard]] std::optional<PrecomputedEmbeddingArtifactInfo>
+        read_embedding_artifact(
+            const nlohmann::json& root,
+            const SourceLocation& loc
+        ) {
+            const auto* artifact_json = find_optional(root, "embedding_artifact");
+            if(artifact_json == nullptr) {
+                return std::nullopt;
+            }
+            SourceLocation artifact_loc = loc;
+            artifact_loc.label += ".embedding_artifact";
+            if(!artifact_json->is_object()) {
+                throw_parse_error(artifact_loc, "expected object");
+            }
+            PrecomputedEmbeddingArtifactInfo artifact;
+            artifact.generator_id =
+                read_string(*artifact_json, "generator_id", artifact_loc);
+            artifact.generator_version =
+                read_string(*artifact_json, "generator_version", artifact_loc);
+            artifact.source_revision =
+                read_string(*artifact_json, "source_revision", artifact_loc);
+            artifact.projection_kind =
+                read_string(*artifact_json, "projection_kind", artifact_loc);
+            artifact.config_hash =
+                read_string(*artifact_json, "config_hash", artifact_loc);
+            artifact.artifact_hash =
+                read_string(*artifact_json, "artifact_hash", artifact_loc);
+            return artifact;
+        }
+
         [[nodiscard]] std::vector<PrecomputedEmbeddingRecord> read_embedding_records(
             const nlohmann::json& root,
             std::string_view field,
@@ -373,6 +404,7 @@ namespace agent_memory {
             PrecomputedEmbeddingEvalDataset dataset;
             dataset.retrieval = read_retrieval_dataset(root, loc);
             dataset.embedding_model = read_embedding_model(root, loc);
+            dataset.embedding_artifact = read_embedding_artifact(root, loc);
             dataset.document_embeddings =
                 read_embedding_records(root, "document_embeddings", loc);
             dataset.query_embeddings =
@@ -392,6 +424,39 @@ namespace agent_memory {
         }
         if(dataset.embedding_model.dimension == 0) {
             throw std::runtime_error("embedding_model.dimension must be positive");
+        }
+        if(dataset.embedding_artifact) {
+            const auto& artifact = *dataset.embedding_artifact;
+            if(artifact.generator_id.empty()) {
+                throw std::runtime_error(
+                    "embedding_artifact.generator_id must not be empty"
+                );
+            }
+            if(artifact.generator_version.empty()) {
+                throw std::runtime_error(
+                    "embedding_artifact.generator_version must not be empty"
+                );
+            }
+            if(artifact.source_revision.empty()) {
+                throw std::runtime_error(
+                    "embedding_artifact.source_revision must not be empty"
+                );
+            }
+            if(artifact.projection_kind.empty()) {
+                throw std::runtime_error(
+                    "embedding_artifact.projection_kind must not be empty"
+                );
+            }
+            if(artifact.config_hash.empty()) {
+                throw std::runtime_error(
+                    "embedding_artifact.config_hash must not be empty"
+                );
+            }
+            if(artifact.artifact_hash.empty()) {
+                throw std::runtime_error(
+                    "embedding_artifact.artifact_hash must not be empty"
+                );
+            }
         }
         validate_embedding_records(
             dataset.document_embeddings,

@@ -8,6 +8,14 @@
     "pooling_mode": "mean",
     "normalized": true
   },
+  "embedding_artifact": {
+    "generator_id": "agent-memory.fixture.semantic-axis",
+    "generator_version": "v1",
+    "source_revision": "hand-authored:2026-07-21",
+    "projection_kind": "semantic_axes_4d",
+    "config_hash": "sha256:de1a42cfb4401a1d1ab5d71c468f1e3a3ed11883a1930f6f9685f913ed023586",
+    "artifact_hash": "sha256:ba0c9f23305723099134ac9e51b131f9ecdd4ad229ca3a1ce77a1719d3027c0e"
+  },
   "corpus": [
     {"id": "doc:alpha", "title": "Alpha", "text": "alpha topic"},
     {"id": "doc:alpha-near", "title": "Alpha near", "text": "alpha neighbor"},

@@ -9,6 +9,7 @@
 #include <agent_memory/eval/Evaluation.hpp>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,6 +27,20 @@ namespace agent_memory {
         Embedding embedding;
     };
 
+    /// \brief Provenance for a frozen precomputed embedding artifact.
+    ///
+    /// The loader does not generate embeddings. This metadata records which
+    /// external or fixture generator produced the vectors consumed by tests and
+    /// benchmarks.
+    struct PrecomputedEmbeddingArtifactInfo final {
+        std::string generator_id;
+        std::string generator_version;
+        std::string source_revision;
+        std::string projection_kind;
+        std::string config_hash;
+        std::string artifact_hash;
+    };
+
     /// \brief Retrieval dataset plus locked document/query embeddings.
     ///
     /// This shape is intended for reproducible benchmark fixtures: external
@@ -34,6 +49,7 @@ namespace agent_memory {
     struct PrecomputedEmbeddingEvalDataset final {
         RetrievalEvalDataset retrieval;
         EmbeddingModelInfo embedding_model;
+        std::optional<PrecomputedEmbeddingArtifactInfo> embedding_artifact;
         std::vector<PrecomputedEmbeddingRecord> document_embeddings;
         std::vector<PrecomputedEmbeddingRecord> query_embeddings;
     };
