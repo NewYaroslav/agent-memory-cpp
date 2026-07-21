@@ -15,7 +15,8 @@
     "coordinate_sign",
     "randomized_hadamard_projection",
     "learned_pair_difference_projection",
-    "pca_projection"
+    "pca_projection",
+    "itq_rotation_projection"
   ],
   "repeat_count": 2,
   "exact_timing_repeat_count": 3,

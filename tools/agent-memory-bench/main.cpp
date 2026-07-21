@@ -8,6 +8,7 @@
 #include <agent_memory/index/ExactVectorIndex.hpp>
 #include <agent_memory/index/FlatBinarySignatureIndex.hpp>
 #include <agent_memory/index/IBinarySignatureEncoder.hpp>
+#include <agent_memory/index/ItqRotationBinaryEncoder.hpp>
 #include <agent_memory/index/LearnedProjectionBinaryEncoder.hpp>
 #include <agent_memory/index/PcaProjectionBinaryEncoder.hpp>
 #include <agent_memory/index/RandomHyperplaneBinaryEncoder.hpp>
@@ -72,6 +73,7 @@ namespace {
     constexpr std::string_view kEncoderFamilyLearnedPairDifference =
         "learned_pair_difference_projection";
     constexpr std::string_view kEncoderFamilyPcaProjection = "pca_projection";
+    constexpr std::string_view kEncoderFamilyItqRotation = "itq_rotation_projection";
 
     struct BenchmarkConfig final {
         std::string mode{kModeRandomExact};
@@ -520,7 +522,8 @@ namespace {
             || family == kEncoderFamilyCoordinateSign
             || family == kEncoderFamilyRandomizedHadamard
             || family == kEncoderFamilyLearnedPairDifference
-            || family == kEncoderFamilyPcaProjection;
+            || family == kEncoderFamilyPcaProjection
+            || family == kEncoderFamilyItqRotation;
     }
 
     [[nodiscard]] bool encoder_family_uses_seed(const std::string& family) noexcept {
@@ -543,6 +546,9 @@ namespace {
         if(family == kEncoderFamilyPcaProjection) {
             return 0x27D4EB2FU;
         }
+        if(family == kEncoderFamilyItqRotation) {
+            return 0x94D049BBU;
+        }
         return 0x85EBCA6BU;
     }
 
@@ -554,7 +560,8 @@ namespace {
         if(family == kEncoderFamilyCoordinateSign) {
             return bit_count == input_dimension;
         }
-        if(family == kEncoderFamilyPcaProjection) {
+        if(family == kEncoderFamilyPcaProjection
+           || family == kEncoderFamilyItqRotation) {
             return bit_count <= input_dimension;
         }
         return true;
@@ -578,7 +585,8 @@ namespace {
                     "embedding_dimensions"
                 );
             }
-            if(family == kEncoderFamilyPcaProjection
+            if((family == kEncoderFamilyPcaProjection
+                || family == kEncoderFamilyItqRotation)
                && std::none_of(
                    config.bit_counts.begin(),
                    config.bit_counts.end(),
@@ -587,8 +595,9 @@ namespace {
                    }
                )) {
                 throw std::runtime_error(
-                    "pca_projection encoder family requires at least one bit_count "
-                    "not greater than embedding_dimensions"
+                    family
+                    + " encoder family requires at least one bit_count not greater "
+                      "than embedding_dimensions"
                 );
             }
         }
@@ -2353,6 +2362,31 @@ namespace {
             );
             return build;
         }
+        if(family == kEncoderFamilyItqRotation) {
+            agent_memory::ItqRotationTrainingOptions options;
+            options.input_dimension = input_dimension;
+            options.bit_count = bit_count;
+            options.seed = seed;
+            const auto training_start = Clock::now();
+            auto artifact = agent_memory::train_itq_rotation_encoder(
+                training_vectors,
+                options
+            );
+            const auto training_end = Clock::now();
+            BinaryEncoderBuild build;
+            build.metrics.encoder_training_ms = elapsed_ms(
+                training_start,
+                training_end
+            );
+            build.metrics.training_vector_count = artifact.training_vector_count;
+            build.metrics.artifact_payload_bytes =
+                pca_projection_artifact_payload_bytes(input_dimension, bit_count);
+            build.metrics.training_source = "document_vectors";
+            build.encoder = std::make_unique<agent_memory::ItqRotationBinaryEncoder>(
+                std::move(artifact)
+            );
+            return build;
+        }
         throw std::runtime_error("unsupported binary encoder family: " + family);
     }
 
@@ -2396,6 +2430,16 @@ namespace {
             return std::string{
                 agent_memory::vector_similarity_backend_name(
                     pca->similarity_backend()
+                )
+            };
+        }
+        if(const auto* itq =
+               dynamic_cast<const agent_memory::ItqRotationBinaryEncoder*>(
+                   &encoder
+               )) {
+            return std::string{
+                agent_memory::vector_similarity_backend_name(
+                    itq->similarity_backend()
                 )
             };
         }
@@ -2913,6 +2957,7 @@ namespace {
             "data_seeds control synthetic data; encoder_seeds control seedable encoder families.",
             "learned_pair_difference_projection trains only on document vectors for the current data_seed; evaluation queries are not training input.",
             "pca_projection trains only on document vectors for the current data_seed and supports bit_count <= embedding_dimensions.",
+            "itq_rotation_projection trains only on document vectors, starts from PCA, then learns an unsupervised ITQ-style orthogonal rotation; it supports bit_count <= embedding_dimensions.",
             "Per-report encoder.training records cold-start artifact training cost and is excluded from query/build timing.",
             "coordinate_sign emits only embedding_dimensions bits and is skipped for other bit_counts.",
             "repeat_count repeats binary timings; quality is sampled once per data/encoder seed pair.",

@@ -78,8 +78,39 @@ namespace {
         return options;
     }
 
+    agent_memory::ItqRotationTrainingOptions make_itq_options(
+        std::size_t input_dimension,
+        std::size_t bit_count,
+        std::uint64_t seed
+    ) {
+        agent_memory::ItqRotationTrainingOptions options;
+        options.input_dimension = input_dimension;
+        options.bit_count = bit_count;
+        options.seed = seed;
+        options.pca_power_iterations = 16;
+        options.rotation_iterations = 8;
+        options.max_training_vectors = 0;
+        return options;
+    }
+
     bool almost_equal(double lhs, double rhs, double epsilon = 1.0e-5) {
         return std::fabs(lhs - rhs) <= epsilon;
+    }
+
+    double projection_row_dot(
+        const std::vector<float>& rows,
+        std::size_t input_dimension,
+        std::size_t lhs,
+        std::size_t rhs
+    ) {
+        const auto* lhs_row = rows.data() + lhs * input_dimension;
+        const auto* rhs_row = rows.data() + rhs * input_dimension;
+        double value = 0.0;
+        for(std::size_t dimension = 0; dimension < input_dimension; ++dimension) {
+            value += static_cast<double>(lhs_row[dimension])
+                * static_cast<double>(rhs_row[dimension]);
+        }
+        return value;
     }
 
     double projection_row_dot(
@@ -87,21 +118,36 @@ namespace {
         std::size_t lhs,
         std::size_t rhs
     ) {
-        const auto* lhs_row =
-            artifact.projection_rows.data() + lhs * artifact.input_dimension;
-        const auto* rhs_row =
-            artifact.projection_rows.data() + rhs * artifact.input_dimension;
-        double value = 0.0;
-        for(std::size_t dimension = 0; dimension < artifact.input_dimension;
-            ++dimension) {
-            value += static_cast<double>(lhs_row[dimension])
-                * static_cast<double>(rhs_row[dimension]);
-        }
-        return value;
+        return projection_row_dot(
+            artifact.projection_rows,
+            artifact.input_dimension,
+            lhs,
+            rhs
+        );
+    }
+
+    double projection_row_dot(
+        const agent_memory::ItqRotationBinaryEncoderOptions& artifact,
+        std::size_t lhs,
+        std::size_t rhs
+    ) {
+        return projection_row_dot(
+            artifact.projection_rows,
+            artifact.input_dimension,
+            lhs,
+            rhs
+        );
     }
 
     double projection_row_norm(
         const agent_memory::PcaProjectionBinaryEncoderOptions& artifact,
+        std::size_t row
+    ) {
+        return std::sqrt(projection_row_dot(artifact, row, row));
+    }
+
+    double projection_row_norm(
+        const agent_memory::ItqRotationBinaryEncoderOptions& artifact,
         std::size_t row
     ) {
         return std::sqrt(projection_row_dot(artifact, row, row));
@@ -798,6 +844,149 @@ int main() {
            }});
        })) {
         return fail("PCA projection encoder must reject NaN input values");
+    }
+
+    const auto itq_artifact = agent_memory::train_itq_rotation_encoder(
+        pca_training,
+        make_itq_options(2, 2, 777)
+    );
+    if(itq_artifact.input_dimension != 2
+       || itq_artifact.bit_count != 2
+       || itq_artifact.seed != 777
+       || itq_artifact.training_vector_count != pca_training.size()
+       || itq_artifact.pca_power_iterations != 16
+       || itq_artifact.rotation_iterations != 8
+       || itq_artifact.mean.size() != 2
+       || itq_artifact.projection_rows.size() != 4
+       || itq_artifact.thresholds.size() != 2) {
+        return fail("ITQ rotation training must produce a complete artifact");
+    }
+    for(std::size_t bit = 0; bit < itq_artifact.bit_count; ++bit) {
+        if(!almost_equal(projection_row_norm(itq_artifact, bit), 1.0)) {
+            return fail("ITQ rotation rows must be normalized");
+        }
+        if(itq_artifact.thresholds[bit] != 0.0F) {
+            return fail("ITQ rotation thresholds must be zero-centered");
+        }
+    }
+    if(std::fabs(projection_row_dot(itq_artifact, 0, 1)) > 1.0e-5) {
+        return fail("ITQ rotation rows must remain mutually orthogonal");
+    }
+
+    const agent_memory::ItqRotationBinaryEncoder itq_encoder(itq_artifact);
+    const auto& itq_info = itq_encoder.info();
+    if(itq_info.encoder_id != "itq_rotation_projection"
+       || itq_info.encoder_version != "v1"
+       || itq_info.input_dimension != 2
+       || itq_info.bit_count != 2
+       || itq_info.seed != 777) {
+        return fail("ITQ rotation encoder info must mirror the artifact");
+    }
+    const std::string itq_prefix =
+        "itq_rotation_projection_v1:dim=2:bits=2:seed=777:train=6:pca_iters=16:itq_iters=8:artifact=";
+    if(itq_info.config_fingerprint.compare(0, itq_prefix.size(), itq_prefix) != 0
+       || itq_info.config_fingerprint.size() != itq_prefix.size() + 16U) {
+        return fail("ITQ rotation fingerprint must include artifact identity");
+    }
+
+    const auto itq_signature =
+        itq_encoder.encode(agent_memory::Embedding{{2.5F, 0.0F}});
+    if(itq_signature != itq_encoder.encode(agent_memory::Embedding{{2.5F, 0.0F}})) {
+        return fail("ITQ rotation encoder must be deterministic");
+    }
+    if(itq_signature.bit_count() != 2 || itq_signature.word_count() != 1) {
+        return fail("ITQ rotation signature must use the configured width");
+    }
+    const auto itq_batch = itq_encoder.encode_batch({
+        agent_memory::Embedding{{2.5F, 0.0F}},
+        agent_memory::Embedding{{-2.5F, 0.0F}},
+    });
+    if(itq_batch.size() != 2 || itq_batch.front() != itq_signature) {
+        return fail("ITQ rotation batch encoding must match single encode");
+    }
+
+    auto itq_rotation_variant_options = make_itq_options(2, 2, 777);
+    itq_rotation_variant_options.rotation_iterations = 4;
+    const auto itq_rotation_variant_artifact =
+        agent_memory::train_itq_rotation_encoder(
+            pca_training,
+            itq_rotation_variant_options
+        );
+    const agent_memory::ItqRotationBinaryEncoder itq_rotation_variant_encoder(
+        itq_rotation_variant_artifact
+    );
+    if(itq_rotation_variant_encoder.info().config_fingerprint
+       == itq_encoder.info().config_fingerprint) {
+        return fail("ITQ rotation iteration count must affect artifact identity");
+    }
+
+    const auto zero_covariance_itq_artifact =
+        agent_memory::train_itq_rotation_encoder(
+            identical_pca_training,
+            make_itq_options(2, 2, 0)
+        );
+    for(std::size_t bit = 0; bit < zero_covariance_itq_artifact.bit_count; ++bit) {
+        if(!almost_equal(projection_row_norm(zero_covariance_itq_artifact, bit), 1.0)) {
+            return fail("ITQ fallback rows must remain normalized");
+        }
+    }
+    for(std::size_t lhs = 0; lhs < zero_covariance_itq_artifact.bit_count; ++lhs) {
+        for(std::size_t rhs = lhs + 1; rhs < zero_covariance_itq_artifact.bit_count;
+            ++rhs) {
+            if(std::fabs(
+                   projection_row_dot(zero_covariance_itq_artifact, lhs, rhs)
+               ) > 1.0e-5) {
+                return fail(
+                    "ITQ fallback rows must remain orthogonal for zero covariance"
+                );
+            }
+        }
+    }
+
+    if(!throws_invalid_argument([] {
+           (void)agent_memory::train_itq_rotation_encoder(
+               std::vector<agent_memory::Embedding>{
+                   agent_memory::Embedding{{1.0F, 0.0F}},
+                   agent_memory::Embedding{{-1.0F, 0.0F}},
+               },
+               make_itq_options(2, 3, 777)
+           );
+       })) {
+        return fail("ITQ rotation training must reject bit_count > dimension");
+    }
+    if(!throws_invalid_argument([&] {
+           auto options = make_itq_options(2, 2, 777);
+           options.rotation_iterations = 0;
+           (void)agent_memory::train_itq_rotation_encoder(pca_training, options);
+       })) {
+        return fail("ITQ rotation training must reject zero rotation iterations");
+    }
+    if(!throws_invalid_argument([&] {
+           auto invalid_artifact = itq_artifact;
+           invalid_artifact.mean.pop_back();
+           (void)agent_memory::ItqRotationBinaryEncoder(invalid_artifact);
+       })) {
+        return fail("ITQ rotation encoder must reject mean size mismatch");
+    }
+    if(!throws_invalid_argument([&] {
+           auto invalid_artifact = itq_artifact;
+           invalid_artifact.projection_rows.pop_back();
+           (void)agent_memory::ItqRotationBinaryEncoder(invalid_artifact);
+       })) {
+        return fail("ITQ rotation encoder must reject matrix size mismatch");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)itq_encoder.encode(agent_memory::Embedding{{1.0F, 2.0F, 3.0F}});
+       })) {
+        return fail("ITQ rotation encoder must reject dimension mismatches");
+    }
+    if(!throws_invalid_argument([&] {
+           (void)itq_encoder.encode(agent_memory::Embedding{{
+               1.0F,
+               std::numeric_limits<float>::quiet_NaN(),
+           }});
+       })) {
+        return fail("ITQ rotation encoder must reject NaN input values");
     }
 
     return 0;

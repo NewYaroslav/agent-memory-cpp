@@ -165,7 +165,7 @@ acceptance criteria because memory objects evolve incrementally.
 | Random hyperplane `sign(Rx)` | Yes | No | Implemented baseline candidate filter | Good zero-training reference. PR #57 showed useful system speedups vs current `ExactVectorIndex`, but no decisive compute-only win vs contiguous exact scan at 128D. |
 | Randomized Hadamard projection | Yes | No | Structured zero-training baseline | Faiss-inspired dependency-free baseline. For power-of-two input dimensions complete blocks use orthogonal Hadamard rows; for padded non-power-of-two dimensions partial row sets are not generally pairwise orthogonal. |
 | PCA projection | Yes | Yes | First objective-based learned baseline | Dependency-free principal-axis projection with median thresholds. Supports `bit_count <= input_dimension`. Not ITQ and not an autoencoder. |
-| Global learned projection | Yes | Yes | Main learned-hashing candidate | One corpus/calibration-trained `R`; preserves comparability across all records. PR #60 starts with a simple pair-difference baseline; ITQ/PCA-rotation remains a later, separately named candidate. |
+| Global learned projection | Yes | Yes | Main learned-hashing candidate | One corpus/calibration-trained `R`; preserves comparability across all records. PR #60 starts with a simple pair-difference baseline; PR #65 adds an unsupervised ITQ-style PCA rotation as a separately named candidate. |
 | Supervised hashing | Yes | Yes | Label-aware learned hashing | Uses qrels, hard negatives, teacher scores, or synthetic pairs to pull relevant query-document pairs together in Hamming space and push hard negatives apart. Requires strict split/provenance controls. |
 | Autoencoder binary encoder | Yes | Yes | Strong learned compression tier | More expressive than linear ITQ-like projection; requires training toolchain, persisted weights, and careful acceptance criteria. |
 | Cluster-local projection `R_c` | Within a routed cluster | Yes | Hierarchical candidate filter | Query must first route to a small set of clusters; codes across unrelated clusters are not directly comparable. |
@@ -540,7 +540,7 @@ struct DenseIndexConfig {
 
 ### M0: Binary Signatures Only (partially implemented)
 
-> **Status.** Core packed signatures, width-aware Hamming dispatch, the optimized flat oracle, materialized/SIMD random-hyperplane encoder v2, coordinate-sign and randomized-Hadamard baselines, dependency-free global learned pair-difference and PCA-style projection baselines, sparse/batch encoding, identity registry, and a bounded multi-probe prototype are implemented. `.bse` loading, persisted bucket layout, dense-index integration, and a production high-recall Hamming ANN remain planned.
+> **Status.** Core packed signatures, width-aware Hamming dispatch, the optimized flat oracle, materialized/SIMD random-hyperplane encoder v2, coordinate-sign and randomized-Hadamard baselines, dependency-free global learned pair-difference, PCA-style projection, and ITQ-style rotation baselines, sparse/batch encoding, identity registry, and a bounded multi-probe prototype are implemented. `.bse` loading, persisted bucket layout, dense-index integration, and a production high-recall Hamming ANN remain planned.
 
 M0 scope:
 
@@ -552,6 +552,7 @@ M0 scope:
 - `RandomHyperplaneBinaryEncoder` v2 with lazy materialization and SIMD dense scoring (implemented).
 - `LearnedProjectionBinaryEncoder` v1 with deterministic document-only global pair-difference training (implemented experimental baseline; not ITQ or an autoencoder).
 - `PcaProjectionBinaryEncoder` v1 with deterministic document-only PCA-style training and median thresholds (implemented experimental baseline; not ITQ or an autoencoder).
+- `ItqRotationBinaryEncoder` v1 with document-only PCA followed by an unsupervised ITQ-style orthogonal rotation and zero-centered signs (implemented experimental baseline; not supervised hashing and not an autoencoder).
 - `MultiProbeHammingIndex` bounded in-memory bucket prototype (implemented, experimental; no worst-case sub-linear guarantee).
 - Persisted `RandomHyperplaneLSH` / production Hamming ANN wiring (Planned API).
 - `binary_bucket_index` MDBX layout (Planned API).

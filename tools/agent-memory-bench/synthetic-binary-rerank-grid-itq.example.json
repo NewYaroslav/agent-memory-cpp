@@ -1,25 +1,23 @@
 {
   "mode": "synthetic_binary_rerank_grid",
-  "benchmark_name": "synthetic_binary_rerank_grid_v2_stat",
-  "dataset_name": "synthetic_clustered_dense_v1_stat",
+  "benchmark_name": "synthetic_binary_rerank_grid_itq_128d",
+  "dataset_name": "synthetic_clustered_dense_v1_itq_128d",
   "document_count": 10000,
   "query_count": 100,
   "embedding_dimensions": 128,
-  "bit_counts": [128, 256, 512, 1024],
+  "bit_counts": [32, 64, 128],
   "result_limit": 10,
   "rerank_candidate_limits": [100, 500, 1000, 2000],
   "data_seeds": [42],
   "encoder_seeds": [1001, 1002],
   "encoder_families": [
     "random_hyperplane_rademacher",
-    "coordinate_sign",
-    "randomized_hadamard_projection",
     "learned_pair_difference_projection",
     "pca_projection",
     "itq_rotation_projection"
   ],
-  "repeat_count": 5,
-  "exact_timing_repeat_count": 7,
+  "repeat_count": 3,
+  "exact_timing_repeat_count": 5,
   "randomize_execution_order": true,
-  "output_path": "tmp/synthetic-binary-rerank-grid-report.json"
+  "output_path": "tmp/synthetic-binary-rerank-grid-itq-report.json"
 }
