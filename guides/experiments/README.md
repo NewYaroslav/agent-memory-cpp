@@ -1,33 +1,64 @@
 # Experiment Notes
 
-This directory stores human-readable notes for exploratory work that can shape
-architecture, benchmarks, or roadmap decisions.
+`guides/experiments/` stores human-readable experiment records. These notes are
+not raw benchmark dumps; they are compact research logs that explain why a run
+was performed, what was expected, what happened, and what should be checked
+next.
 
-Use this directory when a task is more than a routine benchmark run:
+## When to write or update a note
 
-- it tests a hypothesis;
-- it compares implementation strategies;
-- it produces directional performance or quality evidence;
-- it changes the roadmap or the next PR order.
+Create or update an experiment note when a PR:
 
-## Note format
+- tests a hypothesis;
+- compares algorithms, encoders, indexes, storage layouts, or benchmark
+  methodology;
+- produces benchmark numbers that influence the roadmap;
+- changes the interpretation of earlier benchmark results.
 
-Create one Markdown note per experiment line, not per command invocation. If a
-later PR continues the same research question, append a new dated section to the
-existing note instead of overwriting previous results.
+Create one note per research line, not per command invocation. If a later PR
+continues the same question, append a new dated section instead of overwriting
+earlier results.
 
-Each note should record:
+## Required contents
+
+Each note should include:
 
 - date and PR/commit context;
-- what is being checked;
-- why the question matters;
-- expected result before running the experiment;
-- setup, dataset, configuration, and relevant code paths;
-- actual results, including tables when useful;
-- interpretation and limitations;
+- question or hypothesis;
+- setup and command/config references;
+- expected result;
+- actual result, preferably with compact tables;
+- interpretation;
+- limitations and threats to validity;
 - possible improvements;
-- what should be checked next.
+- follow-up checks.
 
-Generated JSON reports and raw logs are useful evidence, but the experiment note
-should contain the short human interpretation that future maintainers need.
+## Raw artifact policy
 
+Do not commit large generated JSON reports by default. Commit only:
+
+- small, stable smoke fixtures;
+- example configs;
+- manually curated tables or short excerpts needed to support the note.
+
+When raw reports matter, store the command, config path, output path, git head,
+and enough identifying metadata for reproduction. If a future PR needs
+long-term raw artifact retention, add an explicit policy for artifact location,
+size budget, and cleanup before committing dumps.
+
+## Timing methodology
+
+Experiment notes must distinguish:
+
+- data generation;
+- exact baseline build and query timing;
+- encoder training/cold-start timing;
+- binary materialization/build timing;
+- query encoding;
+- candidate search;
+- exact rerank;
+- process-wide memory high-water marks.
+
+Timing values from a single local run are directional. Treat them as stable
+benchmark evidence only after the harness uses repeated runs, warm-up rules,
+fixed environment notes, and preserved raw outputs.

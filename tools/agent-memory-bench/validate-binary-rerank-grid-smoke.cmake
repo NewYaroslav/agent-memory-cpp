@@ -202,6 +202,55 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
     if(NOT timing_p95 GREATER 0)
         message(FATAL_ERROR "aggregate p95_nearest_rank must be positive")
     endif()
+    string(JSON aggregate_training_ms_count GET
+        "${grid_json}" aggregate_summary ${aggregate_index} encoder_training
+        encoder_training_ms sample_count
+    )
+    string(JSON aggregate_training_vector_count GET
+        "${grid_json}" aggregate_summary ${aggregate_index} encoder_training
+        training_vector_count sample_count
+    )
+    string(JSON aggregate_artifact_count GET
+        "${grid_json}" aggregate_summary ${aggregate_index} encoder_training
+        artifact_payload_bytes sample_count
+    )
+    string(JSON aggregate_training_ms_max GET
+        "${grid_json}" aggregate_summary ${aggregate_index} encoder_training
+        encoder_training_ms max
+    )
+    string(JSON aggregate_training_vectors_max GET
+        "${grid_json}" aggregate_summary ${aggregate_index} encoder_training
+        training_vector_count max
+    )
+    string(JSON aggregate_artifact_max GET
+        "${grid_json}" aggregate_summary ${aggregate_index} encoder_training
+        artifact_payload_bytes max
+    )
+    if(NOT aggregate_training_ms_count EQUAL expected_quality_count
+       OR NOT aggregate_training_vector_count EQUAL expected_quality_count
+       OR NOT aggregate_artifact_count EQUAL expected_quality_count)
+        message(FATAL_ERROR
+            "aggregate encoder training sample counts are inconsistent"
+        )
+    endif()
+    if(aggregate_encoder_family STREQUAL "learned_pair_difference_projection"
+       OR aggregate_encoder_family STREQUAL "pca_projection")
+        if(NOT aggregate_training_ms_max GREATER 0
+           OR NOT aggregate_training_vectors_max GREATER 0
+           OR NOT aggregate_artifact_max GREATER 0)
+            message(FATAL_ERROR
+                "trained encoder aggregate must report positive training metadata"
+            )
+        endif()
+    else()
+        if(aggregate_training_ms_max GREATER 0
+           OR aggregate_training_vectors_max GREATER 0
+           OR aggregate_artifact_max GREATER 0)
+            message(FATAL_ERROR
+                "zero-training encoder aggregate must not report training payload"
+            )
+        endif()
+    endif()
 endforeach()
 
 if(NOT saw_random_8 OR NOT saw_random_16 OR NOT saw_coordinate_8
@@ -354,6 +403,42 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
         if(NOT summary_quality_count EQUAL 1 OR NOT summary_timing_count EQUAL 2)
             message(FATAL_ERROR "per-seed report sample counts are inconsistent")
         endif()
+        string(JSON summary_training_ms GET
+            "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+            summary encoder_training encoder_training_ms
+        )
+        string(JSON summary_training_vectors GET
+            "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+            summary encoder_training training_vector_count
+        )
+        string(JSON summary_artifact_bytes GET
+            "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+            summary encoder_training artifact_payload_bytes
+        )
+        string(JSON summary_training_source GET
+            "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+            summary encoder_training training_source
+        )
+        if(seed_encoder_family STREQUAL "learned_pair_difference_projection"
+           OR seed_encoder_family STREQUAL "pca_projection")
+            if(NOT summary_training_ms GREATER 0
+               OR NOT summary_training_vectors GREATER 0
+               OR NOT summary_artifact_bytes GREATER 0
+               OR NOT summary_training_source STREQUAL "document_vectors")
+                message(FATAL_ERROR
+                    "trained encoder bit summary must report document-vector training"
+                )
+            endif()
+        else()
+            if(summary_training_ms GREATER 0
+               OR summary_training_vectors GREATER 0
+               OR summary_artifact_bytes GREATER 0
+               OR NOT summary_training_source STREQUAL "none")
+                message(FATAL_ERROR
+                    "zero-training encoder bit summary must report no training"
+                )
+            endif()
+        endif()
         string(JSON repeat_count LENGTH
             "${grid_json}" seed_runs ${seed_run_index} reports ${report_index} repeats
         )
@@ -389,6 +474,66 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
             endif()
             if(NOT encoder_backend MATCHES "^(scalar|sse2|avx2|coordinate_sign|fwht_scalar)$")
                 message(FATAL_ERROR "unexpected encoder vector backend: ${encoder_backend}")
+            endif()
+            string(JSON repeat_training_ms GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} encoder training encoder_training_ms
+            )
+            string(JSON repeat_training_vectors GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} encoder training training_vector_count
+            )
+            string(JSON repeat_artifact_bytes GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} encoder training artifact_payload_bytes
+            )
+            string(JSON repeat_training_source GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} encoder training training_source
+            )
+            string(JSON repeat_training_in_query GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} encoder training training_included_in_query_timing
+            )
+            string(JSON repeat_training_in_build GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} encoder training
+                training_included_in_binary_build_timing
+            )
+            string(JSON repeat_speed_training_ms GET
+                "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}
+                repeats ${repeat_index} speed encoder_training_ms
+            )
+            if(NOT repeat_training_ms EQUAL repeat_speed_training_ms)
+                message(FATAL_ERROR
+                    "encoder training ms must match between encoder and speed sections"
+                )
+            endif()
+            if(NOT repeat_training_in_query STREQUAL "OFF"
+               OR NOT repeat_training_in_build STREQUAL "OFF")
+                message(FATAL_ERROR
+                    "encoder training must be excluded from query/build timings"
+                )
+            endif()
+            if(seed_encoder_family STREQUAL "learned_pair_difference_projection"
+               OR seed_encoder_family STREQUAL "pca_projection")
+                if(NOT repeat_training_ms GREATER 0
+                   OR NOT repeat_training_vectors GREATER 0
+                   OR NOT repeat_artifact_bytes GREATER 0
+                   OR NOT repeat_training_source STREQUAL "document_vectors")
+                    message(FATAL_ERROR
+                        "trained encoder repeat must report document-vector training"
+                    )
+                endif()
+            else()
+                if(repeat_training_ms GREATER 0
+                   OR repeat_training_vectors GREATER 0
+                   OR repeat_artifact_bytes GREATER 0
+                   OR NOT repeat_training_source STREQUAL "none")
+                    message(FATAL_ERROR
+                        "zero-training encoder repeat must report no training"
+                    )
+                endif()
             endif()
             string(JSON current_direct_speedup GET
                 "${grid_json}" seed_runs ${seed_run_index} reports ${report_index}

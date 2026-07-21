@@ -134,12 +134,18 @@ Post-PR57 PR ladder:
 | PR #64 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
 | PR #65+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, or HNSW dense baseline. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall. | More flat-scan polishing unless a benchmark justifies it. |
 
-Benchmark instrumentation follow-up:
+Benchmark instrumentation contract:
 
-- Add explicit learned-encoder training diagnostics to binary grid reports:
+- Binary grid reports include explicit learned-encoder training diagnostics:
   `encoder_training_ms`, `training_vector_count`, and projection artifact byte
-  size. Query/build timing should continue to exclude training cost, but reports
-  must make cold-start/index-build cost visible for learned encoders.
+  size. Query/build timing continues to exclude training cost, but reports make
+  cold-start/index-build context visible for learned encoders.
+- Experiment notes follow [`experiments/README.md`](experiments/README.md):
+  commit compact interpretation tables, not large raw JSON dumps by default,
+  and record enough command/config/head metadata to reproduce important runs.
+- Remaining methodology work before treating numbers as stable benchmark
+  evidence: repeated process-level runs, warm-up rules, environment notes, and
+  preserved raw-output policy for selected benchmark suites.
 
 Coordinate-sign benchmark contract for PR #59:
 

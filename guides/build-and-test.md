@@ -134,7 +134,16 @@ encoder seed for readability.
 
 `pca_projection` also trains only on document vectors and supports
 `bit_count <= embedding_dimensions`; the runner skips larger bit widths for
-that family. Its training cost is not included in query timing.
+that family.
+
+Binary grid JSON reports include an `encoder.training` section for every
+per-repeat report and an `encoder_training` section in per-bit and aggregate
+summaries. These fields record `encoder_training_ms`, `training_vector_count`,
+`artifact_payload_bytes`, and whether training was included in query/build
+timing. Learned projection and PCA report document-vector training; zero-training
+families report `training_source = "none"` and zero training/artifact payload.
+Training remains excluded from query timing and binary materialization timing,
+but the cold-start cost is visible in the report.
 
 The two exact baselines answer different questions:
 

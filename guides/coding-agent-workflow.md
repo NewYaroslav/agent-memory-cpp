@@ -60,6 +60,8 @@ benchmark evidence, or changes the roadmap, update `guides/experiments/`.
   checks.
 - Include compact tables for benchmark results when they materially support the
   conclusion.
+- Follow [`guides/experiments/README.md`](experiments/README.md) for raw
+  artifact policy and timing-methodology terminology.
 
 ## Context Hygiene
 

@@ -120,6 +120,13 @@ namespace {
         double search_ms = 0.0;
     };
 
+    struct BinaryEncoderBuildMetrics final {
+        double encoder_training_ms = 0.0;
+        std::size_t training_vector_count = 0;
+        std::uint64_t artifact_payload_bytes = 0;
+        std::string training_source = "none";
+    };
+
     struct BinaryRerankCandidateResult final {
         std::size_t candidate_limit = 0;
         SearchTiming binary_candidate_query;
@@ -139,6 +146,7 @@ namespace {
         std::string contiguous_exact_similarity_backend;
         std::string binary_hamming_backend;
         std::string binary_encoder_similarity_backend;
+        BinaryEncoderBuildMetrics encoder_build;
         SearchTiming current_exact_query;
         std::vector<double> current_exact_query_total_ms_samples;
         SearchTiming contiguous_exact_query;
@@ -182,6 +190,12 @@ namespace {
         std::vector<std::vector<nlohmann::json>> reports_by_bit;
         std::vector<std::unique_ptr<agent_memory::IBinarySignatureEncoder>>
             encoders_by_bit;
+        std::vector<BinaryEncoderBuildMetrics> encoder_build_metrics_by_bit;
+    };
+
+    struct BinaryEncoderBuild final {
+        std::unique_ptr<agent_memory::IBinarySignatureEncoder> encoder;
+        BinaryEncoderBuildMetrics metrics;
     };
 
     [[nodiscard]] double elapsed_ms(Clock::time_point start, Clock::time_point end) {
@@ -1091,6 +1105,54 @@ namespace {
         return elements * static_cast<std::uint64_t>(unit_bytes);
     }
 
+    [[nodiscard]] std::uint64_t saturating_add_bytes(
+        std::uint64_t lhs,
+        std::uint64_t rhs
+    ) noexcept {
+        const auto max_value = std::numeric_limits<std::uint64_t>::max();
+        if(lhs > max_value - rhs) {
+            return max_value;
+        }
+        return lhs + rhs;
+    }
+
+    [[nodiscard]] std::uint64_t learned_projection_artifact_payload_bytes(
+        std::size_t input_dimension,
+        std::size_t bit_count
+    ) {
+        const auto rows = checked_payload_bytes(
+            bit_count,
+            input_dimension,
+            sizeof(float)
+        );
+        const auto thresholds = checked_payload_bytes(bit_count, 1, sizeof(float));
+        return saturating_add_bytes(rows, thresholds);
+    }
+
+    [[nodiscard]] std::uint64_t pca_projection_artifact_payload_bytes(
+        std::size_t input_dimension,
+        std::size_t bit_count
+    ) {
+        const auto mean = checked_payload_bytes(input_dimension, 1, sizeof(float));
+        return saturating_add_bytes(
+            mean,
+            learned_projection_artifact_payload_bytes(input_dimension, bit_count)
+        );
+    }
+
+    [[nodiscard]] nlohmann::json encoder_build_metrics_to_json(
+        const BinaryEncoderBuildMetrics& metrics
+    ) {
+        return {
+            {"encoder_training_ms", metrics.encoder_training_ms},
+            {"training_vector_count", metrics.training_vector_count},
+            {"artifact_payload_bytes", metrics.artifact_payload_bytes},
+            {"training_source", metrics.training_source},
+            {"training_included_in_query_timing", false},
+            {"training_included_in_binary_build_timing", false}
+        };
+    }
+
     class SyntheticExactEngine final : public agent_memory::IRetrievalEngine {
     public:
         explicit SyntheticExactEngine(std::vector<std::vector<float>> embeddings)
@@ -1612,6 +1674,8 @@ namespace {
             {"binary_total_speedup_vs_contiguous_exact_including_encode",
                 samples_to_stats_json(direct_contiguous_exact_speedup)}
         };
+        summary["encoder_training"] =
+            encoder_build_metrics_to_json(repeats.front().encoder_build);
 
         summary["rerank"] = nlohmann::json::array();
         for(const auto candidate_limit : config.rerank_candidate_limits) {
@@ -1671,6 +1735,9 @@ namespace {
                 std::vector<double> binary_total_ms;
                 std::vector<double> direct_current_exact_speedup;
                 std::vector<double> direct_contiguous_exact_speedup;
+                std::vector<double> encoder_training_ms;
+                std::vector<double> training_vector_count;
+                std::vector<double> artifact_payload_bytes;
                 std::vector<std::vector<double>> coverage_by_candidate(
                     config.rerank_candidate_limits.size()
                 );
@@ -1714,6 +1781,23 @@ namespace {
                         top1.push_back(
                             quality_report.at("quality").at("top1_agreement")
                                 .get<double>()
+                        );
+                        const auto& encoder_training =
+                            bit_report.at("summary").at("encoder_training");
+                        encoder_training_ms.push_back(
+                            encoder_training.at("encoder_training_ms").get<double>()
+                        );
+                        training_vector_count.push_back(
+                            static_cast<double>(
+                                encoder_training.at("training_vector_count")
+                                    .get<std::size_t>()
+                            )
+                        );
+                        artifact_payload_bytes.push_back(
+                            static_cast<double>(
+                                encoder_training.at("artifact_payload_bytes")
+                                    .get<std::uint64_t>()
+                            )
                         );
                         for(const auto& rerank : quality_report.at("rerank")) {
                             const auto candidate_limit =
@@ -1823,6 +1907,13 @@ namespace {
                     {"binary_total_speedup_vs_contiguous_exact_including_encode",
                         samples_to_stats_json(direct_contiguous_exact_speedup)}
                 };
+                bit_summary["encoder_training"] = {
+                    {"encoder_training_ms", samples_to_stats_json(encoder_training_ms)},
+                    {"training_vector_count",
+                        samples_to_stats_json(training_vector_count)},
+                    {"artifact_payload_bytes",
+                        samples_to_stats_json(artifact_payload_bytes)}
+                };
                 bit_summary["rerank"] = nlohmann::json::array();
                 for(std::size_t index = 0; index < config.rerank_candidate_limits.size();
                     ++index) {
@@ -1888,7 +1979,8 @@ namespace {
         document["encoder"] = {
             {"encoder_id", encoder_info.encoder_id},
             {"encoder_version", encoder_info.encoder_version},
-            {"config_fingerprint", encoder_info.config_fingerprint}
+            {"config_fingerprint", encoder_info.config_fingerprint},
+            {"training", encoder_build_metrics_to_json(result.encoder_build)}
         };
         document["quality"] = {
             {"reference_baseline", "exact_cosine_top_k"},
@@ -1906,6 +1998,7 @@ namespace {
                 result.contiguous_exact_similarity_backend},
             {"binary_hamming_backend", result.binary_hamming_backend},
             {"binary_encoder_similarity_backend", result.binary_encoder_similarity_backend},
+            {"encoder_training_ms", result.encoder_build.encoder_training_ms},
             {"binary_encode_and_build_ms", result.binary_build_ms},
             {"current_exact_index_query_total_ms",
                 result.current_exact_query.total_ms},
@@ -2018,6 +2111,7 @@ namespace {
             "Current-index and contiguous-baseline speedups are reported separately.",
             "Exact search timing excludes quality-bookkeeping ID extraction and comparison.",
             "Binary total timing is query signature encoding plus exact flat Hamming scan.",
+            "encoder_training_ms is reported as cold-start artifact training cost and is excluded from query/build timing.",
             "Rerank rows measure binary candidate over-fetch followed by exact float rerank.",
             "Process peak RSS is a whole benchmark-process high-water mark, not per-index memory."
         });
@@ -2164,7 +2258,7 @@ namespace {
         return oracle;
     }
 
-    [[nodiscard]] std::unique_ptr<agent_memory::IBinarySignatureEncoder> make_binary_encoder(
+    [[nodiscard]] BinaryEncoderBuild make_binary_encoder(
         const std::string& family,
         std::size_t input_dimension,
         std::size_t bit_count,
@@ -2176,9 +2270,12 @@ namespace {
             options.input_dimension = input_dimension;
             options.bit_count = bit_count;
             options.seed = seed;
-            return std::make_unique<agent_memory::RandomHyperplaneBinaryEncoder>(
-                options
-            );
+            BinaryEncoderBuild build;
+            build.encoder =
+                std::make_unique<agent_memory::RandomHyperplaneBinaryEncoder>(
+                    options
+                );
+            return build;
         }
         if(family == kEncoderFamilyCoordinateSign) {
             if(bit_count != input_dimension) {
@@ -2186,44 +2283,75 @@ namespace {
                     "coordinate_sign encoder supports only bit_count == embedding_dimensions"
                 );
             }
-            return std::make_unique<agent_memory::CoordinateSignBinaryEncoder>(
-                agent_memory::CoordinateSignBinaryEncoderOptions{input_dimension}
-            );
+            BinaryEncoderBuild build;
+            build.encoder =
+                std::make_unique<agent_memory::CoordinateSignBinaryEncoder>(
+                    agent_memory::CoordinateSignBinaryEncoderOptions{input_dimension}
+                );
+            return build;
         }
         if(family == kEncoderFamilyRandomizedHadamard) {
             agent_memory::RandomizedHadamardBinaryEncoderOptions options;
             options.input_dimension = input_dimension;
             options.bit_count = bit_count;
             options.seed = seed;
-            return std::make_unique<agent_memory::RandomizedHadamardBinaryEncoder>(
-                options
-            );
+            BinaryEncoderBuild build;
+            build.encoder =
+                std::make_unique<agent_memory::RandomizedHadamardBinaryEncoder>(
+                    options
+                );
+            return build;
         }
         if(family == kEncoderFamilyLearnedPairDifference) {
             agent_memory::LearnedProjectionTrainingOptions options;
             options.input_dimension = input_dimension;
             options.bit_count = bit_count;
             options.seed = seed;
+            const auto training_start = Clock::now();
             auto artifact = agent_memory::train_learned_projection_encoder(
                 training_vectors,
                 options
             );
-            return std::make_unique<agent_memory::LearnedProjectionBinaryEncoder>(
-                std::move(artifact)
+            const auto training_end = Clock::now();
+            BinaryEncoderBuild build;
+            build.metrics.encoder_training_ms = elapsed_ms(
+                training_start,
+                training_end
             );
+            build.metrics.training_vector_count = artifact.training_vector_count;
+            build.metrics.artifact_payload_bytes =
+                learned_projection_artifact_payload_bytes(input_dimension, bit_count);
+            build.metrics.training_source = "document_vectors";
+            build.encoder =
+                std::make_unique<agent_memory::LearnedProjectionBinaryEncoder>(
+                    std::move(artifact)
+                );
+            return build;
         }
         if(family == kEncoderFamilyPcaProjection) {
             agent_memory::PcaProjectionTrainingOptions options;
             options.input_dimension = input_dimension;
             options.bit_count = bit_count;
             options.seed = seed;
+            const auto training_start = Clock::now();
             auto artifact = agent_memory::train_pca_projection_encoder(
                 training_vectors,
                 options
             );
-            return std::make_unique<agent_memory::PcaProjectionBinaryEncoder>(
+            const auto training_end = Clock::now();
+            BinaryEncoderBuild build;
+            build.metrics.encoder_training_ms = elapsed_ms(
+                training_start,
+                training_end
+            );
+            build.metrics.training_vector_count = artifact.training_vector_count;
+            build.metrics.artifact_payload_bytes =
+                pca_projection_artifact_payload_bytes(input_dimension, bit_count);
+            build.metrics.training_source = "document_vectors";
+            build.encoder = std::make_unique<agent_memory::PcaProjectionBinaryEncoder>(
                 std::move(artifact)
             );
+            return build;
         }
         throw std::runtime_error("unsupported binary encoder family: " + family);
     }
@@ -2277,7 +2405,8 @@ namespace {
     [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark_with_oracle(
         const BenchmarkConfig& config,
         const agent_memory::IBinarySignatureEncoder& encoder,
-        const BinaryBenchmarkOracle& oracle
+        const BinaryBenchmarkOracle& oracle,
+        const BinaryEncoderBuildMetrics& encoder_build
     ) {
         const auto signature_info = agent_memory::make_binary_signature_info(
             encoder.info(),
@@ -2314,6 +2443,7 @@ namespace {
         );
         result.binary_encoder_similarity_backend =
             binary_encoder_compute_backend_name(encoder);
+        result.encoder_build = encoder_build;
         result.current_exact_query = oracle.current_exact_query;
         result.current_exact_query_total_ms_samples =
             oracle.current_exact_query_total_ms_samples;
@@ -2461,10 +2591,16 @@ namespace {
 
     [[nodiscard]] BinaryFlatVsFloatResult run_binary_flat_vs_float_benchmark(
         const BenchmarkConfig& config,
-        const agent_memory::IBinarySignatureEncoder& encoder
+        const agent_memory::IBinarySignatureEncoder& encoder,
+        const BinaryEncoderBuildMetrics& encoder_build
     ) {
         const auto oracle = prepare_binary_benchmark_oracle(config);
-        return run_binary_flat_vs_float_benchmark_with_oracle(config, encoder, oracle);
+        return run_binary_flat_vs_float_benchmark_with_oracle(
+            config,
+            encoder,
+            oracle,
+            encoder_build
+        );
     }
 
     int run_random_exact(const BenchmarkConfig& config) {
@@ -2602,8 +2738,13 @@ namespace {
         encoder_options.bit_count = config.bit_count;
         encoder_options.seed = config.seed;
         const agent_memory::RandomHyperplaneBinaryEncoder encoder(encoder_options);
+        const BinaryEncoderBuildMetrics encoder_build;
 
-        const auto result = run_binary_flat_vs_float_benchmark(config, encoder);
+        const auto result = run_binary_flat_vs_float_benchmark(
+            config,
+            encoder,
+            encoder_build
+        );
         write_binary_flat_vs_float_json_report(
             config.output_path,
             config,
@@ -2772,6 +2913,7 @@ namespace {
             "data_seeds control synthetic data; encoder_seeds control seedable encoder families.",
             "learned_pair_difference_projection trains only on document vectors for the current data_seed; evaluation queries are not training input.",
             "pca_projection trains only on document vectors for the current data_seed and supports bit_count <= embedding_dimensions.",
+            "Per-report encoder.training records cold-start artifact training cost and is excluded from query/build timing.",
             "coordinate_sign emits only embedding_dimensions bits and is skipped for other bit_counts.",
             "repeat_count repeats binary timings; quality is sampled once per data/encoder seed pair.",
             "Current ExactVectorIndex and contiguous exact timing use separate repeated medians.",
@@ -2819,6 +2961,7 @@ namespace {
                     state.results_by_bit.resize(config.bit_counts.size());
                     state.reports_by_bit.resize(config.bit_counts.size());
                     state.encoders_by_bit.resize(config.bit_counts.size());
+                    state.encoder_build_metrics_by_bit.resize(config.bit_counts.size());
 
                     const auto run_index = run_states.size();
                     bool state_has_tasks = false;
@@ -2904,19 +3047,23 @@ namespace {
 
                 auto& encoder = run_state.encoders_by_bit[bit_index];
                 if(!encoder) {
-                    encoder = make_binary_encoder(
+                    auto build = make_binary_encoder(
                         encoder_family,
                         run_config.embedding_dimensions,
                         run_config.bit_count,
                         encoder_seed,
                         oracle.data.documents
                     );
+                    run_state.encoder_build_metrics_by_bit[bit_index] =
+                        std::move(build.metrics);
+                    encoder = std::move(build.encoder);
                 }
 
                 auto result = run_binary_flat_vs_float_benchmark_with_oracle(
                     run_config,
                     *encoder,
-                    oracle
+                    oracle,
+                    run_state.encoder_build_metrics_by_bit[bit_index]
                 );
                 sort_rerank_candidates_by_limit(result);
                 run_state.results_by_bit[bit_index][task.repeat_index] = result;
