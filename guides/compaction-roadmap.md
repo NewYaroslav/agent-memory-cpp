@@ -18,6 +18,13 @@ Cross-references: `guides/memory-stacks-roadmap.md` (ADR-009, ADR-013, секц�
 
 Non-goals: подробная спецификация embedding model адаптеров, LLM-based summary generation (использует внешний `ITextAdapter`), distributed compaction (multi-process).
 
+Affective-memory profiles require extra caution. `MergeJob` and
+`SummaryPromotionJob` must not collapse affectively meaningful episodes solely
+by text similarity: trigger, target, appraisal, impacted goals, responsibility,
+controllability, outcome, prediction error, unresolvedness, and relationship
+evidence are part of the semantic contract. See
+[`affective-memory-roadmap.md`](affective-memory-roadmap.md) ADR-A06.
+
 ## 2. CompactionWorker
 
 ### 2.1. Architecture

@@ -165,6 +165,12 @@ enum class MemoryCapability : uint64_t {
 using CapabilitySet = std::underlying_type_t<MemoryCapability>;
 ```
 
+Optional affective-agent capabilities are intentionally not part of the default
+baseline above. They are tracked separately in
+[`affective-memory-roadmap.md`](affective-memory-roadmap.md) as an overlay on
+`AgentLongTermMemory`: `AffectiveEpisodes`, `GoalAttribution`,
+`OutcomeTracking`, `RelationshipState`, and `SensitiveInferencePolicy`.
+
 ### 6.2. Политики
 
 ```cpp

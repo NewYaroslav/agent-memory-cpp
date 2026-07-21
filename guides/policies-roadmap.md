@@ -9,6 +9,12 @@
 - Что описывает: DecayPolicy (anti-loop, забывание, soft-suppression), WritePolicy (trigger, dedupe, importance), SpeakerScopePolicy (multi-user фильтрация), RetrievalMode (associative/targeted/hybrid), HybridRetrievalConfig (RRF/weighted/learned).
 - Cross-references: memory-stacks-roadmap.md (ADR-008, ADR-009), knowledge-units-roadmap.md (SoftSuppressed lifecycle), knowledge-base-roadmap.md (DecayAwareRetriever, AntiLoopCooldown).
 
+Sensitive affective inferences add policy requirements beyond generic
+decay/write rules: provenance, confidence, retention, personalization consent,
+and model-training opt-out. These are tracked in
+[`affective-memory-roadmap.md`](affective-memory-roadmap.md) ADR-A07 and should
+not be folded into `priority_weight` or ordinary usage statistics.
+
 ## 2. DecayPolicy
 
 ### 2.1. DecayMode

@@ -108,3 +108,11 @@ and compaction for mutable memory are tracked in
 BM25, token dictionaries, postings, Unicode tokenization, raw resource stores,
 phrase/proximity, fuzzy search, BM25F, graph retrieval, hybrid retrieval, and
 planner-guided retrieval are tracked in `guides/lexical-search-roadmap.md`.
+
+## Affective Memory Backlog
+
+Optional affective-agent memory extensions are tracked in
+`guides/affective-memory-roadmap.md`. That roadmap defines how this library can
+persist affectively meaningful events, appraisal snapshots, goal impacts,
+action outcomes, relationship evidence, and sensitive-inference policies
+without becoming an emotion engine or autonomous-agent runtime.
