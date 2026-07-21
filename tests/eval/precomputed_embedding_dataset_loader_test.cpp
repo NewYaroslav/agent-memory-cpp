@@ -92,10 +92,32 @@ int main() {
                 agent_memory::load_precomputed_embedding_dataset_from_json_string(
                     valid_dataset_json()
                 );
+            dataset.query_embeddings.clear();
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "missing query embedding must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
             dataset.document_embeddings.push_back(dataset.document_embeddings.front());
             agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
         },
         "duplicate document embedding must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.query_embeddings.push_back(dataset.query_embeddings.front());
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "duplicate query embedding must be rejected"
     );
     expect_runtime_error(
         [] {
@@ -119,4 +141,36 @@ int main() {
         },
         "unknown embedding id must be rejected"
     );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.document_embeddings.front().embedding.values = {2.0F, 0.0F, 0.0F};
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "normalized document embedding norm mismatch must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.query_embeddings.front().embedding.values = {0.5F, 0.0F, 0.0F};
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "normalized query embedding norm mismatch must be rejected"
+    );
+    {
+        auto dataset =
+            agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                valid_dataset_json()
+            );
+        dataset.embedding_model.normalized = false;
+        dataset.document_embeddings.front().embedding.values = {2.0F, 0.0F, 0.0F};
+        dataset.query_embeddings.front().embedding.values = {0.5F, 0.0F, 0.0F};
+        agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+    }
 }

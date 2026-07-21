@@ -17,6 +17,8 @@
 namespace agent_memory {
     namespace {
 
+        constexpr double kNormalizedEmbeddingSquaredNormTolerance = 1.0e-3;
+
         struct SourceLocation final {
             std::string label;
         };
@@ -284,6 +286,7 @@ namespace agent_memory {
             const std::vector<PrecomputedEmbeddingRecord>& records,
             const std::unordered_set<std::string>& expected_ids,
             std::size_t expected_dimension,
+            bool require_unit_norm,
             std::string_view label
         ) {
             std::unordered_set<std::string> seen;
@@ -315,6 +318,20 @@ namespace agent_memory {
                     if(!std::isfinite(value)) {
                         throw std::runtime_error(
                             std::string(label) + ": embedding value must be finite for id "
+                            + record.id
+                        );
+                    }
+                }
+                if(require_unit_norm) {
+                    double squared_norm = 0.0;
+                    for(const auto value : record.embedding.values) {
+                        squared_norm += static_cast<double>(value) * value;
+                    }
+                    if(std::abs(squared_norm - 1.0)
+                       > kNormalizedEmbeddingSquaredNormTolerance) {
+                        throw std::runtime_error(
+                            std::string(label)
+                            + ": normalized embedding squared norm mismatch for id "
                             + record.id
                         );
                     }
@@ -380,12 +397,14 @@ namespace agent_memory {
             dataset.document_embeddings,
             corpus_ids(dataset.retrieval),
             dataset.embedding_model.dimension,
+            dataset.embedding_model.normalized,
             "document_embeddings"
         );
         validate_embedding_records(
             dataset.query_embeddings,
             query_ids(dataset.retrieval),
             dataset.embedding_model.dimension,
+            dataset.embedding_model.normalized,
             "query_embeddings"
         );
     }
