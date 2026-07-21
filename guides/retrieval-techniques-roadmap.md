@@ -405,17 +405,18 @@ Decoder-based retrievers — переход от encoder-only (BERT) к decoder-
 
 В контексте нашего стека — внешний адаптер; конкретная модель выбирается за пределами C++-core, реализуется через `IEmbedder` контракт.
 
-Additional techniques from the decoder-as-embedder lane:
+Additional embedding-adapter techniques from the decoder-as-embedder lane:
 
 - **LLM2Vec-style conversion.** A decoder LLM can be adapted into an embedding
   model by enabling bidirectional attention, continuing training with masked
   next-token prediction, and then applying contrastive learning. In our C++
   stack this remains an external `IEmbedder` backend concern, not a core
-  inference implementation.
+  inference implementation. [Source: arXiv:2404.05961 — LLM2Vec.]
 - **Latent attention pooling.** NV-Embed-style learned pooling avoids relying
   only on the final/EOS token and can improve dense embedding quality. The
   stored `Embedding` contract remains a single `std::vector<float>`; pooling
-  details belong to the adapter provenance.
+  details belong to the adapter provenance. [Source: arXiv:2405.17428 —
+  NV-Embed.]
 - **Instruction-aware embeddings.** Instruct embedders can condition
   query/document vectors on task instructions. Persist the instruction/prompt
   identity as part of projection provenance before mixing such vectors with
@@ -425,10 +426,17 @@ Additional techniques from the decoder-as-embedder lane:
   for narrow domains, but they are offline training workflow tasks. Evaluation
   must use a manually checked locked benchmark, not the generated training
   pairs.
-- **Decoder inference stack.** vLLM prefix caching and SGLang RadixAttention
-  matter most for rerank/page-classifier workloads where many prompts share the
-  same instruction + query prefix. They are deployment choices around an
-  adapter, not new C++ core abstractions.
+
+Decoder runtime optimizations are a separate deployment lane:
+
+- **Prefix/KV-cache reuse.** vLLM Automatic Prefix Caching and SGLang
+  RadixAttention matter most for generative rerankers, page classifiers, and
+  repeated prompt programs where many calls share instruction/query prefixes.
+  They should not be presented as a normal single-pass embedding API speedup.
+  [Sources: vLLM Automatic Prefix Caching docs; arXiv:2312.07104 — SGLang.]
+- Runtime/cache choices belong around external adapters. They do not add new
+  C++ core abstractions unless the project later defines an async/batched
+  reranker or page-classifier adapter.
 
 ### 4.3. Hard-negative mining
 
@@ -964,6 +972,10 @@ being enabled in a production profile.
 
 - **arXiv:2104.08663 — BEIR benchmark (Thakur et al., 2021).** Private provenance: `ai-agent-playbook/concepts/rag-knowledge/Foundational RAG papers — BEIR, REALM, DPR, RAG.md` (internal note) — DPR, REALM, BEIR, hard-negative mining.
 - **arXiv:2402.03216 — BGE M3-Embedding paper (Chen et al., 2024).** Private provenance: `ai-agent-playbook/concepts/rag-knowledge/Decoder-based retrievers — BGE и миграция от encoder.md` (internal note) — BGE-M3, Qwen-Embed, EOS pooling, multi-functionality.
+- **arXiv:2404.05961 — LLM2Vec (BehnamGhader et al., 2024).** Decoder-only LLM to text encoder recipe: bidirectional attention, masked next-token prediction, and contrastive learning. URL: <https://arxiv.org/abs/2404.05961>.
+- **arXiv:2405.17428 — NV-Embed (Lee et al., 2024).** Decoder-style embedding model with latent attention pooling and contrastive instruction tuning. URL: <https://arxiv.org/abs/2405.17428>.
+- **vLLM Automatic Prefix Caching documentation.** KV-cache reuse for repeated-prefix inference workloads. URL: <https://docs.vllm.ai/en/latest/features/automatic_prefix_caching/>.
+- **arXiv:2312.07104 — SGLang (Zheng et al., 2023).** Structured LLM program runtime with RadixAttention for KV-cache reuse. URL: <https://arxiv.org/abs/2312.07104>.
 - `ai-agent-playbook/concepts/rag-knowledge/Vector DB для RAG - выбор и алгоритмы ANN.md` (internal note — no public source available) — ANN algorithms (HNSW/FAISS/DiskANN/ScaNN).
 - `ai-agent-playbook/concepts/llm-research/ANN-алгоритмы для векторного поиска — HNSW, FAISS, DiskANN, ScaNN, фильтрация.md` (internal note — no public source available) — детали ANN-выбора.
 

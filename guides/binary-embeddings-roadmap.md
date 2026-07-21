@@ -135,10 +135,29 @@ Project-specific value must therefore come from at least one of these axes:
   codes;
 - binary feature fusion: multiple code families, sparse+dense binary signals,
   or candidate voting;
+- symmetric vs asymmetric quantization/scoring: binary document codes can be
+  compared with a richer float/scalar query representation plus correction
+  terms, rather than forcing query and document into identical Hamming-only
+  codes;
 - index design: MDBX-friendly buckets, multi-index hashing, HNSW-Hamming,
   IVF-like partitioning, deletion semantics, and incremental updates;
 - measured binary candidate recall plus exact rerank behavior under production
   lifecycle constraints.
+
+The multi-chunk axis is deliberately broader than "average chunk vectors".
+Keep these experiments separate:
+
+- **Document routing code:** a document-level code should fire when at least
+  one child chunk is relevant.
+- **Accumulated semantic code:** weak signals across several chunks can combine
+  into a document/memory-level match.
+- **Chunk-set sketch:** the code approximates presence/frequency of semantic
+  features across a set of chunks.
+
+Candidate aggregation objectives include OR/max pooling, sum + threshold,
+counting or saturating counters, Bloom-like semantic sketches, learned set
+encoders, and attention pooling. Add/delete semantics are part of the
+acceptance criteria because memory objects evolve incrementally.
 
 | Family | Shared code space? | Training | Intended role | Notes |
 |---|---:|---:|---|---|
@@ -169,9 +188,12 @@ Post-PR57 PR ladder:
 | PR #62 | Add a dependency-free PCA-style global projection baseline and run a focused 128D low-bit grid. | Test whether an objective-based learned projection beats random/pair-difference baselines. | No full ITQ, no autoencoder, and no high-dimensional PCA benchmark claim. |
 | PR #63 | Close benchmark methodology gaps: learned training cost fields, raw report artifact policy, and stable performance-harness plan. | Future benchmark PRs can report cold-start/training cost and preserve raw outputs without bloating the repo. | No new encoder family. |
 | PR #64 | Roadmap clarification: external binary-search precedent, project novelty boundary, and decoder-based embedding notes. | Future work does not overclaim binary prefiltering itself as novel. | No code changes. |
-| PR #65 | Add ITQ-style rotation on top of the PCA projection artifact as a separately named encoder family. | Test whether rotating the PCA subspace toward binary cube vertices improves candidate coverage at the same bit/candidate budget. | No supervised labels, no autoencoder, and no local projections. |
-| PR #66 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
-| PR #67+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, or HNSW dense baseline. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall. | More flat-scan polishing unless a benchmark justifies it. |
+| PR #65 | Add ITQ-style rotation on top of the PCA projection artifact as a separately named encoder family. | Test candidate coverage, quantization loss vs PCA, bit occupancy/entropy, useful-bit count, training-seed stability, training time, artifact size, and serialized artifact identity. | No supervised labels, no autoencoder, and no local projections. |
+| PR #66 | Real-embedding + locked-qrels evaluation gate. | Compare Hadamard/PCA/ITQ/float on real documents, real queries, locked qrels, bit/candidate budgets, training cost, artifact size, and leakage-safe data/encoder seeds. | No production backend choice from synthetic-only evidence. |
+| PR #67 | Document or memory-level aggregate binary signatures. | Improve document routing recall at fixed memory budget and define incremental add/delete aggregation semantics for max/sum/saturation/sketch-style policies. | No incompatible local projection matrices. |
+| PR #68 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
+| PR #69 | Scale and lifecycle benchmark gate before production backend selection. | Measure 10k/100k/1M+ corpora with p50/p95 latency, build time, peak memory, bytes/vector, candidate recall, update/delete throughput, compaction/rebuild cost, cold start, reload, and corpus-growth behavior. | No backend decision based only on small synthetic runs. |
+| PR #70+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, HNSW dense baseline, or asymmetric quantization path. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall and lifecycle cost. | More flat-scan polishing unless a benchmark justifies it. |
 
 Benchmark instrumentation contract:
 
@@ -185,6 +207,44 @@ Benchmark instrumentation contract:
 - Remaining methodology work before treating numbers as stable benchmark
   evidence: repeated process-level runs, warm-up rules, environment notes, and
   preserved raw-output policy for selected benchmark suites.
+
+Real-embedding evaluation gate:
+
+- Use real embedding models and real documents/queries with locked qrels before
+  choosing a production backend.
+- Compare at least float exact/ANN, Hadamard, PCA, ITQ, and the strongest
+  current learned projection baseline.
+- Report binary candidate coverage, final exact-reranked quality, top-1
+  agreement, bit/candidate budgets, training time, artifact size, and runtime
+  latency.
+- For trained encoders, train only on allowed training documents/pairs. Do not
+  train on evaluation queries, evaluation qrels, or hard negatives mined from
+  the locked test split.
+- Split by corpus/query provenance strongly enough to prevent chunks from the
+  same document, user, conversation, or time period from leaking across
+  train/validation/test when that matters for the target workload.
+
+Learned-artifact lifecycle contract:
+
+- Every global learned encoder artifact (`R`, PCA/ITQ rotation, thresholds,
+  normalization and source-model provenance) has a versioned identity and a
+  compatibility fingerprint.
+- Search across old and new artifacts is allowed only as an explicit
+  multi-encoder migration mode: encode the query once per active artifact,
+  search each compatible code space separately, then merge/rerank candidates.
+- A partial corpus re-encoding must record which artifact produced each stored
+  code. Mixing codes from different artifacts in one Hamming space is invalid.
+- Production rollout needs atomic activation, rollback, rebuild policy,
+  delete/update behavior during migration, and cold-start/reload validation.
+
+Supervised-hashing data contract:
+
+- Build supervised encoders only after a split policy exists for corpus,
+  queries, qrels, hard negatives, teacher scores, and synthetic pairs.
+- Mine hard negatives only from the training split or from explicitly allowed
+  validation workflows; never from locked test qrels.
+- Select encoder families/hyperparameters on validation, then run one locked
+  test evaluation for reporting.
 
 Coordinate-sign benchmark contract for PR #59:
 
