@@ -26,22 +26,40 @@ The policy should describe authenticated encryption-at-rest without binding the
 whole project to one implementation too early:
 
 ```cpp
-enum class EncryptionMode : uint8_t {
-    Disabled,
-    LocalMachineSecret,
+enum class KeyProviderKind : uint8_t {
+    None,
+    MachineLocal,
     UserPassword,
-    ExternalKeyProvider
+    ExternalKms
+};
+
+enum class EncryptionScope : uint8_t {
+    Disabled,
+    ArtifactsOnly,
+    SensitivePayloadValues,
+    AllValuePayloads,
+    ExternalVolumeEncryption
 };
 
 struct EncryptionPolicy {
-    EncryptionMode mode = EncryptionMode::Disabled;
+    EncryptionScope scope = EncryptionScope::Disabled;
+    KeyProviderKind key_provider = KeyProviderKind::None;
     std::string aead_scheme = "aes-256-gcm";
-    std::string kdf_scheme = "scrypt";
+    std::string kdf_scheme = "argon2id";
     std::string key_id;
     uint32_t key_version = 0;
-    bool encrypt_artifacts = true;
-    bool encrypt_mdbx_values = false;
     bool require_authenticated_metadata = true;
+};
+
+struct EncryptedRecordHeader {
+    std::string scheme_id;
+    std::string key_id;
+    uint32_t key_version = 0;
+    ByteArray nonce;
+    ByteArray salt;
+    ByteArray authentication_tag;
+    uint32_t plaintext_size = 0;
+    uint32_t schema_version = 0;
 };
 ```
 
@@ -50,10 +68,44 @@ Guidance:
 - use AEAD encryption so corrupted or tampered ciphertext is rejected;
 - keep key derivation and key storage outside retrieval/indexing code;
 - record scheme and key identity in profile metadata for future rotation;
+- for AES-GCM, never reuse a nonce with the same key; use a reliable CSPRNG
+  96-bit nonce or a proven unique counter/record-identity construction;
+- bind ciphertext to its record through Additional Authenticated Data such as
+  `scope_id`, `unit_id`, component kind, artifact type, and schema version;
+- verify the authentication tag before deserializing plaintext;
+- allow several `key_version` values during key rotation;
 - use temp-file plus atomic replace for encrypted file-backed artifacts;
+- distinguish atomic visibility from durable persistence: durable file-backed
+  artifacts normally need temp-file write, file flush, atomic replace, and
+  parent-directory flush where the platform exposes it;
 - rely on MDBX transactions for database durability, while optionally
   encrypting value payloads before write;
+- document which indexes and metadata remain plaintext for each scope;
 - do not treat encryption as a substitute for retention, erasure, or consent.
+
+Threat model:
+
+| Threat | Expected protection |
+|---|---|
+| Copied encrypted artifact or DB value without key material | Protected by AEAD if nonce/key rules hold |
+| Copied whole user profile including ordinary files | Protected only if the key is in an OS-backed vault or external provider |
+| Code already running as the user | Not protected by local encryption alone |
+| Root/admin compromise | Out of scope for local software-only encryption |
+
+Machine-local keys should mean OS-backed storage such as Windows DPAPI, macOS
+Keychain, Linux Secret Service/keyring, TPM-backed keys, or an equivalent
+credential vault. A secret file stored next to the database is not sufficient
+for the "whole profile copied" threat.
+
+Encrypted values are not the same as an encrypted database. DBI names, key
+ordering, record counts, payload sizes, timestamps, update frequency, access
+patterns, and some secondary indexes may remain visible unless the deployment
+uses external volume/database encryption or redesigns the index layout.
+
+Password-derived keys should use Argon2id as the preferred KDF, or scrypt where
+Argon2id is unavailable. KDF parameters (`memory_cost`, `time_cost`,
+`parallelism`, `salt`, and `kdf_version`) are part of the encrypted record or
+profile metadata. Plain `SHA-256(password)` is not an acceptable password KDF.
 
 ## 2. DecayPolicy
 

@@ -171,6 +171,12 @@ baseline above. They are tracked separately in
 `AgentLongTermMemory`: `AffectiveEpisodes`, `GoalAttribution`,
 `OutcomeTracking`, `RelationshipState`, and `SensitiveInferencePolicy`.
 
+General cross-cutting opt-ins such as encrypted local storage and context
+planning are not affective capabilities. They are represented by
+`enable_encrypted_storage`/`EncryptionPolicy` and
+`enable_context_planner`/`ContextTierPolicy` in `MemoryProfileSpec` because
+ordinary RAG and agent-memory profiles may use them too.
+
 ### 6.2. Политики
 
 ```cpp
@@ -231,7 +237,7 @@ enum class ContextTier : uint8_t {
     Short,   // current session, recent turns, active unresolved events
     Medium,  // recent summaries, commitments, short-term relationship evidence
     Long,    // durable facts, older episodes, graph relations, semantic KB
-    Base     // read-only persona, policy, compiled project knowledge
+    Base     // addressable persona, policy, compiled project knowledge
 };
 
 struct ContextTierPolicy {
@@ -240,8 +246,8 @@ struct ContextTierPolicy {
     bool enable_long = true;
     bool enable_base = true;
 
-    uint64_t short_window_ms = 0;
-    uint64_t medium_window_ms = 0;
+    std::optional<uint64_t> short_window_ms;
+    std::optional<uint64_t> medium_window_ms;
     size_t short_k = 8;
     size_t medium_k = 12;
     size_t long_k = 20;
@@ -347,6 +353,11 @@ packs. `MemoryAwareContextPlanner` from
 [`runtime-services-roadmap.md`](runtime-services-roadmap.md) chooses which tiers
 are queried for a turn based on urgency, trigger features, latency budget, and
 token budget.
+
+`Base` is always addressable, not always fully injected. `allow_compiled_wiki`
+controls whether large compiled knowledge packs may be queried or cached for a
+turn; a small immutable system prefix can remain enabled even when compiled
+wiki expansion is disabled.
 
 `EncryptionPolicy` is defined in
 [`policies-roadmap.md`](policies-roadmap.md). `enable_encrypted_storage` is an

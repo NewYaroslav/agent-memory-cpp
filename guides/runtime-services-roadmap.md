@@ -463,26 +463,58 @@ retrieval and before final `ContextBuilder` formatting. It decides how deeply
 the memory stack should be queried for a single turn.
 
 It is useful for live agents where a fast answer may be more important than
-deep recall. The service consumes application-level signals such as:
+deep recall. Urgency is only one axis: high urgency sets a latency ceiling, but
+recall requirement and correctness risk define the minimum safe retrieval
+depth. A safety-critical or high-cost-of-omission request must not silently drop
+mandatory long-memory retrieval just because it is urgent.
+
+The service consumes application-level signals such as:
 
 - incoming event urgency;
 - direct mention / interruption flags;
-- question-like trigger words;
-- explicit recall triggers such as "remember", "before", "yesterday",
-  "history", or "how did we decide";
+- normalized recall intent from an external intent detector;
+- lexical recall features such as "remember", "before", or "yesterday" as
+  examples only, not as the core C++ contract;
+- correctness/safety risk;
 - latency budget;
 - token budget;
+- minimum required tiers;
 - enabled context tiers.
 
 Conceptual API:
 
 ```cpp
+enum class RecallRequirement {
+    None,
+    Opportunistic,
+    Preferred,
+    Required
+};
+
+enum class CorrectnessRisk {
+    Low,
+    Medium,
+    High,
+    SafetyCritical
+};
+
+struct ContextTierSet {
+    bool short_required = false;
+    bool medium_required = false;
+    bool long_required = false;
+    bool base_required = false;
+};
+
 struct ContextPlanningInput {
     std::string raw_query;
-    double urgency = 0.0;
+    double response_urgency = 0.0;
+    RecallRequirement recall_requirement = RecallRequirement::Opportunistic;
+    CorrectnessRisk correctness_risk = CorrectnessRisk::Low;
+    ContextTierSet minimum_required_tiers;
     bool direct_mention = false;
     bool background_task = false;
-    uint64_t latency_budget_ms = 0;
+    bool allow_async_extension = false;
+    std::optional<uint64_t> latency_budget_ms;
     ContextBudget budget;
 };
 
@@ -498,25 +530,38 @@ struct ContextTierPlan {
     size_t long_k = 20;
 };
 
+struct ContextPlanDecision {
+    ContextTierPlan plan;
+    std::vector<std::string> reasons;
+    std::string policy_version;
+    bool recall_trigger_detected = false;
+    bool latency_limited = false;
+    bool token_limited = false;
+    bool async_extension_required = false;
+};
+
 class IMemoryAwareContextPlanner {
 public:
     virtual ~IMemoryAwareContextPlanner() = default;
-    virtual ContextTierPlan plan(const ContextPlanningInput& input) = 0;
+    virtual ContextPlanDecision plan(const ContextPlanningInput& input) = 0;
 };
 ```
 
 Suggested live-agent defaults:
 
-| Situation | Urgency | Context depth |
-|---|---:|---|
-| Direct live mention / interruption | 9-10 | `short + base`, no deep retrieval |
-| User question in chat | 7-8 | `short + medium`, targeted long only if triggered |
-| Ordinary message | 4-6 | `short + medium + capped long` |
-| Reflection / background synthesis | 0-3 | full long retrieval, graph expansion, compiled wiki |
+| Situation | Planning outcome |
+|---|---|
+| High urgency, low recall requirement | `short + base`, no deep retrieval |
+| High urgency, required recall | quick acknowledgement plus targeted long retrieval, or explicit "context not confirmed yet" |
+| Safety-critical / high cost of omission | minimum required tiers cannot be disabled by latency policy |
+| Ordinary message | `short + medium + capped long` |
+| Reflection / background synthesis | full long retrieval, graph expansion, compiled wiki |
 
 The planner does not replace `HybridRetriever` or `ContextBuilder`. It produces
 the retrieval/context plan that those components execute. Applications may
-override the defaults when correctness requires full recall.
+override the defaults when correctness requires full recall. Decision reasons
+must be traceable so failures can be attributed to planning, retrieval,
+reranking, context trimming, or policy denial.
 
 ## 6. Service Lifecycle
 
@@ -595,7 +640,7 @@ IResponseCache.lookup(response_cache_key)  // ТОЛЬКО если opt-in (defa
   ├── hit → return cached response_text
   └── miss (или выключен) → continue
   ↓
-MemoryAwareContextPlanner.plan(input)  // если opt-in: sets tier/depth/latency plan
+MemoryAwareContextPlanner.plan(input)  // if opt-in: sets tier/depth/risk plan
   ↓
 HybridRetriever.retrieve(plan)
   ├── LexicalRetriever (per lexical-search-roadmap.md)
@@ -680,7 +725,7 @@ Per memory-stacks-roadmap.md секция 16, конкретизация:
 | 12.5 | `IPromptPrefixCache` (in-memory LRU key dedup) + `AnthropicCacheControlAdapter` |
 | 12.6 | `IResponseCache` stub (default OFF, no-op implementation для safe by default) |
 | M2.x | `IResponseCache` full implementation + MDBX persistence (`response_cache` DBI) |
-| M2.x | `IMemoryAwareContextPlanner` + urgency-gated retrieval depth policy |
+| M2.x | `IMemoryAwareContextPlanner` + urgency/recall/risk-aware context policy |
 
 ## 10. Open Issues
 

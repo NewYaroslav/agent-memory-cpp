@@ -54,17 +54,27 @@ taxonomy into the storage layer.
 ## ADR-A03 — Self and inferred user affect are separate
 
 Agent self-state, user self-report, and inferred user affect must never be
-stored in the same field. Every appraisal or affect snapshot carries a
-perspective:
+stored in the same field. Every appraisal or affect snapshot carries both the
+subject of the state and how the evidence was obtained. These are two separate
+axes:
 
 ```cpp
-enum class AppraisalPerspective : std::uint8_t {
-    AgentSelf,
-    UserSelfReported,
-    UserInferred,
-    ThirdPartyInferred
+struct AffectSubjectRef {
+    ScopeId scope_id;
+    std::string subject_id;
+};
+
+enum class AffectEvidenceKind : std::uint8_t {
+    AgentInternal,
+    SelfReported,
+    Inferred,
+    SensorDerived
 };
 ```
+
+`subject_id` identifies the agent, user, participant, or other entity whose
+state is being described. `evidence_kind` explains whether the value came from
+agent runtime state, a user self-report, an inference, or an external signal.
 
 Inferences about a user's emotional or mental state require confidence,
 provenance, model identity, and retention policy. They must not be presented as
@@ -81,8 +91,8 @@ Conceptual record:
 ```cpp
 struct AffectTransitionRecord {
     std::uint64_t sequence = 0;
-    KnowledgeUnitId trigger_event_id = 0;
-    KnowledgeUnitId transition_unit_id = 0;
+    std::optional<KnowledgeUnitId> trigger_event_id;
+    std::optional<KnowledgeUnitId> transition_unit_id;
     std::string controller_version;
     std::uint64_t config_hash = 0;
 };
@@ -90,6 +100,12 @@ struct AffectTransitionRecord {
 
 Changing controller parameters may produce new derived state, but it must not
 silently mutate history.
+
+Append-only applies to the raw transition log. Derived retrieval units such as
+episode summaries, relationship materialized views, and coping statistics may
+be superseded or recomputed as long as they retain evidence links back to the
+raw records that produced them. If a retention policy physically deletes raw
+transitions, full replay before that deletion point is no longer guaranteed.
 
 ## ADR-A05 — Affect may modulate retrieval, not truth
 
@@ -150,12 +166,21 @@ struct RetentionPolicyComponent {
     bool allow_personalization = true;
     bool allow_model_training = false;
     bool allow_long_term_storage = true;
-    std::uint64_t erase_after_ms = 0;
+    std::optional<std::uint64_t> erase_after_ms;
 };
 ```
 
 Every inferred user-state component should also carry confidence, provenance,
 model/version, observation time, and deletion support.
+
+Unknown values are not encoded as `0.0`. Scalar dimensions use
+`std::optional<double>` until a compact presence-mask representation is justified
+by benchmarks. `NaN` and infinities are invalid. `valence` and
+`goal_congruence` use `[-1.0, 1.0]`; other normalized dimensions use
+`[0.0, 1.0]` unless their field contract says otherwise. Confidence for
+inferred values is optional and must be supplied by the producing model or
+policy; a partially populated inferred record must not silently become
+max-confidence.
 
 ## ADR-A08 — Sensitive local memory needs optional encryption-at-rest
 
@@ -181,51 +206,62 @@ not as a mandatory behaviour of every profile:
 AES-256-GCM with a memory-hard password KDF is a reasonable first candidate for
 local encrypted artifacts, but the roadmap should name the capability as AEAD
 encryption-at-rest rather than freezing one crypto construction too early.
+`EncryptionPolicy` in [`policies-roadmap.md`](policies-roadmap.md) owns the
+threat model, key provider, encryption scope, nonce uniqueness, AAD binding,
+and rotation details.
 
 Encryption does not replace retention, deletion, provenance, or consent
 policies. It only reduces exposure if local files are copied or inspected
 outside the running process.
 
-## ADR-A09 — Live-agent context depth is urgency-gated
+Encrypted values are not the same as an encrypted database. DBI names, key
+ordering, record counts, payload sizes, timestamps, update frequency, access
+patterns, and some indexes may remain visible unless a stronger deployment
+scope is selected.
+
+## ADR-A09 — Live-agent context depth is urgency/recall/risk-gated
 
 Affective agents often run in low-latency conversations. A direct live-chat
 mention should not pay the same retrieval cost as a background reflection job.
 
 The runtime should provide a policy layer that maps incoming-event urgency,
-trigger features, and latency budget to a memory access plan:
+recall requirement, correctness risk, and latency budget to a memory access
+plan:
 
 ```text
-direct mention / urgent interruption -> short + base context only
-normal user question                 -> short + medium, optional targeted long
+high urgency + low recall need       -> short + base context only
+high urgency + required recall       -> quick acknowledgement + targeted long retrieval
+safety-critical / high omission cost -> mandatory tiers cannot be skipped
 reflective/background task           -> short + medium + long + graph/wiki
 ```
 
 This is not a replacement for retrieval. It is a pre-retrieval planning step
 that decides which tiers and retrievers are allowed for this turn. The memory
 library provides the plan/result contracts; the application runtime owns the
-urgency score and the final conversational behaviour.
+urgency score, recall-intent detection, risk classification, and final
+conversational behaviour.
 
 ## Optional capabilities
 
 These capabilities are opt-in extensions to `AgentLongTermMemory`, not a new
 mandatory baseline:
 
-```cpp
-enum class MemoryCapability : std::uint64_t {
-    // existing...
-    AffectiveEpisodes = 1ull << 13,
-    GoalAttribution   = 1ull << 14,
-    OutcomeTracking   = 1ull << 15,
-    RelationshipState = 1ull << 16,
-    SensitiveInferencePolicy = 1ull << 17,
-    EncryptedLocalStorage = 1ull << 18,
-    UrgencyAwareContextPlanning = 1ull << 19
-};
+```text
+AffectiveEpisodes
+GoalAttribution
+OutcomeTracking
+RelationshipState
+SensitiveInferencePolicy
 ```
 
-The exact bit positions are illustrative until the profile schema is
-implemented. The important decision is the capability grouping: do not add a
-separate capability for every scalar appraisal field.
+The important decision is the capability grouping: do not add a separate
+capability for every scalar appraisal field. Canonical bit positions live in
+`memory-stacks-roadmap.md` once the schema is implemented.
+
+Encryption-at-rest and context planning are cross-cutting capabilities, not
+affective capabilities. They are useful for ordinary RAG and agent memory
+profiles too, and are specified through `EncryptionPolicy` and
+`MemoryAwareContextPlanner`.
 
 ## Candidate components
 
@@ -236,23 +272,25 @@ typed metadata before freezing dedicated stores or DBIs.
 
 ```cpp
 struct AppraisalComponent {
-    AppraisalPerspective perspective = AppraisalPerspective::AgentSelf;
+    AffectSubjectRef subject;
+    AffectEvidenceKind evidence_kind = AffectEvidenceKind::Inferred;
 
-    double novelty = 0.0;
-    double goal_relevance = 0.0;
-    double goal_congruence = 0.0;
-    double certainty = 0.0;
-    double controllability = 0.0;
-    double reversibility = 0.0;
-    double urgency = 0.0;
+    std::optional<double> novelty;
+    std::optional<double> goal_relevance;
+    std::optional<double> goal_congruence; // [-1, 1]
+    std::optional<double> certainty;
+    std::optional<double> controllability;
+    std::optional<double> reversibility;
+    std::optional<double> urgency;
 
-    double responsibility_self = 0.0;
-    double responsibility_other = 0.0;
-    double norm_violation = 0.0;
-    double social_significance = 0.0;
+    std::optional<double> responsibility_self;
+    std::optional<double> responsibility_other;
+    std::optional<double> norm_violation;
+    std::optional<double> social_significance;
 
-    double inference_confidence = 1.0;
+    std::optional<double> inference_confidence;
     std::string appraisal_model_id;
+    std::vector<KnowledgeUnitId> evidence_units;
 };
 ```
 
@@ -260,18 +298,28 @@ struct AppraisalComponent {
 
 ```cpp
 struct AffectSnapshotComponent {
-    double valence = 0.0;
-    double arousal = 0.0;
-    double control = 0.0;
-    double certainty = 0.0;
-    double affiliation = 0.0;
-    double cognitive_load = 0.0;
-    double allostatic_load = 0.0;
+    AffectSubjectRef subject;
+    AffectEvidenceKind evidence_kind = AffectEvidenceKind::Inferred;
+
+    std::optional<double> valence; // [-1, 1]
+    std::optional<double> arousal;
+    std::optional<double> control;
+    std::optional<double> certainty;
+    std::optional<double> affiliation;
+    std::optional<double> cognitive_load;
+    std::optional<double> allostatic_load;
 
     std::uint64_t captured_at_ms = 0;
     std::string affect_model_id;
+    std::optional<double> inference_confidence;
+    std::vector<KnowledgeUnitId> evidence_units;
 };
 ```
+
+`allostatic_load` is an internal resource-pressure estimate for agent runtime
+use, not an objectively measured biological quantity. It requires a definition,
+model identity, and confidence before it is interpreted outside the producing
+runtime.
 
 Emotion names can be stored as a derived interpretation:
 
@@ -289,15 +337,20 @@ struct EmotionInterpretationComponent {
 ### GoalImpactComponent
 
 ```cpp
-using GoalId = std::uint64_t;
+struct GoalRef {
+    ScopeId scope_id;
+    std::string goal_id;
+    std::uint64_t goal_version = 0;
+    std::string goal_snapshot_text;
+};
 
 struct GoalImpact {
-    GoalId goal_id = 0;
-    double importance = 0.0;
-    double success_probability_before = 0.0;
-    double success_probability_after = 0.0;
-    double information_deficit = 0.0;
-    double resource_deficit = 0.0;
+    GoalRef goal;
+    std::optional<double> importance;
+    std::optional<double> success_probability_before;
+    std::optional<double> success_probability_after;
+    std::optional<double> information_deficit;
+    std::optional<double> resource_deficit;
 };
 
 struct GoalImpactComponent {
@@ -327,16 +380,25 @@ struct ActionOutcomeComponent {
     std::string action_id;
     CopingStrategy coping = CopingStrategy::None;
 
-    double predicted_utility = 0.0;
-    double predicted_success_probability = 0.0;
-    double actual_utility = 0.0;
-    double prediction_error = 0.0;
+    std::optional<double> predicted_utility;
+    std::optional<double> predicted_success_probability;
+    std::optional<double> actual_utility;
+    std::optional<double> prediction_error;
 
     bool completed = false;
     bool resolved_trigger = false;
+    std::string utility_model_id;
+    std::string outcome_model_id;
+    std::optional<double> outcome_confidence;
+    std::vector<KnowledgeUnitId> evidence_units;
+    std::uint64_t observed_at_ms = 0;
     std::uint64_t evaluated_at_ms = 0;
 };
 ```
+
+`prediction_error` is the signed difference between observed utility and the
+utility predicted by `utility_model_id` under that model's normalization
+contract. If either side is absent, `prediction_error` is absent too.
 
 This makes the causal chain inspectable:
 
@@ -351,16 +413,19 @@ signals. Do not collapse them.
 
 ```cpp
 struct SalienceComponent {
-    double surprise = 0.0;
-    double emotional_intensity = 0.0;
-    double goal_relevance = 0.0;
-    double social_significance = 0.0;
-    double unresolvedness = 0.0;
-    double prediction_error = 0.0;
-    double encoding_strength = 0.0;
-    double retrieval_boost = 0.0;
+    std::optional<double> surprise;
+    std::optional<double> emotional_intensity;
+    std::optional<double> goal_relevance;
+    std::optional<double> social_significance;
+    std::optional<double> unresolvedness;
+    std::optional<double> prediction_error;
+    std::optional<double> encoding_strength;
 };
 ```
+
+Retrieval boost is a derived policy output, not a durable source fact. If an
+implementation persists a boost for diagnostics, it must also persist the
+policy version that produced it.
 
 ### RelationshipStateComponent
 
@@ -370,20 +435,25 @@ Relationship state is slow-moving derived state backed by evidence units:
 struct RelationshipStateComponent {
     std::string target_entity_id;
 
-    double trust = 0.0;
-    double affiliation = 0.0;
-    double familiarity = 0.0;
-    double perceived_threat = 0.0;
-    double reciprocity = 0.0;
-    double boundary_risk = 0.0;
+    std::optional<double> trust;
+    std::optional<double> affiliation;
+    std::optional<double> familiarity;
+    std::optional<double> perceived_threat;
+    std::optional<double> reciprocity;
+    std::optional<double> boundary_risk;
 
-    double confidence = 0.0;
+    std::optional<double> confidence;
     std::uint64_t updated_at_ms = 0;
     std::vector<KnowledgeUnitId> evidence_units;
+    std::vector<KnowledgeUnitId> negative_evidence_units;
+    std::vector<KnowledgeUnitId> superseded_evidence_units;
 };
 ```
 
-`evidence_units` is mandatory for explainability and correction.
+`evidence_units` is mandatory for explainability and correction. Relationship
+state is an agent belief unless separately confirmed by the user. It must
+support negative evidence, superseded evidence, manual correction, and decay
+policy rather than treating every old signal as equally current.
 
 ## Profile direction
 
@@ -419,11 +489,16 @@ agent memory while exposing a latency-oriented context tier overlay:
 | `short` | current session, recent turns, active goals, unresolved immediate events | live response, direct mention, interruption |
 | `medium` | recent episode summaries, active relationship evidence, short-term commitments | ordinary user questions, continuity |
 | `long` | durable facts, older episodes, graph relations, semantic KB | deliberate recall, reflection, planning |
-| `base` | read-only persona, policy, project facts, stable compiled knowledge | always-available grounding |
+| `base` | read-only persona, policy, project facts, stable compiled knowledge | addressable grounding |
 
 These are context-planning tiers, not necessarily separate database files. A
 single `MemoryStack` may back several tiers through filters, recency windows,
 compiled summaries, and retrieval budgets.
+
+`base` means always addressable, not always fully injected. A small immutable
+system prefix may be present on every turn, while larger persona, policy, and
+compiled knowledge blocks should use prefix caching, references, or targeted
+retrieval to avoid token bloat.
 
 This gives a clean hybrid:
 
