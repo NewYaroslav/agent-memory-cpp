@@ -86,14 +86,14 @@ if(NOT mode STREQUAL "synthetic_binary_rerank_grid")
 endif()
 
 string(JSON seed_run_count LENGTH "${grid_json}" seed_runs)
-if(NOT seed_run_count EQUAL 9)
-    message(FATAL_ERROR "expected 9 seed_runs, got ${seed_run_count}")
+if(NOT seed_run_count EQUAL 11)
+    message(FATAL_ERROR "expected 11 seed_runs, got ${seed_run_count}")
 endif()
 
 string(JSON aggregate_count LENGTH "${grid_json}" aggregate_summary)
-if(NOT aggregate_count EQUAL 8)
+if(NOT aggregate_count EQUAL 9)
     message(FATAL_ERROR
-        "expected 8 aggregate encoder/bit summaries, got ${aggregate_count}"
+        "expected 9 aggregate encoder/bit summaries, got ${aggregate_count}"
     )
 endif()
 
@@ -105,6 +105,7 @@ set(saw_hadamard_16 FALSE)
 set(saw_learned_8 FALSE)
 set(saw_learned_16 FALSE)
 set(saw_pca_8 FALSE)
+set(saw_itq_8 FALSE)
 math(EXPR last_aggregate "${aggregate_count} - 1")
 foreach(aggregate_index RANGE 0 ${last_aggregate})
     string(JSON aggregate_encoder_family GET
@@ -114,7 +115,7 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
         "${grid_json}" aggregate_summary ${aggregate_index} bit_count
     )
     if(NOT aggregate_encoder_family MATCHES
-       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection|learned_pair_difference_projection|pca_projection)$")
+       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection|learned_pair_difference_projection|pca_projection|itq_rotation_projection)$")
         message(FATAL_ERROR
             "unexpected aggregate encoder_family: ${aggregate_encoder_family}"
         )
@@ -163,6 +164,11 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
             message(FATAL_ERROR "PCA projection must only report supported bit_count")
         endif()
         set(saw_pca_8 TRUE)
+    elseif(aggregate_encoder_family STREQUAL "itq_rotation_projection")
+        if(NOT aggregate_bit_count EQUAL 8)
+            message(FATAL_ERROR "ITQ rotation must only report supported bit_count")
+        endif()
+        set(saw_itq_8 TRUE)
     endif()
     if(NOT aggregate_quality_count EQUAL expected_quality_count)
         message(FATAL_ERROR "aggregate quality_sample_count is inconsistent")
@@ -234,7 +240,8 @@ foreach(aggregate_index RANGE 0 ${last_aggregate})
         )
     endif()
     if(aggregate_encoder_family STREQUAL "learned_pair_difference_projection"
-       OR aggregate_encoder_family STREQUAL "pca_projection")
+       OR aggregate_encoder_family STREQUAL "pca_projection"
+       OR aggregate_encoder_family STREQUAL "itq_rotation_projection")
         if(NOT aggregate_training_ms_max GREATER 0
            OR NOT aggregate_training_vectors_max GREATER 0
            OR NOT aggregate_artifact_max GREATER 0)
@@ -256,7 +263,7 @@ endforeach()
 if(NOT saw_random_8 OR NOT saw_random_16 OR NOT saw_coordinate_8
    OR NOT saw_hadamard_8 OR NOT saw_hadamard_16
    OR NOT saw_learned_8 OR NOT saw_learned_16
-   OR NOT saw_pca_8)
+   OR NOT saw_pca_8 OR NOT saw_itq_8)
     message(FATAL_ERROR "aggregate summary is missing an expected encoder/bit row")
 endif()
 
@@ -269,7 +276,7 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
         "${grid_json}" seed_runs ${seed_run_index} encoder_seed
     )
     if(NOT seed_encoder_family MATCHES
-       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection|learned_pair_difference_projection|pca_projection)$")
+       "^(random_hyperplane_rademacher|coordinate_sign|randomized_hadamard_projection|learned_pair_difference_projection|pca_projection|itq_rotation_projection)$")
         message(FATAL_ERROR "unexpected seed_run encoder_family: ${seed_encoder_family}")
     endif()
     if(seed_encoder_family STREQUAL "coordinate_sign"
@@ -354,7 +361,8 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
     string(JSON report_count LENGTH "${grid_json}" seed_runs ${seed_run_index} reports)
     set(expected_report_count 2)
     if(seed_encoder_family STREQUAL "coordinate_sign"
-       OR seed_encoder_family STREQUAL "pca_projection")
+       OR seed_encoder_family STREQUAL "pca_projection"
+       OR seed_encoder_family STREQUAL "itq_rotation_projection")
         set(expected_report_count 1)
     endif()
     if(NOT report_count EQUAL expected_report_count)
@@ -383,6 +391,10 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
         elseif(seed_encoder_family STREQUAL "pca_projection")
             if(NOT report_bit_count EQUAL 8)
                 message(FATAL_ERROR "PCA projection report must use bit_count 8")
+            endif()
+        elseif(seed_encoder_family STREQUAL "itq_rotation_projection")
+            if(NOT report_bit_count EQUAL 8)
+                message(FATAL_ERROR "ITQ rotation report must use bit_count 8")
             endif()
         else()
             if(report_index EQUAL 0 AND NOT report_bit_count EQUAL 8)
@@ -420,7 +432,8 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
             summary encoder_training training_source
         )
         if(seed_encoder_family STREQUAL "learned_pair_difference_projection"
-           OR seed_encoder_family STREQUAL "pca_projection")
+           OR seed_encoder_family STREQUAL "pca_projection"
+           OR seed_encoder_family STREQUAL "itq_rotation_projection")
             if(NOT summary_training_ms GREATER 0
                OR NOT summary_training_vectors GREATER 0
                OR NOT summary_artifact_bytes GREATER 0
@@ -516,7 +529,8 @@ foreach(seed_run_index RANGE 0 ${last_seed_run})
                 )
             endif()
             if(seed_encoder_family STREQUAL "learned_pair_difference_projection"
-               OR seed_encoder_family STREQUAL "pca_projection")
+               OR seed_encoder_family STREQUAL "pca_projection"
+               OR seed_encoder_family STREQUAL "itq_rotation_projection")
                 if(NOT repeat_training_ms GREATER 0
                    OR NOT repeat_training_vectors GREATER 0
                    OR NOT repeat_artifact_bytes GREATER 0

@@ -87,6 +87,14 @@ Run the PCA-focused 128D learned-projection fixture:
     tmp/synthetic-binary-rerank-grid-pca-report.json
 ```
 
+Run the ITQ-focused 128D learned-projection fixture:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/synthetic-binary-rerank-grid-itq.example.json \
+    tmp/synthetic-binary-rerank-grid-itq-report.json
+```
+
 Run the high-dimensional synthetic variants when investigating projection
 scaling beyond the default 128D fixture:
 
@@ -117,7 +125,8 @@ in the grid. Supported values are:
 - `coordinate_sign`;
 - `randomized_hadamard_projection`;
 - `learned_pair_difference_projection`;
-- `pca_projection`.
+- `pca_projection`;
+- `itq_rotation_projection`.
 
 If omitted, the grid keeps the historical random-hyperplane-only behavior.
 `coordinate_sign` is unseeded and emits exactly `embedding_dimensions` bits, so
@@ -134,14 +143,17 @@ encoder seed for readability.
 
 `pca_projection` also trains only on document vectors and supports
 `bit_count <= embedding_dimensions`; the runner skips larger bit widths for
-that family.
+that family. `itq_rotation_projection` has the same bit-width constraint, starts
+from the PCA artifact, then learns an unsupervised ITQ-style orthogonal rotation
+before applying zero-centered signs.
 
 Binary grid JSON reports include an `encoder.training` section for every
 per-repeat report and an `encoder_training` section in per-bit and aggregate
 summaries. These fields record `encoder_training_ms`, `training_vector_count`,
 `artifact_payload_bytes`, and whether training was included in query/build
-timing. Learned projection and PCA report document-vector training; zero-training
-families report `training_source = "none"` and zero training/artifact payload.
+timing. Learned projection, PCA, and ITQ report document-vector training;
+zero-training families report `training_source = "none"` and zero
+training/artifact payload.
 Training remains excluded from query timing and binary materialization timing,
 but the cold-start cost is visible in the report.
 

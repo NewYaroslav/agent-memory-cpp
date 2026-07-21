@@ -17,6 +17,7 @@
 #include "index/FlatBinarySignatureIndex.hpp"
 #include "index/IBinarySignatureEncoder.hpp"
 #include "index/IBinarySignatureIndex.hpp"
+#include "index/ItqRotationBinaryEncoder.hpp"
 #include "index/IVectorIndex.hpp"
 #include "index/LearnedProjectionBinaryEncoder.hpp"
 #include "index/MultiProbeHammingIndex.hpp"
