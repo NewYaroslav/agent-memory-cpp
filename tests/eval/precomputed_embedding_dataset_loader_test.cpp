@@ -20,10 +20,18 @@ namespace {
   "embedding_artifact": {
     "generator_id": "agent-memory.fixture.loader-test",
     "generator_version": "v1",
-    "source_revision": "unit-test",
+    "dataset_revision": "unit-test-dataset",
+    "generator_revision": "unit-test-generator",
+    "model_revision": "unit-test-model",
+    "qrels_revision": "unit-test-qrels",
+    "document_prompt_id": "unit-test-document-prompt",
+    "query_prompt_id": "unit-test-query-prompt",
     "projection_kind": "semantic_axes_3d",
-    "config_hash": "fixture-config-loader-test",
-    "artifact_hash": "fixture-artifact-loader-test"
+    "normalization": "l2",
+    "dtype": "float32",
+    "hash_algorithm": "sha256",
+    "config_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "artifact_hash": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
   },
   "corpus": [
     {"id": "doc:a", "title": "A", "text": "alpha"},
@@ -60,6 +68,18 @@ namespace {
         fail(message);
     }
 
+    [[nodiscard]] std::string without_line(
+        std::string json,
+        const std::string& line
+    ) {
+        const auto offset = json.find(line);
+        if(offset == std::string::npos) {
+            fail("test fixture line was not found");
+        }
+        json.erase(offset, line.size());
+        return json;
+    }
+
 } // namespace
 
 int main() {
@@ -87,8 +107,18 @@ int main() {
         fail("embedding artifact generator id was not loaded");
     }
     if(dataset.embedding_artifact->artifact_hash
-       != "fixture-artifact-loader-test") {
+       != "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789") {
         fail("embedding artifact hash was not loaded");
+    }
+    if(dataset.embedding_artifact->dataset_revision != "unit-test-dataset") {
+        fail("embedding artifact dataset revision was not loaded");
+    }
+    if(dataset.embedding_artifact->document_prompt_id
+       != "unit-test-document-prompt") {
+        fail("embedding artifact document prompt id was not loaded");
+    }
+    if(dataset.embedding_artifact->hash_algorithm != "sha256") {
+        fail("embedding artifact hash algorithm was not loaded");
     }
     if(dataset.document_embeddings.size() != 2 || dataset.query_embeddings.size() != 1) {
         fail("embedding record counts are wrong");
@@ -115,6 +145,53 @@ int main() {
             agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
         },
         "empty embedding artifact hash must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            const auto json = without_line(
+                valid_dataset_json(),
+                "    \"qrels_revision\": \"unit-test-qrels\",\n"
+            );
+            (void)agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                json
+            );
+        },
+        "missing embedding artifact field must be rejected while loading"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.embedding_artifact->hash_algorithm = "sha1";
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "unsupported embedding artifact hash algorithm must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.embedding_artifact->config_hash =
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "self-descriptive embedding artifact hash must be rejected by canonical contract"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.embedding_artifact->artifact_hash =
+                "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789";
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "uppercase embedding artifact hash must be rejected"
     );
     expect_runtime_error(
         [] {

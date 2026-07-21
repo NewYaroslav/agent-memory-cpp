@@ -226,6 +226,30 @@ namespace agent_memory {
             return model;
         }
 
+        [[nodiscard]] bool is_lowercase_sha256_hex(std::string_view value) noexcept {
+            if(value.size() != 64) {
+                return false;
+            }
+            for(const auto ch : value) {
+                if((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+                    continue;
+                }
+                return false;
+            }
+            return true;
+        }
+
+        void require_non_empty_artifact_field(
+            std::string_view value,
+            std::string_view field
+        ) {
+            if(value.empty()) {
+                throw std::runtime_error(
+                    "embedding_artifact." + std::string{field} + " must not be empty"
+                );
+            }
+        }
+
         [[nodiscard]] std::optional<PrecomputedEmbeddingArtifactInfo>
         read_embedding_artifact(
             const nlohmann::json& root,
@@ -245,10 +269,26 @@ namespace agent_memory {
                 read_string(*artifact_json, "generator_id", artifact_loc);
             artifact.generator_version =
                 read_string(*artifact_json, "generator_version", artifact_loc);
-            artifact.source_revision =
-                read_string(*artifact_json, "source_revision", artifact_loc);
+            artifact.dataset_revision =
+                read_string(*artifact_json, "dataset_revision", artifact_loc);
+            artifact.generator_revision =
+                read_string(*artifact_json, "generator_revision", artifact_loc);
+            artifact.model_revision =
+                read_string(*artifact_json, "model_revision", artifact_loc);
+            artifact.qrels_revision =
+                read_string(*artifact_json, "qrels_revision", artifact_loc);
+            artifact.document_prompt_id =
+                read_string(*artifact_json, "document_prompt_id", artifact_loc);
+            artifact.query_prompt_id =
+                read_string(*artifact_json, "query_prompt_id", artifact_loc);
             artifact.projection_kind =
                 read_string(*artifact_json, "projection_kind", artifact_loc);
+            artifact.normalization =
+                read_string(*artifact_json, "normalization", artifact_loc);
+            artifact.dtype =
+                read_string(*artifact_json, "dtype", artifact_loc);
+            artifact.hash_algorithm =
+                read_string(*artifact_json, "hash_algorithm", artifact_loc);
             artifact.config_hash =
                 read_string(*artifact_json, "config_hash", artifact_loc);
             artifact.artifact_hash =
@@ -427,34 +467,48 @@ namespace agent_memory {
         }
         if(dataset.embedding_artifact) {
             const auto& artifact = *dataset.embedding_artifact;
-            if(artifact.generator_id.empty()) {
+            require_non_empty_artifact_field(artifact.generator_id, "generator_id");
+            require_non_empty_artifact_field(
+                artifact.generator_version,
+                "generator_version"
+            );
+            require_non_empty_artifact_field(
+                artifact.dataset_revision,
+                "dataset_revision"
+            );
+            require_non_empty_artifact_field(
+                artifact.generator_revision,
+                "generator_revision"
+            );
+            require_non_empty_artifact_field(artifact.model_revision, "model_revision");
+            require_non_empty_artifact_field(artifact.qrels_revision, "qrels_revision");
+            require_non_empty_artifact_field(
+                artifact.document_prompt_id,
+                "document_prompt_id"
+            );
+            require_non_empty_artifact_field(
+                artifact.query_prompt_id,
+                "query_prompt_id"
+            );
+            require_non_empty_artifact_field(artifact.projection_kind, "projection_kind");
+            require_non_empty_artifact_field(artifact.normalization, "normalization");
+            require_non_empty_artifact_field(artifact.dtype, "dtype");
+            require_non_empty_artifact_field(artifact.hash_algorithm, "hash_algorithm");
+            if(artifact.hash_algorithm != "sha256") {
                 throw std::runtime_error(
-                    "embedding_artifact.generator_id must not be empty"
+                    "embedding_artifact.hash_algorithm must be sha256"
                 );
             }
-            if(artifact.generator_version.empty()) {
+            require_non_empty_artifact_field(artifact.config_hash, "config_hash");
+            require_non_empty_artifact_field(artifact.artifact_hash, "artifact_hash");
+            if(!is_lowercase_sha256_hex(artifact.config_hash)) {
                 throw std::runtime_error(
-                    "embedding_artifact.generator_version must not be empty"
+                    "embedding_artifact.config_hash must be 64 lowercase SHA-256 hex characters"
                 );
             }
-            if(artifact.source_revision.empty()) {
+            if(!is_lowercase_sha256_hex(artifact.artifact_hash)) {
                 throw std::runtime_error(
-                    "embedding_artifact.source_revision must not be empty"
-                );
-            }
-            if(artifact.projection_kind.empty()) {
-                throw std::runtime_error(
-                    "embedding_artifact.projection_kind must not be empty"
-                );
-            }
-            if(artifact.config_hash.empty()) {
-                throw std::runtime_error(
-                    "embedding_artifact.config_hash must not be empty"
-                );
-            }
-            if(artifact.artifact_hash.empty()) {
-                throw std::runtime_error(
-                    "embedding_artifact.artifact_hash must not be empty"
+                    "embedding_artifact.artifact_hash must be 64 lowercase SHA-256 hex characters"
                 );
             }
         }

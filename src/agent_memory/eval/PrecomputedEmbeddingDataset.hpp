@@ -32,11 +32,28 @@ namespace agent_memory {
     /// The loader does not generate embeddings. This metadata records which
     /// external or fixture generator produced the vectors consumed by tests and
     /// benchmarks.
+    ///
+    /// `config_hash` is the lowercase hexadecimal `hash_algorithm` digest of
+    /// the canonical generator configuration: model id/revision, document and
+    /// query prompt identities, normalization, dtype, pooling/truncation,
+    /// projection transform, random seed, and other behavior-affecting
+    /// settings. `artifact_hash` is the lowercase hexadecimal digest of the
+    /// canonical embedding payload before any self-referential provenance
+    /// wrapper is added. For JSON fixtures this payload is the ordered
+    /// document/query embedding records with ids and float values.
     struct PrecomputedEmbeddingArtifactInfo final {
         std::string generator_id;
         std::string generator_version;
-        std::string source_revision;
+        std::string dataset_revision;
+        std::string generator_revision;
+        std::string model_revision;
+        std::string qrels_revision;
+        std::string document_prompt_id;
+        std::string query_prompt_id;
         std::string projection_kind;
+        std::string normalization;
+        std::string dtype;
+        std::string hash_algorithm;
         std::string config_hash;
         std::string artifact_hash;
     };

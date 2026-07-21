@@ -11,10 +11,18 @@
   "embedding_artifact": {
     "generator_id": "agent-memory.fixture.semantic-axis",
     "generator_version": "v1",
-    "source_revision": "hand-authored:2026-07-22",
+    "dataset_revision": "hand-authored:2026-07-22",
+    "generator_revision": "agent-memory-cpp:820e967",
+    "model_revision": "fixture-semantic-axis-8d-v1",
+    "qrels_revision": "hand-authored:2026-07-22",
+    "document_prompt_id": "identity-document-v1",
+    "query_prompt_id": "identity-query-v1",
     "projection_kind": "semantic_axes_8d",
-    "config_hash": "sha256:aabeafaa90564c78e59e3e5b1c2f3d896804f4f91b440086990071f8148ed5ba",
-    "artifact_hash": "sha256:01e88e82ce9663a7e51a7f14958c934c478b7c5c56f389c7f329387015f04776"
+    "normalization": "l2",
+    "dtype": "float32",
+    "hash_algorithm": "sha256",
+    "config_hash": "7bbe5bc80c17c5d9c4374784b74492e192c6286f03dc643e613fd81a87fb246f",
+    "artifact_hash": "01e88e82ce9663a7e51a7f14958c934c478b7c5c56f389c7f329387015f04776"
   },
   "corpus": [
     {"id": "doc:binary-filter", "title": "Binary filter", "text": "binary candidate filter with exact rerank"},
