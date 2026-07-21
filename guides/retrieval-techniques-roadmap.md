@@ -405,6 +405,31 @@ Decoder-based retrievers — переход от encoder-only (BERT) к decoder-
 
 В контексте нашего стека — внешний адаптер; конкретная модель выбирается за пределами C++-core, реализуется через `IEmbedder` контракт.
 
+Additional techniques from the decoder-as-embedder lane:
+
+- **LLM2Vec-style conversion.** A decoder LLM can be adapted into an embedding
+  model by enabling bidirectional attention, continuing training with masked
+  next-token prediction, and then applying contrastive learning. In our C++
+  stack this remains an external `IEmbedder` backend concern, not a core
+  inference implementation.
+- **Latent attention pooling.** NV-Embed-style learned pooling avoids relying
+  only on the final/EOS token and can improve dense embedding quality. The
+  stored `Embedding` contract remains a single `std::vector<float>`; pooling
+  details belong to the adapter provenance.
+- **Instruction-aware embeddings.** Instruct embedders can condition
+  query/document vectors on task instructions. Persist the instruction/prompt
+  identity as part of projection provenance before mixing such vectors with
+  ordinary embeddings.
+- **Synthetic domain fine-tuning.** LLM-generated query-positive pairs,
+  baseline filtering, hard-negative mining, and LoRA fine-tuning are promising
+  for narrow domains, but they are offline training workflow tasks. Evaluation
+  must use a manually checked locked benchmark, not the generated training
+  pairs.
+- **Decoder inference stack.** vLLM prefix caching and SGLang RadixAttention
+  matter most for rerank/page-classifier workloads where many prompts share the
+  same instruction + query prefix. They are deployment choices around an
+  adapter, not new C++ core abstractions.
+
 ### 4.3. Hard-negative mining
 
 Hard-negative mining — на этапе обучения bi-encoder учится отличать relevant documents от **похожих, но нерелевантных**. Источник: `ai-agent-playbook/concepts/rag-knowledge/Foundational RAG papers — BEIR, REALM, DPR, RAG.md` — DPR оригинал использует BM25 hard negatives.
@@ -918,6 +943,12 @@ being enabled in a production profile.
     (`doc2query`-style) и free-form contextual prefixes оба меняют индексируемый
     текст. Нужен ablation: Original, SyntheticQuestions, ContextualPrefix,
     Both.
+
+14. **Decoder/instruction-aware embedding adapter evaluation.** Qwen/E5/NV-style
+    decoder embedders, LLM2Vec-style conversion, latent pooling, and
+    instruction-conditioned embeddings need an adapter-level benchmark against
+    current encoder embeddings. Record prompt/instruction identity and synthetic
+    fine-tuning provenance before storing or mixing vectors.
 
 ## §15. References
 

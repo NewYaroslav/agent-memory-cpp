@@ -104,6 +104,42 @@ vanilla independent random projection: it uses orthogonal projectors when
 `nbits <= d` and a tight frame when `nbits > d`. Treat that as a useful next
 baseline, not as proof that random-hyperplane LSH is enough for our workload.
 
+### §2.2. External precedent and novelty boundary
+
+Binary candidate filtering followed by oversampling and exact/full-precision
+reranking is not a novel idea by itself. Treat it as the baseline industry
+pattern we must compare against, not as the research claim.
+
+Known precedents:
+
+- **Qdrant binary quantization** keeps quantized vectors as the fast candidate
+  layer and recommends rescoring with original vectors for quality recovery.
+  <https://qdrant.tech/documentation/manage-data/quantization/>
+- **Faiss binary indexes** separate float-to-binary transforms from binary
+  Hamming indexes such as `IndexBinaryFlat`, `IndexBinaryIVF`,
+  `IndexBinaryHNSW`, and `IndexBinaryHash` / `IndexBinaryMultiHash`.
+  <https://github.com/facebookresearch/faiss/wiki/Binary-indexes>
+- **Elasticsearch / Lucene Better Binary Quantization (BBQ)** combines bit-level
+  search with oversampling, corrective factors, and reranking.
+  <https://www.elastic.co/docs/reference/elasticsearch/mapping-reference/bbq>
+
+Project-specific value must therefore come from at least one of these axes:
+
+- encoder construction: random, structured, PCA/ITQ, supervised, autoencoder,
+  or model-specific compression;
+- learned/adaptive projection `R`, with explicit artifact identity and
+  retraining policy;
+- supervised hashing from qrels, hard negatives, teacher scores, or synthetic
+  query-document pairs, with leakage-safe train/eval splits;
+- multi-chunk or memory-level aggregation rather than independent chunk-only
+  codes;
+- binary feature fusion: multiple code families, sparse+dense binary signals,
+  or candidate voting;
+- index design: MDBX-friendly buckets, multi-index hashing, HNSW-Hamming,
+  IVF-like partitioning, deletion semantics, and incremental updates;
+- measured binary candidate recall plus exact rerank behavior under production
+  lifecycle constraints.
+
 | Family | Shared code space? | Training | Intended role | Notes |
 |---|---:|---:|---|---|
 | Coordinate sign `sign(x)` | Yes | No | Cheapest diagnostic baseline | One bit per source coordinate; no projection cost, but naturally supports only `bit_count == input_dimension`. |
@@ -111,6 +147,7 @@ baseline, not as proof that random-hyperplane LSH is enough for our workload.
 | Randomized Hadamard projection | Yes | No | Structured zero-training baseline | Faiss-inspired dependency-free baseline. For power-of-two input dimensions complete blocks use orthogonal Hadamard rows; for padded non-power-of-two dimensions partial row sets are not generally pairwise orthogonal. |
 | PCA projection | Yes | Yes | First objective-based learned baseline | Dependency-free principal-axis projection with median thresholds. Supports `bit_count <= input_dimension`. Not ITQ and not an autoencoder. |
 | Global learned projection | Yes | Yes | Main learned-hashing candidate | One corpus/calibration-trained `R`; preserves comparability across all records. PR #60 starts with a simple pair-difference baseline; ITQ/PCA-rotation remains a later, separately named candidate. |
+| Supervised hashing | Yes | Yes | Label-aware learned hashing | Uses qrels, hard negatives, teacher scores, or synthetic pairs to pull relevant query-document pairs together in Hamming space and push hard negatives apart. Requires strict split/provenance controls. |
 | Autoencoder binary encoder | Yes | Yes | Strong learned compression tier | More expressive than linear ITQ-like projection; requires training toolchain, persisted weights, and careful acceptance criteria. |
 | Cluster-local projection `R_c` | Within a routed cluster | Yes | Hierarchical candidate filter | Query must first route to a small set of clusters; codes across unrelated clusters are not directly comparable. |
 | Document-local projection `R_j` | Within one selected document | Yes | Local page/book/codebase scan | Valid only after document selection or inside a known scope; otherwise the query would need to be encoded once per document. |
@@ -131,8 +168,10 @@ Post-PR57 PR ladder:
 | PR #61 | Run high-dimensional synthetic benchmarks (384/768/1536D) and record the real-embedding gap, still with exact dense rerank as oracle. | Determine whether the 128D bit/candidate band transfers to higher dimensions. | No production default switch and no synthetic result presented as real-embedding evidence. |
 | PR #62 | Add a dependency-free PCA-style global projection baseline and run a focused 128D low-bit grid. | Test whether an objective-based learned projection beats random/pair-difference baselines. | No full ITQ, no autoencoder, and no high-dimensional PCA benchmark claim. |
 | PR #63 | Close benchmark methodology gaps: learned training cost fields, raw report artifact policy, and stable performance-harness plan. | Future benchmark PRs can report cold-start/training cost and preserve raw outputs without bloating the repo. | No new encoder family. |
-| PR #64 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
-| PR #65+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, or HNSW dense baseline. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall. | More flat-scan polishing unless a benchmark justifies it. |
+| PR #64 | Roadmap clarification: external binary-search precedent, project novelty boundary, and decoder-based embedding notes. | Future work does not overclaim binary prefiltering itself as novel. | No code changes. |
+| PR #65 | Add ITQ-style rotation on top of the PCA projection artifact as a separately named encoder family. | Test whether rotating the PCA subspace toward binary cube vertices improves candidate coverage at the same bit/candidate budget. | No supervised labels, no autoencoder, and no local projections. |
+| PR #66 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
+| PR #67+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, or HNSW dense baseline. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall. | More flat-scan polishing unless a benchmark justifies it. |
 
 Benchmark instrumentation contract:
 
