@@ -14,6 +14,8 @@
 namespace agent_memory {
     namespace {
 
+        constexpr double kMinimumOrthogonalAxisNorm = 1.0e-6;
+
         [[nodiscard]] std::uint64_t mix64(std::uint64_t value) noexcept {
             value ^= value >> 30U;
             value *= 0xbf58476d1ce4e5b9ULL;
@@ -315,6 +317,20 @@ namespace agent_memory {
             return true;
         }
 
+        [[nodiscard]] bool normalize_orthogonal_axis(
+            std::vector<double>& values
+        ) noexcept {
+            const auto value_norm = norm(values);
+            if(value_norm <= kMinimumOrthogonalAxisNorm
+               || !std::isfinite(value_norm)) {
+                return false;
+            }
+            for(auto& value : values) {
+                value /= value_norm;
+            }
+            return true;
+        }
+
         void multiply_covariance(
             const std::vector<double>& covariance,
             const std::vector<double>& vector,
@@ -350,6 +366,39 @@ namespace agent_memory {
             }
         }
 
+        void reorthogonalize_against_previous_rows(
+            const std::vector<float>& rows,
+            std::size_t completed_rows,
+            std::size_t dimension,
+            std::vector<double>& vector
+        ) {
+            orthogonalize_against_previous_rows(rows, completed_rows, dimension, vector);
+            orthogonalize_against_previous_rows(rows, completed_rows, dimension, vector);
+        }
+
+        [[nodiscard]] bool initialize_fallback_axis(
+            const std::vector<float>& rows,
+            std::size_t completed_rows,
+            std::size_t dimension,
+            std::size_t bit,
+            std::vector<double>& vector
+        ) {
+            for(std::size_t offset = 0; offset < dimension; ++offset) {
+                std::fill(vector.begin(), vector.end(), 0.0);
+                vector[(bit + offset) % dimension] = 1.0;
+                reorthogonalize_against_previous_rows(
+                    rows,
+                    completed_rows,
+                    dimension,
+                    vector
+                );
+                if(normalize_orthogonal_axis(vector)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         void initialize_axis(
             const PcaProjectionTrainingOptions& options,
             std::size_t bit,
@@ -365,15 +414,25 @@ namespace agent_memory {
                         deterministic_sign(options.seed, bit, dimension)
                     ) * scale;
             }
-            orthogonalize_against_previous_rows(
+            reorthogonalize_against_previous_rows(
                 rows,
                 completed_rows,
                 options.input_dimension,
                 vector
             );
-            if(!normalize(vector)) {
-                std::fill(vector.begin(), vector.end(), 0.0);
-                vector[bit % options.input_dimension] = 1.0;
+            if(normalize_orthogonal_axis(vector)) {
+                return;
+            }
+            if(!initialize_fallback_axis(
+                   rows,
+                   completed_rows,
+                   options.input_dimension,
+                   bit,
+                   vector
+               )) {
+                throw std::logic_error(
+                    "failed to construct an orthogonal PCA fallback axis"
+                );
             }
         }
 
@@ -525,7 +584,7 @@ namespace agent_memory {
                     options.input_dimension,
                     multiplied
                 );
-                orthogonalize_against_previous_rows(
+                reorthogonalize_against_previous_rows(
                     artifact.projection_rows,
                     bit,
                     options.input_dimension,
@@ -537,13 +596,13 @@ namespace agent_memory {
                 axis.swap(multiplied);
             }
 
-            orthogonalize_against_previous_rows(
+            reorthogonalize_against_previous_rows(
                 artifact.projection_rows,
                 bit,
                 options.input_dimension,
                 axis
             );
-            if(!normalize(axis)) {
+            if(!normalize_orthogonal_axis(axis)) {
                 initialize_axis(
                     options,
                     bit + 0x9e3779b97f4a7c15ULL,

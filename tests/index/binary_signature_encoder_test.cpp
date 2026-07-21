@@ -82,6 +82,31 @@ namespace {
         return std::fabs(lhs - rhs) <= epsilon;
     }
 
+    double projection_row_dot(
+        const agent_memory::PcaProjectionBinaryEncoderOptions& artifact,
+        std::size_t lhs,
+        std::size_t rhs
+    ) {
+        const auto* lhs_row =
+            artifact.projection_rows.data() + lhs * artifact.input_dimension;
+        const auto* rhs_row =
+            artifact.projection_rows.data() + rhs * artifact.input_dimension;
+        double value = 0.0;
+        for(std::size_t dimension = 0; dimension < artifact.input_dimension;
+            ++dimension) {
+            value += static_cast<double>(lhs_row[dimension])
+                * static_cast<double>(rhs_row[dimension]);
+        }
+        return value;
+    }
+
+    double projection_row_norm(
+        const agent_memory::PcaProjectionBinaryEncoderOptions& artifact,
+        std::size_t row
+    ) {
+        return std::sqrt(projection_row_dot(artifact, row, row));
+    }
+
     std::vector<std::vector<int>> materialize_effective_rows(
         const agent_memory::RandomizedHadamardBinaryEncoder& encoder,
         std::size_t input_dimension,
@@ -633,17 +658,15 @@ int main() {
         return fail("PCA projection first row must follow the dominant variance axis");
     }
     for(std::size_t bit = 0; bit < pca_artifact.bit_count; ++bit) {
-        const auto row = pca_artifact.projection_rows.data()
-            + bit * pca_artifact.input_dimension;
-        const auto norm =
-            std::sqrt(static_cast<double>(row[0]) * row[0]
-                      + static_cast<double>(row[1]) * row[1]);
-        if(!almost_equal(norm, 1.0)) {
+        if(!almost_equal(projection_row_norm(pca_artifact, bit), 1.0)) {
             return fail("PCA projection rows must be normalized");
         }
         if(!std::isfinite(pca_artifact.thresholds[bit])) {
             return fail("PCA projection thresholds must be finite");
         }
+    }
+    if(std::fabs(projection_row_dot(pca_artifact, 0, 1)) > 1.0e-5) {
+        return fail("PCA projection rows must be mutually orthogonal");
     }
 
     const agent_memory::PcaProjectionBinaryEncoder pca_encoder(pca_artifact);
@@ -688,6 +711,34 @@ int main() {
     if(pca_variant_encoder.info().config_fingerprint
        == pca_encoder.info().config_fingerprint) {
         return fail("PCA projection seed must affect artifact identity");
+    }
+
+    const std::vector<agent_memory::Embedding> identical_pca_training{
+        agent_memory::Embedding{{1.0F, 1.0F}},
+        agent_memory::Embedding{{1.0F, 1.0F}},
+        agent_memory::Embedding{{1.0F, 1.0F}},
+    };
+    const auto zero_covariance_pca_artifact =
+        agent_memory::train_pca_projection_encoder(
+            identical_pca_training,
+            make_pca_options(2, 2, 0)
+        );
+    for(std::size_t bit = 0; bit < zero_covariance_pca_artifact.bit_count; ++bit) {
+        if(!almost_equal(projection_row_norm(zero_covariance_pca_artifact, bit), 1.0)) {
+            return fail("PCA fallback rows must remain normalized");
+        }
+    }
+    for(std::size_t lhs = 0; lhs < zero_covariance_pca_artifact.bit_count; ++lhs) {
+        for(std::size_t rhs = lhs + 1; rhs < zero_covariance_pca_artifact.bit_count;
+            ++rhs) {
+            if(std::fabs(
+                   projection_row_dot(zero_covariance_pca_artifact, lhs, rhs)
+               ) > 1.0e-5) {
+                return fail(
+                    "PCA fallback rows must remain orthogonal for zero covariance"
+                );
+            }
+        }
     }
 
     if(!throws_invalid_argument([] {
