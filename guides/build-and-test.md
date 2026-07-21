@@ -79,6 +79,23 @@ Run the binary rerank statistical grid fixture:
     tmp/synthetic-binary-rerank-grid-report.json
 ```
 
+Run the high-dimensional synthetic variants when investigating projection
+scaling beyond the default 128D fixture:
+
+```bash
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/synthetic-binary-rerank-grid-highdim-384.example.json \
+    tmp/synthetic-binary-rerank-grid-highdim-384-report.json
+
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/synthetic-binary-rerank-grid-highdim-768.example.json \
+    tmp/synthetic-binary-rerank-grid-highdim-768-report.json
+
+./tmp/build-bench/tools/agent-memory-bench/agent-memory-bench \
+    tools/agent-memory-bench/synthetic-binary-rerank-grid-highdim-1536.example.json \
+    tmp/synthetic-binary-rerank-grid-highdim-1536-report.json
+```
+
 The grid separates `data_seeds` from `encoder_seeds`. `repeat_count` controls
 binary timing measurements, while `exact_timing_repeat_count` independently
 controls repeated timing of two common exact baselines. Quality is sampled once
