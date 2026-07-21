@@ -109,6 +109,7 @@ baseline, not as proof that random-hyperplane LSH is enough for our workload.
 | Coordinate sign `sign(x)` | Yes | No | Cheapest diagnostic baseline | One bit per source coordinate; no projection cost, but naturally supports only `bit_count == input_dimension`. |
 | Random hyperplane `sign(Rx)` | Yes | No | Implemented baseline candidate filter | Good zero-training reference. PR #57 showed useful system speedups vs current `ExactVectorIndex`, but no decisive compute-only win vs contiguous exact scan at 128D. |
 | Randomized Hadamard projection | Yes | No | Structured zero-training baseline | Faiss-inspired dependency-free baseline. For power-of-two input dimensions complete blocks use orthogonal Hadamard rows; for padded non-power-of-two dimensions partial row sets are not generally pairwise orthogonal. |
+| PCA projection | Yes | Yes | First objective-based learned baseline | Dependency-free principal-axis projection with median thresholds. Supports `bit_count <= input_dimension`. Not ITQ and not an autoencoder. |
 | Global learned projection | Yes | Yes | Main learned-hashing candidate | One corpus/calibration-trained `R`; preserves comparability across all records. PR #60 starts with a simple pair-difference baseline; ITQ/PCA-rotation remains a later, separately named candidate. |
 | Autoencoder binary encoder | Yes | Yes | Strong learned compression tier | More expressive than linear ITQ-like projection; requires training toolchain, persisted weights, and careful acceptance criteria. |
 | Cluster-local projection `R_c` | Within a routed cluster | Yes | Hierarchical candidate filter | Query must first route to a small set of clusters; codes across unrelated clusters are not directly comparable. |
@@ -128,8 +129,10 @@ Post-PR57 PR ladder:
 | PR #59 | Add coordinate-sign and randomized-Hadamard encoder baselines; run the existing binary-rerank grid against all zero-training encoders. | Randomized Hadamard projection improves coverage at equal bit budgets in the synthetic 128D power-of-two grid; coordinate sign is a cheap one-bit-per-dimension diagnostic baseline. | No learned training pipeline and no Faiss-compatible projector claim. |
 | PR #60 | Add a dependency-free global learned pair-difference projection baseline with persisted encoder identity. | Better candidate coverage at the same bit/candidate budget without evaluation-query leakage. | No ITQ claim, no autoencoder, and no per-document local matrices. |
 | PR #61 | Run high-dimensional synthetic benchmarks (384/768/1536D) and record the real-embedding gap, still with exact dense rerank as oracle. | Determine whether the 128D bit/candidate band transfers to higher dimensions. | No production default switch and no synthetic result presented as real-embedding evidence. |
-| PR #62 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
-| PR #63+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, or HNSW dense baseline. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall. | More flat-scan polishing unless a benchmark justifies it. |
+| PR #62 | Add a dependency-free PCA-style global projection baseline and run a focused 128D low-bit grid. | Test whether an objective-based learned projection beats random/pair-difference baselines. | No full ITQ, no autoencoder, and no high-dimensional PCA benchmark claim. |
+| PR #63 | Close benchmark methodology gaps: learned training cost fields, raw report artifact policy, and stable performance-harness plan. | Future benchmark PRs can report cold-start/training cost and preserve raw outputs without bloating the repo. | No new encoder family. |
+| PR #64 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
+| PR #65+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, or HNSW dense baseline. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall. | More flat-scan polishing unless a benchmark justifies it. |
 
 Benchmark instrumentation follow-up:
 
@@ -432,7 +435,7 @@ struct DenseIndexConfig {
 
 ### M0: Binary Signatures Only (partially implemented)
 
-> **Status.** Core packed signatures, width-aware Hamming dispatch, the optimized flat oracle, materialized/SIMD random-hyperplane encoder v2, coordinate-sign and randomized-Hadamard baselines, a dependency-free global learned pair-difference projection baseline, sparse/batch encoding, identity registry, and a bounded multi-probe prototype are implemented. `.bse` loading, persisted bucket layout, dense-index integration, and a production high-recall Hamming ANN remain planned.
+> **Status.** Core packed signatures, width-aware Hamming dispatch, the optimized flat oracle, materialized/SIMD random-hyperplane encoder v2, coordinate-sign and randomized-Hadamard baselines, dependency-free global learned pair-difference and PCA-style projection baselines, sparse/batch encoding, identity registry, and a bounded multi-probe prototype are implemented. `.bse` loading, persisted bucket layout, dense-index integration, and a production high-recall Hamming ANN remain planned.
 
 M0 scope:
 
@@ -443,6 +446,7 @@ M0 scope:
 - `.bse` file format and registry loading (Planned API).
 - `RandomHyperplaneBinaryEncoder` v2 with lazy materialization and SIMD dense scoring (implemented).
 - `LearnedProjectionBinaryEncoder` v1 with deterministic document-only global pair-difference training (implemented experimental baseline; not ITQ or an autoencoder).
+- `PcaProjectionBinaryEncoder` v1 with deterministic document-only PCA-style training and median thresholds (implemented experimental baseline; not ITQ or an autoencoder).
 - `MultiProbeHammingIndex` bounded in-memory bucket prototype (implemented, experimental; no worst-case sub-linear guarantee).
 - Persisted `RandomHyperplaneLSH` / production Hamming ANN wiring (Planned API).
 - `binary_bucket_index` MDBX layout (Planned API).

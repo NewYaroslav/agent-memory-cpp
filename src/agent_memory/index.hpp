@@ -20,6 +20,7 @@
 #include "index/IVectorIndex.hpp"
 #include "index/LearnedProjectionBinaryEncoder.hpp"
 #include "index/MultiProbeHammingIndex.hpp"
+#include "index/PcaProjectionBinaryEncoder.hpp"
 #include "index/RandomHyperplaneBinaryEncoder.hpp"
 #include "index/RandomizedHadamardBinaryEncoder.hpp"
 #include "index/VectorSimilarityComputer.hpp"
