@@ -567,11 +567,16 @@ reranking, context trimming, or policy denial.
 Mandatory invariant:
 
 ```text
-output.plan must include every tier from input.minimum_required_tiers.
-If the planner cannot satisfy that requirement within policy/latency/token
-constraints, it must set ContextPlanDecision::error instead of silently
-returning a shallow plan.
+if decision.error is absent:
+    decision.plan includes input.minimum_required_tiers
+
+if decision.error is present:
+    caller must not execute decision.plan
 ```
+
+If the planner cannot satisfy required tiers within policy, latency, or token
+constraints, it must set `ContextPlanDecision::error` instead of silently
+returning a shallow executable plan.
 
 ## 6. Service Lifecycle
 

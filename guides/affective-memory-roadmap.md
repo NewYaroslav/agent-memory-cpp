@@ -29,7 +29,7 @@ Memory stores:
 - which goals were affected;
 - what affect snapshot existed before/after the transition;
 - which action or coping strategy was chosen;
-- what outcome and prediction error followed.
+- what outcome and utility prediction error followed.
 
 The live state belongs to a sibling runtime controller:
 
@@ -115,7 +115,7 @@ Affective context can influence retrieval and reranking:
 - same target entity or relationship;
 - same impacted goal;
 - unresolved episodes;
-- similar prediction error;
+- similar utility prediction error;
 - prior coping outcome.
 
 It must not change factual confidence, provenance, or safety policy. Mood
@@ -141,7 +141,7 @@ Compaction must preserve at least:
 - peak affect snapshot;
 - action or coping strategy;
 - outcome;
-- prediction error;
+- utility prediction error;
 - unresolvedness;
 - relationship evidence.
 
@@ -551,7 +551,7 @@ Affective compaction must preserve causal structure. `MergeJob` and
 - do not merge if actor intention, target, goal impact, responsibility,
   controllability, outcome, relationship target, or resolution state differs;
 - summaries must retain trigger, appraisal, goals, peak affect, action,
-  outcome, prediction error, and unresolvedness;
+  outcome, utility prediction error, and unresolvedness;
 - relationship summaries must retain evidence links.
 
 ## Implementation ladder
@@ -624,7 +624,7 @@ Appraisal and affective-agent models:
 - Scherer, K. R. — Component Process Model / stimulus evaluation checks.
   Start from "Appraisal considered as a process of multilevel sequential
   checking" in *Appraisal Processes in Emotion* and follow later CPM work:
-  https://repository.law.umich.edu/cgi/viewcontent.cgi?params=%2Fcontext%2Fbook_chapters%2Farticle%2F1228%2F&path_info=Ellsworth_Appraisal.pdf
+  https://academic.oup.com/book/53557/chapter-abstract/422115725
 - Marsella, S. C., and Gratch, J. — EMA process model of appraisal dynamics:
   https://people.ict.usc.edu/~gratch/CSCI534/Readings/COGSYS-RS-EMOTION-2008-6.pdf
 - Dias, J., Mascarenhas, S., and Paiva, A. — FAtiMA Modular, a generic

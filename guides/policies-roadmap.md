@@ -115,7 +115,7 @@ Validation matrix:
 | `ArtifactsOnly`, `SensitivePayloadValues`, `AllValuePayloads` | require `key_provider != None` |
 | `KeyProviderKind::UserPassword` | requires a versioned password KDF and salt |
 | `MachineLocal` or `ExternalKms` | must not require a password KDF for normal operation |
-| `ExternalVolumeEncryption` | library does not create `EncryptedRecordHeader`; deployment owns encryption |
+| `ExternalVolumeEncryption` | requires `KeyProviderKind::None`; library does not create `EncryptedRecordHeader`; deployment owns encryption and keys |
 | any encrypted payload scope with `KeyProviderKind::None` | invalid |
 
 ## 1.2. Crypto references
