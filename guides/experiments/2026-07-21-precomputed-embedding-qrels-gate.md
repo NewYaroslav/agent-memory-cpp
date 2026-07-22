@@ -357,6 +357,8 @@ or behavior-affecting config fields still change the declared hashes.
 CTest covers both positive fixture verification and negative mutations for:
 
 - generator/model config drift;
+- corpus/query dataset drift;
+- graded-qrels drift;
 - embedding vector payload drift;
 - ordered record payload drift.
 
@@ -366,3 +368,81 @@ This PR does not add a new quality benchmark. It makes the precomputed-embedding
 gate safer before introducing external-model fixtures: future benchmark results
 can point to frozen vectors whose config and payload hashes are reproducible
 inside the C++ test suite.
+
+## 2026-07-22 — PR #72 external-generator precomputed fixture
+
+### What we checked
+
+PR #72 adds the first dependency-free external-generator fixture:
+
+- fixture: `tests/eval/fixtures/precomputed-embedding-external-hash.json`;
+- generator:
+  `tools/agent-memory-bench/generate-precomputed-external-hash-fixture.py`;
+- benchmark config:
+  `tools/agent-memory-bench/precomputed-embedding-binary-rerank-grid-external-hash.example.json`.
+
+The generator is a standalone Python script that derives normalized dense
+vectors from text using deterministic hashed token, bigram, and character
+trigram features. The C++ benchmark does not run the generator and does not know
+the embedding algorithm; it consumes only the frozen JSON vectors.
+
+This is deliberately not presented as a production neural embedding model. Its
+purpose is to exercise the real precomputed-artifact workflow without network,
+API-key, or Python package dependencies in CI.
+
+### Integrity contract extension
+
+The artifact provenance now includes:
+
+```text
+dataset_hash
+qrels_hash
+```
+
+in addition to `config_hash` and `artifact_hash`.
+
+The C++ verifier recomputes all four hashes:
+
+- `config_hash` from the generator/model/prompt/config identity text;
+- `dataset_hash` from canonical corpus and query records;
+- `qrels_hash` from canonical graded relevance judgments;
+- `artifact_hash` from canonical binary float32 embedding payload bytes.
+
+Negative verifier tests now reject corpus-text and qrels mutations as separate
+failure modes. This closes the remaining gap where a fixture could change its
+evaluation target while preserving embedding payload hashes and revision
+strings.
+
+### Directional result
+
+On the external-hash fixture, the exact-vector oracle reports:
+
+| Metric | Value |
+| --- | ---: |
+| Recall@1 | 0.4000 |
+| Recall@5 | 0.8667 |
+| Recall@10 | 0.8667 |
+| nDCG@10 | 0.8703 |
+| MRR | 1.0000 |
+
+This is useful because the fixture is no longer an idealized hand-authored
+semantic-axis cube. The exact oracle is good but imperfect against qrels, so the
+binary candidate pipeline is tested under a slightly messier, text-derived
+embedding geometry.
+
+### Interpretation
+
+This PR proves that a frozen external generator can produce a self-verifying
+precomputed embedding artifact consumed by the C++ benchmark pipeline. It does
+not prove anything about MiniLM, OpenAI, Qwen, E5, BGE, or another third-party
+embedding family. Those require a separate fixture with pinned model/tokenizer
+revision and generator environment.
+
+### What to check next
+
+- Add an actual third-party embedding-model fixture when a stable generator
+  environment is available.
+- Record prompt text or prompt hashes when the generator uses non-identity
+  prompts.
+- Keep generator execution outside CI unless the model dependency is vendored or
+  otherwise made deterministic and cheap.

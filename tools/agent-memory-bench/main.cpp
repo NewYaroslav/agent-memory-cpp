@@ -3268,6 +3268,8 @@ namespace {
                 {"dtype", artifact.dtype},
                 {"hash_algorithm", artifact.hash_algorithm},
                 {"config_hash", artifact.config_hash},
+                {"dataset_hash", artifact.dataset_hash},
+                {"qrels_hash", artifact.qrels_hash},
                 {"artifact_hash", artifact.artifact_hash}
             };
         } else {

@@ -233,6 +233,24 @@ if(AGENT_MEMORY_BUILD_TESTS)
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
         add_test(
+            NAME agent_memory_benchmark_cli_precomputed_embedding_binary_rerank_grid_external_hash
+            COMMAND
+                ${CMAKE_COMMAND}
+                -DAGENT_MEMORY_BENCH_EXE=$<TARGET_FILE:agent-memory-bench>
+                -DAGENT_MEMORY_BENCH_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/precomputed-embedding-binary-rerank-grid-external-hash.example.json
+                -DAGENT_MEMORY_BENCH_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/precomputed-embedding-binary-rerank-grid-external-hash-ctest.json
+                -DAGENT_MEMORY_BENCH_WORKDIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-precomputed-embedding-binary-rerank-external-hash.cmake
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        add_test(
+            NAME agent_memory_precomputed_embedding_artifact_verify_external_hash
+            COMMAND
+                $<TARGET_FILE:agent-memory-precomputed-artifact-verify>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-external-hash.json
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        add_test(
             NAME agent_memory_benchmark_cli_hamming_hot_path
             COMMAND
                 $<TARGET_FILE:agent-memory-hamming-hot-path-bench>
