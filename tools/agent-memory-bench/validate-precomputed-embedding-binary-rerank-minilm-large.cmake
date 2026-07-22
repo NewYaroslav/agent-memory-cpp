@@ -121,7 +121,7 @@ if(NOT artifact_generator STREQUAL "agent-memory.tools.minilm-precomputed-embedd
    OR NOT artifact_version STREQUAL "v1"
    OR NOT artifact_dataset_revision STREQUAL "agent-memory-minilm-large-fixture:2026-07-22"
    OR NOT artifact_generator_revision STREQUAL "agent-memory-cpp:minilm-l6-v2-large-fixture-v1"
-   OR NOT artifact_source_hash STREQUAL "2aded58cc7b8ab38f088521b8286c24eece05393cfe0d3957723fe943d180d50"
+   OR NOT artifact_source_hash STREQUAL "4d151b05461ed7761ad18c2deedb913d10048882475e7d45b91bac6f7540dd2a"
    OR NOT artifact_contract_source_hash STREQUAL "c3ab60c1bfbeef809b27df48d12e39a6ffdd2b7b52c4903f2b41aa05b4ed98c8"
    OR NOT artifact_command STREQUAL "python tools/agent-memory-bench/generate-precomputed-minilm-large-fixture.py --output tests/eval/fixtures/precomputed-embedding-minilm-l6-v2-large.json"
    OR NOT artifact_requirements STREQUAL "tools/agent-memory-bench/requirements-minilm-fixture.txt;sha256=8f3ff40e6a27b0a723b9c37a397cd80a14e0b515a86383bd82360de49da250b5"
@@ -134,7 +134,7 @@ if(NOT artifact_generator STREQUAL "agent-memory.tools.minilm-precomputed-embedd
    OR NOT artifact_normalization STREQUAL "l2"
    OR NOT artifact_dtype STREQUAL "float32"
    OR NOT artifact_hash_algorithm STREQUAL "sha256"
-   OR NOT artifact_config_hash STREQUAL "0a55c1e915cf1aa8a23c7b953fdca204d4e65366d6b9ffc615410cac4b1a7f9c"
+   OR NOT artifact_config_hash STREQUAL "3aaffc9f01047d76f4d5f1f22ed194cacf1756e94a5f0bde9070dfda822df1d5"
    OR NOT artifact_dataset_hash STREQUAL "61fe0cadc963f59ecf804b179f98985b022d3af3bc81a809f692eb50b1e0f23d"
    OR NOT artifact_qrels_hash STREQUAL "d144b10c45e36c2b0404245f0e914f2bbab201810b95845f976c649cfff8a553"
    OR NOT artifact_artifact_hash STREQUAL "b802d414358da76ad2388be64b458345e5e40e6c59d03564d8d5ff6cd635850f")
@@ -143,7 +143,11 @@ endif()
 
 file(SHA256
     "${AGENT_MEMORY_BENCH_WORKDIR}/tools/agent-memory-bench/generate-precomputed-minilm-large-fixture.py"
-    actual_generator_source_hash
+    actual_generator_driver_hash
+)
+file(SHA256
+    "${AGENT_MEMORY_BENCH_WORKDIR}/tools/agent-memory-bench/minilm_fixture_generator_common.py"
+    actual_generator_common_hash
 )
 file(SHA256
     "${AGENT_MEMORY_BENCH_WORKDIR}/tools/agent-memory-bench/precomputed_fixture_contract.py"
@@ -164,6 +168,10 @@ file(SHA256
 set(expected_requirements_lock
     "tools/agent-memory-bench/requirements-minilm-fixture.txt;sha256=${actual_requirements_lock_hash}"
 )
+set(generator_hash_payload
+    "${actual_generator_driver_hash}\n${actual_generator_common_hash}\n"
+)
+string(SHA256 actual_generator_source_hash "${generator_hash_payload}")
 if(NOT actual_generator_source_hash STREQUAL artifact_source_hash
    OR NOT actual_contract_source_hash STREQUAL artifact_contract_source_hash
    OR NOT expected_requirements_lock STREQUAL artifact_requirements)

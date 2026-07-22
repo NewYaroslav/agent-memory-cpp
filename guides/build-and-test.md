@@ -262,16 +262,21 @@ python tools/agent-memory-bench/generate-precomputed-minilm-fixture.py \
 
 If dependencies are installed in a non-default location, set `PYTHONPATH` before
 running the command. The artifact records a `generator_source_hash` for the
-MiniLM generator and a `generator_contract_source_hash` for the shared canonical
-fixture-contract script; the MiniLM benchmark CTest compares both hashes against
-the checked-in scripts without rerunning the model.
+thin MiniLM generator plus shared MiniLM runtime helper, and a
+`generator_contract_source_hash` for the shared canonical fixture-contract
+script; the MiniLM benchmark CTest compares both hashes against the checked-in
+scripts without rerunning the model.
 
-Changing either generator script is an intentional fixture-update operation:
-rerun the generator, refresh the generator source hashes, and commit the updated
-artifact in the same PR. The shared dataset/qrels and canonical byte encodings
-live in `tools/agent-memory-bench/precomputed_fixture_contract.py`, so
+Changing either generator script or
+`tools/agent-memory-bench/minilm_fixture_generator_common.py` is an intentional
+fixture-update operation: rerun the generator, refresh the generator source
+hashes, and commit the updated artifact in the same PR. The shared dataset/qrels
+and canonical byte encodings live in
+`tools/agent-memory-bench/precomputed_fixture_contract.py`, so
 `generator_contract_source_hash` is tied to that contract module instead of the
-surrogate external-hash generator. The artifact's
+surrogate external-hash generator. CI also runs a cheap Python content-contract
+check that compares each MiniLM fixture's `corpus`, `queries`, and `judgments`
+against its source contract module without loading the model. The artifact's
 `generator_requirements_lock` field records the path and SHA-256 of the
 requirements file; the generator parses that same file and checks the declared
 Python and package versions before producing vectors. Changing the requirements
