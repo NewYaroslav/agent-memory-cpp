@@ -150,10 +150,34 @@ require_nonnegative_path(
     total_ms
 )
 require_nonnegative_path(
+    "flat_binary.post_upsert_query.mean_ms"
+    flat_binary
+    post_upsert_query
+    mean_ms
+)
+require_nonnegative_path(
+    "flat_binary.post_upsert_query.mean_result_count"
+    flat_binary
+    post_upsert_query
+    mean_result_count
+)
+require_nonnegative_path(
     "flat_binary.post_rebuild_query.total_ms"
     flat_binary
     post_rebuild_query
     total_ms
+)
+require_nonnegative_path(
+    "flat_binary.post_rebuild_query.mean_ms"
+    flat_binary
+    post_rebuild_query
+    mean_ms
+)
+require_nonnegative_path(
+    "flat_binary.post_rebuild_query.mean_result_count"
+    flat_binary
+    post_rebuild_query
+    mean_result_count
 )
 require_nonnegative_path(
     "flat_binary.mutations.erase_ms"
@@ -198,10 +222,34 @@ require_nonnegative_path(
     total_ms
 )
 require_nonnegative_path(
+    "multiprobe_binary.post_upsert_query.mean_ms"
+    multiprobe_binary
+    post_upsert_query
+    mean_ms
+)
+require_nonnegative_path(
+    "multiprobe_binary.post_upsert_query.mean_result_count"
+    multiprobe_binary
+    post_upsert_query
+    mean_result_count
+)
+require_nonnegative_path(
     "multiprobe_binary.post_rebuild_query.total_ms"
     multiprobe_binary
     post_rebuild_query
     total_ms
+)
+require_nonnegative_path(
+    "multiprobe_binary.post_rebuild_query.mean_ms"
+    multiprobe_binary
+    post_rebuild_query
+    mean_ms
+)
+require_nonnegative_path(
+    "multiprobe_binary.post_rebuild_query.mean_result_count"
+    multiprobe_binary
+    post_rebuild_query
+    mean_result_count
 )
 require_nonnegative_path(
     "multiprobe_binary.mutations.erase_ms"
@@ -288,17 +336,49 @@ require_json(flat_mean_result_count
     GET flat_binary query mean_result_count)
 require_json(multiprobe_mean_result_count
     GET multiprobe_binary query mean_result_count)
-require_range(${exact_mean_result_count}
-    "exact mean result count" 0 ${result_limit})
-require_range(${flat_mean_result_count}
-    "flat mean result count" 0 ${result_limit})
-require_range(${multiprobe_mean_result_count}
-    "multi-probe mean result count" 0 ${result_limit})
+require_json(flat_post_upsert_mean_result_count
+    GET flat_binary post_upsert_query mean_result_count)
+require_json(flat_post_rebuild_mean_result_count
+    GET flat_binary post_rebuild_query mean_result_count)
+require_json(multiprobe_post_upsert_mean_result_count
+    GET multiprobe_binary post_upsert_query mean_result_count)
+require_json(multiprobe_post_rebuild_mean_result_count
+    GET multiprobe_binary post_rebuild_query mean_result_count)
+foreach(result_count_label
+        exact_mean_result_count
+        flat_mean_result_count
+        multiprobe_mean_result_count
+        flat_post_upsert_mean_result_count
+        flat_post_rebuild_mean_result_count
+        multiprobe_post_upsert_mean_result_count
+        multiprobe_post_rebuild_mean_result_count)
+    if(NOT ${result_count_label} EQUAL result_limit)
+        message(FATAL_ERROR
+            "${result_count_label} must be ${result_limit}, "
+            "got ${${result_count_label}}"
+        )
+    endif()
+endforeach()
 
 require_json(multiprobe_mean_candidate_count
     GET multiprobe_binary mean_candidate_count)
 require_range(${multiprobe_mean_candidate_count}
     "multi-probe mean candidate count" 0 ${document_count})
+require_json(multiprobe_mean_probed_bucket_count
+    GET multiprobe_binary mean_probed_bucket_count)
+require_json(multiprobe_mean_visited_posting_count
+    GET multiprobe_binary mean_visited_posting_count)
+if(NOT multiprobe_mean_candidate_count GREATER 0)
+    message(FATAL_ERROR "multi-probe mean candidate count must be positive")
+endif()
+if(NOT multiprobe_mean_probed_bucket_count GREATER 0)
+    message(FATAL_ERROR "multi-probe mean probed bucket count must be positive")
+endif()
+if(multiprobe_mean_visited_posting_count LESS multiprobe_mean_candidate_count)
+    message(FATAL_ERROR
+        "multi-probe visited postings must be at least candidate count"
+    )
+endif()
 
 require_json(flat_erased GET flat_binary mutations erased_count)
 require_json(multiprobe_erased GET multiprobe_binary mutations erased_count)

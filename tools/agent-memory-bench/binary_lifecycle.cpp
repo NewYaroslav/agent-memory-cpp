@@ -333,27 +333,57 @@ namespace {
         std::vector<std::unordered_set<std::string>> exact_sets;
     };
 
-    [[nodiscard]] ExactQueryMeasurement measure_exact_queries(
-        const agent_memory::ExactVectorIndex& index,
+    [[nodiscard]] std::vector<agent_memory::VectorSearchQuery>
+    make_vector_queries(
         const Dataset& dataset,
         std::size_t limit
     ) {
-        std::vector<std::vector<agent_memory::VectorSearchResult>> query_results;
-        query_results.reserve(dataset.queries.size());
-        std::size_t result_count = 0;
-        const auto start = Clock::now();
+        std::vector<agent_memory::VectorSearchQuery> queries;
+        queries.reserve(dataset.queries.size());
         for(const auto& query : dataset.queries) {
             agent_memory::VectorSearchQuery search_query;
             search_query.embedding = query;
             search_query.limit = limit;
-            auto results = index.search(search_query);
+            queries.push_back(std::move(search_query));
+        }
+        return queries;
+    }
+
+    [[nodiscard]] std::vector<agent_memory::BinarySignatureSearchQuery>
+    make_binary_queries(
+        const std::vector<agent_memory::BinarySignature>& query_signatures,
+        const agent_memory::BinarySignatureInfo& signature_info,
+        std::size_t limit
+    ) {
+        std::vector<agent_memory::BinarySignatureSearchQuery> queries;
+        queries.reserve(query_signatures.size());
+        for(const auto& signature : query_signatures) {
+            agent_memory::BinarySignatureSearchQuery search_query;
+            search_query.signature = signature;
+            search_query.signature_info = signature_info;
+            search_query.limit = limit;
+            queries.push_back(std::move(search_query));
+        }
+        return queries;
+    }
+
+    [[nodiscard]] ExactQueryMeasurement measure_exact_queries(
+        const agent_memory::ExactVectorIndex& index,
+        const std::vector<agent_memory::VectorSearchQuery>& queries
+    ) {
+        std::vector<std::vector<agent_memory::VectorSearchResult>> query_results;
+        query_results.reserve(queries.size());
+        std::size_t result_count = 0;
+        const auto start = Clock::now();
+        for(const auto& query : queries) {
+            auto results = index.search(query);
             result_count += results.size();
             query_results.push_back(std::move(results));
         }
         const auto total_ms = elapsed_ms(start, Clock::now());
 
         std::vector<std::unordered_set<std::string>> sets;
-        sets.reserve(dataset.queries.size());
+        sets.reserve(query_results.size());
         for(const auto& results : query_results) {
             std::unordered_set<std::string> set;
             for(const auto& result : results) {
@@ -365,9 +395,9 @@ namespace {
         return {
             {
                 {"total_ms", total_ms},
-                {"mean_ms", total_ms / static_cast<double>(dataset.queries.size())},
+                {"mean_ms", total_ms / static_cast<double>(queries.size())},
                 {"mean_result_count", static_cast<double>(result_count) /
-                                          static_cast<double>(dataset.queries.size())}
+                                          static_cast<double>(queries.size())}
             },
             std::move(sets)
         };
@@ -375,24 +405,16 @@ namespace {
 
     template <class SearchFn>
     [[nodiscard]] nlohmann::json measure_binary_queries(
-        const Dataset& dataset,
-        const std::vector<agent_memory::BinarySignature>& query_signatures,
-        const agent_memory::BinarySignatureInfo& signature_info,
+        const std::vector<agent_memory::BinarySignatureSearchQuery>& queries,
         const std::vector<std::unordered_set<std::string>>& exact_sets,
-        std::size_t limit,
         SearchFn&& search_fn
     ) {
         std::vector<std::vector<agent_memory::BinarySignatureSearchResult>>
             query_results;
-        query_results.reserve(dataset.queries.size());
+        query_results.reserve(queries.size());
         const auto start = Clock::now();
-        for(std::size_t query = 0; query < dataset.queries.size(); ++query) {
-            agent_memory::BinarySignatureSearchQuery search_query;
-            search_query.signature = query_signatures[query];
-            search_query.signature_info = signature_info;
-            search_query.limit = limit;
-
-            query_results.push_back(search_fn(search_query));
+        for(const auto& query : queries) {
+            query_results.push_back(search_fn(query));
         }
         const auto total_ms = elapsed_ms(start, Clock::now());
 
@@ -412,68 +434,32 @@ namespace {
         }
         return {
             {"total_ms", total_ms},
-            {"mean_ms", total_ms / static_cast<double>(dataset.queries.size())},
+            {"mean_ms", total_ms / static_cast<double>(queries.size())},
             {"mean_result_count", static_cast<double>(result_count) /
-                                      static_cast<double>(dataset.queries.size())},
+                                      static_cast<double>(queries.size())},
             {"exact_top_k_candidate_coverage",
-             coverage_sum / static_cast<double>(dataset.queries.size())}
+             coverage_sum / static_cast<double>(queries.size())}
         };
     }
 
-    [[nodiscard]] nlohmann::json measure_multiprobe_queries(
-        const Dataset& dataset,
-        const std::vector<agent_memory::BinarySignature>& query_signatures,
-        const agent_memory::BinarySignatureInfo& signature_info,
-        const std::vector<std::unordered_set<std::string>>& exact_sets,
-        std::size_t limit,
-        const agent_memory::MultiProbeHammingIndex& index,
-        double& candidate_sum,
-        double& bucket_sum,
-        double& posting_sum
+    struct MultiProbeDiagnostics final {
+        double candidate_sum = 0.0;
+        double bucket_sum = 0.0;
+        double posting_sum = 0.0;
+    };
+
+    [[nodiscard]] MultiProbeDiagnostics collect_multiprobe_diagnostics(
+        const std::vector<agent_memory::BinarySignatureSearchQuery>& queries,
+        const agent_memory::MultiProbeHammingIndex& index
     ) {
-        std::vector<agent_memory::MultiProbeHammingSearchResult> query_results;
-        query_results.reserve(dataset.queries.size());
-        const auto start = Clock::now();
-        for(std::size_t query = 0; query < dataset.queries.size(); ++query) {
-            agent_memory::BinarySignatureSearchQuery search_query;
-            search_query.signature = query_signatures[query];
-            search_query.signature_info = signature_info;
-            search_query.limit = limit;
-            query_results.push_back(index.search_with_diagnostics(search_query));
+        MultiProbeDiagnostics diagnostics;
+        for(const auto& query : queries) {
+            const auto result = index.search_with_diagnostics(query);
+            diagnostics.candidate_sum += static_cast<double>(result.candidate_count);
+            diagnostics.bucket_sum += static_cast<double>(result.probed_bucket_count);
+            diagnostics.posting_sum += static_cast<double>(result.visited_posting_count);
         }
-        const auto total_ms = elapsed_ms(start, Clock::now());
-
-        double coverage_sum = 0.0;
-        std::size_t result_count = 0;
-        candidate_sum = 0.0;
-        bucket_sum = 0.0;
-        posting_sum = 0.0;
-        for(std::size_t query = 0; query < query_results.size(); ++query) {
-            const auto& result = query_results[query];
-            candidate_sum += static_cast<double>(result.candidate_count);
-            bucket_sum += static_cast<double>(result.probed_bucket_count);
-            posting_sum += static_cast<double>(result.visited_posting_count);
-            result_count += result.results.size();
-
-            std::size_t hits = 0;
-            for(const auto& item : result.results) {
-                if(exact_sets[query].find(item.chunk_id.value()) !=
-                   exact_sets[query].end()) {
-                    ++hits;
-                }
-            }
-            coverage_sum += static_cast<double>(hits) /
-                            static_cast<double>(exact_sets[query].size());
-        }
-
-        return {
-            {"total_ms", total_ms},
-            {"mean_ms", total_ms / static_cast<double>(dataset.queries.size())},
-            {"mean_result_count", static_cast<double>(result_count) /
-                                      static_cast<double>(dataset.queries.size())},
-            {"exact_top_k_candidate_coverage",
-             coverage_sum / static_cast<double>(dataset.queries.size())}
-        };
+        return diagnostics;
     }
 
     template <class Index, class Records>
@@ -529,6 +515,12 @@ namespace {
 
         const auto vector_records = make_vector_records(dataset);
         const auto binary_records = make_binary_records(document_signatures, signature_info);
+        const auto vector_queries = make_vector_queries(dataset, config.result_limit);
+        const auto binary_queries = make_binary_queries(
+            query_signatures,
+            signature_info,
+            config.result_limit
+        );
 
         agent_memory::ExactVectorIndex exact({
             config.embedding_dimensions,
@@ -539,8 +531,7 @@ namespace {
         const auto exact_size_after_build = exact.size();
         const auto exact_measurement = measure_exact_queries(
             exact,
-            dataset,
-            config.result_limit
+            vector_queries
         );
         const auto& exact_sets = exact_measurement.exact_sets;
 
@@ -562,38 +553,29 @@ namespace {
         const auto multiprobe_size_after_build = multiprobe.size();
 
         const auto flat_query = measure_binary_queries(
-            dataset,
-            query_signatures,
-            signature_info,
+            binary_queries,
             exact_sets,
-            config.result_limit,
             [&](const agent_memory::BinarySignatureSearchQuery& query) {
                 return flat.search(query);
             }
         );
 
-        double multiprobe_candidate_sum = 0.0;
-        double multiprobe_bucket_sum = 0.0;
-        double multiprobe_posting_sum = 0.0;
-        const auto multiprobe_query = measure_multiprobe_queries(
-            dataset,
-            query_signatures,
-            signature_info,
+        const auto multiprobe_query = measure_binary_queries(
+            binary_queries,
             exact_sets,
-            config.result_limit,
-            multiprobe,
-            multiprobe_candidate_sum,
-            multiprobe_bucket_sum,
-            multiprobe_posting_sum
+            [&](const agent_memory::BinarySignatureSearchQuery& query) {
+                return multiprobe.search(query);
+            }
+        );
+        const auto multiprobe_diagnostics = collect_multiprobe_diagnostics(
+            binary_queries,
+            multiprobe
         );
 
         auto flat_mutations = measure_mutations(flat, binary_records, config.mutation_count);
         const auto flat_post_upsert_query = measure_binary_queries(
-            dataset,
-            query_signatures,
-            signature_info,
+            binary_queries,
             exact_sets,
-            config.result_limit,
             [&](const agent_memory::BinarySignatureSearchQuery& query) {
                 return flat.search(query);
             }
@@ -604,11 +586,8 @@ namespace {
             config.mutation_count
         );
         const auto multiprobe_post_upsert_query = measure_binary_queries(
-            dataset,
-            query_signatures,
-            signature_info,
+            binary_queries,
             exact_sets,
-            config.result_limit,
             [&](const agent_memory::BinarySignatureSearchQuery& query) {
                 return multiprobe.search(query);
             }
@@ -623,11 +602,8 @@ namespace {
         const auto flat_rebuild_ms = elapsed_ms(flat_rebuild_start, Clock::now());
         const auto flat_size_after_rebuild = flat.size();
         const auto flat_post_rebuild_query = measure_binary_queries(
-            dataset,
-            query_signatures,
-            signature_info,
+            binary_queries,
             exact_sets,
-            config.result_limit,
             [&](const agent_memory::BinarySignatureSearchQuery& query) {
                 return flat.search(query);
             }
@@ -645,11 +621,8 @@ namespace {
         );
         const auto multiprobe_size_after_rebuild = multiprobe.size();
         const auto multiprobe_post_rebuild_query = measure_binary_queries(
-            dataset,
-            query_signatures,
-            signature_info,
+            binary_queries,
             exact_sets,
-            config.result_limit,
             [&](const agent_memory::BinarySignatureSearchQuery& query) {
                 return multiprobe.search(query);
             }
@@ -717,9 +690,12 @@ namespace {
             {"rebuild_ms", multiprobe_rebuild_ms},
             {"size_after_clear", multiprobe_size_after_clear},
             {"size_after_rebuild", multiprobe_size_after_rebuild},
-            {"mean_candidate_count", multiprobe_candidate_sum / query_count},
-            {"mean_probed_bucket_count", multiprobe_bucket_sum / query_count},
-            {"mean_visited_posting_count", multiprobe_posting_sum / query_count},
+            {"mean_candidate_count",
+             multiprobe_diagnostics.candidate_sum / query_count},
+            {"mean_probed_bucket_count",
+             multiprobe_diagnostics.bucket_sum / query_count},
+            {"mean_visited_posting_count",
+             multiprobe_diagnostics.posting_sum / query_count},
             {"options",
              {
                  {"table_count", config.multiprobe_table_count},

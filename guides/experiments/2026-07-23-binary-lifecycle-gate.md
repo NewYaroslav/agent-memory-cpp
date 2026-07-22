@@ -28,8 +28,9 @@ Expected result:
 - The smoke gate should not decide the production backend.
 - It should guarantee that future reports contain build/query/mutation/rebuild,
   payload, backend, and candidate-coverage fields.
-- Query timings measure the index `search()` calls. Exact top-k set materializing
-  and candidate-coverage calculation are intentionally outside the timed region.
+- Query timings measure the prepared-query search loop. Query-object
+  construction, exact top-k set materializing, multi-probe diagnostics, and
+  candidate-coverage calculation are intentionally outside the timed region.
 - Lifecycle checks should prove that erase/upsert/clear/rebuild return the index
   to the expected size and candidate coverage, not merely that the operations
   completed with non-negative timings.
