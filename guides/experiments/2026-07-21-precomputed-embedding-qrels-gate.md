@@ -533,3 +533,21 @@ embedding-model artifact. It does not establish a production default encoder or
 bit budget. The next useful work is a larger real/precomputed fixture or a
 separate offline benchmark with more queries, multiple seeds, and 256/512-bit
 budgets.
+
+### Follow-up work recorded after review
+
+PR #73 intentionally keeps the MiniLM fixture small and CI-friendly. The next
+steps should be split instead of expanding this smoke fixture:
+
+1. Provenance hygiene: move shared fixture-contract helpers out of
+   `generate-precomputed-external-hash-fixture.py`, document the official
+   regeneration environment, and replace the inline
+   `generator_requirements_lock` string with a real lockfile or an explicit
+   lockfile-hash policy.
+2. Larger real/precomputed benchmark: increase document/query count, topic
+   diversity, bit budgets, seeds, and candidate ratios. Learned encoders such
+   as PCA and ITQ should use separated training/evaluation records before their
+   relative quality is interpreted.
+3. Optional attestation hardening: record hashes for resolved model/tokenizer
+   files, such as model config, tokenizer JSON, and model weights, when a
+   fixture is meant to support stronger reproducibility claims.

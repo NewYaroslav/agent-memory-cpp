@@ -265,6 +265,14 @@ MiniLM generator and a `generator_contract_source_hash` for the shared canonical
 fixture-contract script; the MiniLM benchmark CTest compares both hashes against
 the checked-in scripts without rerunning the model.
 
+Changing either generator script is an intentional fixture-update operation:
+rerun the generator, refresh the generator source hashes, and commit the updated
+artifact in the same PR. A later provenance-hygiene PR should move the shared
+fixture contract into a dedicated helper module and replace the inline
+`generator_requirements_lock` string with a real lockfile or an explicit
+lockfile-hash policy. Until then, treat the official regeneration environment
+as CPU execution with the pinned versions recorded in the artifact.
+
 The two exact baselines answer different questions:
 
 - `current_exact_index` measures the existing `ExactVectorIndex`, including its
