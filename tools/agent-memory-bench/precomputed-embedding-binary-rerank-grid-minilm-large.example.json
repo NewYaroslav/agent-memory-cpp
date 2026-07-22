@@ -1,0 +1,14 @@
+{
+  "mode": "precomputed_embedding_binary_rerank_grid",
+  "benchmark_name": "precomputed_embedding_binary_rerank_grid_minilm_l6_v2_large",
+  "dataset_path": "tests/eval/fixtures/precomputed-embedding-minilm-l6-v2-large.json",
+  "output_path": "precomputed-embedding-binary-rerank-grid-minilm-l6-v2-large.json",
+  "result_limit": 10,
+  "bit_counts": [128, 256],
+  "rerank_candidate_limits": [10, 18, 27, 36],
+  "encoder_families": [
+    "random_hyperplane_rademacher",
+    "randomized_hadamard_projection"
+  ],
+  "encoder_seeds": [42]
+}

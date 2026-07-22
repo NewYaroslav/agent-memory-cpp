@@ -573,3 +573,55 @@ The document/query vectors did not change: `artifact_hash` remains
 `713b34f1fdddb4676930fbac458257a2897e4d7891ef47b519e65b1ad01a8ce1`.
 Only the provenance-bound `config_hash` changed because the contract-source and
 requirements-lock identities changed.
+
+## 2026-07-22 — PR #75 larger MiniLM precomputed fixture
+
+PR #75 adds a larger frozen MiniLM fixture without changing the PR #73 smoke
+fixture:
+
+- fixture:
+  `tests/eval/fixtures/precomputed-embedding-minilm-l6-v2-large.json`;
+- content contract:
+  `tools/agent-memory-bench/precomputed_fixture_large_contract.py`;
+- generator:
+  `tools/agent-memory-bench/generate-precomputed-minilm-large-fixture.py`;
+- corpus/query/qrels shape: 36 documents, 12 queries, 36 graded qrels;
+- model/tokenizer: same pinned `sentence-transformers/all-MiniLM-L6-v2`
+  revision as PR #73;
+- CI benchmark families: `random_hyperplane_rademacher` and
+  `randomized_hadamard_projection`;
+- bit budgets: 128 and 256;
+- candidate limits: 10, 18, 27, and 36.
+
+The fixture is intentionally still small enough for CI. It is larger than the
+first MiniLM smoke fixture, but it is not a statistically stable production
+benchmark.
+
+The exact-vector oracle reports:
+
+| Metric | Value |
+| --- | ---: |
+| Recall@10 | 1.0000 |
+| nDCG@10 | 0.9167 |
+
+Representative local rows:
+
+| Encoder | Bits | Candidates | Exact top-k candidate coverage | Qrels candidate coverage | Reranked Recall@10 | Reranked nDCG@10 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Random hyperplane | 128 | 10 | 0.6250 | 0.9444 | 0.9444 | 0.8851 |
+| Random hyperplane | 256 | 18 | 0.9000 | 1.0000 | 1.0000 | 0.9175 |
+| Randomized Hadamard | 128 | 18 | 0.8750 | 1.0000 | 1.0000 | 0.9167 |
+| Randomized Hadamard | 256 | 10 | 0.7250 | 1.0000 | 1.0000 | 0.9169 |
+| Full candidate set | 128/256 | 36 | 1.0000 | 1.0000 | 1.0000 | 0.9167 |
+
+This is a useful quality-regression signal for candidate over-fetch: even at
+10 candidates, the binary stage usually preserves most qrels-relevant items,
+and 18 candidates is enough to recover full qrels recall in this fixture for
+the stronger zero-training rows. It is not speed evidence. On such a small
+corpus, exact vector scan remains the wrong denominator for production-scale
+claims, and binary encode/search/rerank overhead can dominate.
+
+PCA and ITQ are intentionally excluded from the PR #75 CI grid. Learned
+encoders need a larger train/evaluation split and their training cost should be
+measured in an offline or follow-up benchmark before they become part of a
+larger always-on CI gate.
