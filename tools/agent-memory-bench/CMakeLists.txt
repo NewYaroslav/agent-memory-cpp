@@ -22,6 +22,16 @@ target_link_libraries(agent-memory-hamming-hot-path-bench
         agent_memory::json
 )
 
+add_executable(agent-memory-aggregate-signature-bench
+    aggregate_signature.cpp
+)
+
+target_link_libraries(agent-memory-aggregate-signature-bench
+    PRIVATE
+        agent_memory::agent_memory
+        agent_memory::json
+)
+
 add_executable(agent-memory-precomputed-artifact-verify
     precomputed_artifact_verify.cpp
 )
