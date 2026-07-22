@@ -299,9 +299,31 @@ if(AGENT_MEMORY_BUILD_TESTS)
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-precomputed-embedding-external-hash-regeneration.cmake
                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
             )
+            add_test(
+                NAME agent_memory_precomputed_embedding_content_contract_minilm
+                COMMAND
+                    ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/verify-precomputed-fixture-content-contract.py
+                    --fixture
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-minilm-l6-v2.json
+                    --contract
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/precomputed_fixture_contract.py
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            )
+            add_test(
+                NAME agent_memory_precomputed_embedding_content_contract_minilm_large
+                COMMAND
+                    ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/verify-precomputed-fixture-content-contract.py
+                    --fixture
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-minilm-l6-v2-large.json
+                    --contract
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/precomputed_fixture_large_contract.py
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            )
         else()
             message(WARNING
-                "Python3 interpreter not found; skipping external-hash fixture regeneration test")
+                "Python3 interpreter not found; skipping Python-based precomputed fixture tests")
         endif()
         add_test(
             NAME agent_memory_benchmark_cli_hamming_hot_path

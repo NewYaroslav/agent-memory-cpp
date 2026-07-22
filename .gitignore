@@ -5,5 +5,7 @@ tmp/
 *.user
 *.suo
 *.log
+*.pyc
+__pycache__/
 CMakeUserPresets.json
 .omc/

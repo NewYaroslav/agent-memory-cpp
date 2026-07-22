@@ -13,7 +13,7 @@
     "generator_version": "v1",
     "dataset_revision": "agent-memory-minilm-large-fixture:2026-07-22",
     "generator_revision": "agent-memory-cpp:minilm-l6-v2-large-fixture-v1",
-    "generator_source_hash": "2aded58cc7b8ab38f088521b8286c24eece05393cfe0d3957723fe943d180d50",
+    "generator_source_hash": "4d151b05461ed7761ad18c2deedb913d10048882475e7d45b91bac6f7540dd2a",
     "generator_contract_source_hash": "c3ab60c1bfbeef809b27df48d12e39a6ffdd2b7b52c4903f2b41aa05b4ed98c8",
     "generator_command": "python tools/agent-memory-bench/generate-precomputed-minilm-large-fixture.py --output tests/eval/fixtures/precomputed-embedding-minilm-l6-v2-large.json",
     "generator_requirements_lock": "tools/agent-memory-bench/requirements-minilm-fixture.txt;sha256=8f3ff40e6a27b0a723b9c37a397cd80a14e0b515a86383bd82360de49da250b5",
@@ -26,7 +26,7 @@
     "normalization": "l2",
     "dtype": "float32",
     "hash_algorithm": "sha256",
-    "config_hash": "0a55c1e915cf1aa8a23c7b953fdca204d4e65366d6b9ffc615410cac4b1a7f9c",
+    "config_hash": "3aaffc9f01047d76f4d5f1f22ed194cacf1756e94a5f0bde9070dfda822df1d5",
     "dataset_hash": "61fe0cadc963f59ecf804b179f98985b022d3af3bc81a809f692eb50b1e0f23d",
     "qrels_hash": "d144b10c45e36c2b0404245f0e914f2bbab201810b95845f976c649cfff8a553",
     "artifact_hash": "b802d414358da76ad2388be64b458345e5e40e6c59d03564d8d5ff6cd635850f"
