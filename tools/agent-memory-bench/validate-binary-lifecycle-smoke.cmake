@@ -66,6 +66,14 @@ function(require_range value label min_value max_value)
     endif()
 endfunction()
 
+function(require_nonempty_string_path label)
+    require_json(value GET ${ARGN})
+    if("${value}" STREQUAL "")
+        message(FATAL_ERROR "${label} must be a non-empty string")
+    endif()
+    set(${label} "${value}" PARENT_SCOPE)
+endfunction()
+
 require_json(schema_version GET schema_version)
 if(NOT schema_version EQUAL 1)
     message(FATAL_ERROR "schema_version must be 1")
@@ -120,10 +128,33 @@ require_nonnegative_path(
 require_nonnegative_path("exact_vector.build_ms" exact_vector build_ms)
 require_nonnegative_path("exact_vector.query_total_ms" exact_vector query_total_ms)
 require_nonnegative_path("exact_vector.query_mean_ms" exact_vector query_mean_ms)
+require_nonnegative_path(
+    "exact_vector.query_mean_result_count"
+    exact_vector
+    query_mean_result_count
+)
 require_nonnegative_path("flat_binary.build_ms" flat_binary build_ms)
 require_nonnegative_path("flat_binary.rebuild_ms" flat_binary rebuild_ms)
 require_nonnegative_path("flat_binary.query.total_ms" flat_binary query total_ms)
 require_nonnegative_path("flat_binary.query.mean_ms" flat_binary query mean_ms)
+require_nonnegative_path(
+    "flat_binary.query.mean_result_count"
+    flat_binary
+    query
+    mean_result_count
+)
+require_nonnegative_path(
+    "flat_binary.post_upsert_query.total_ms"
+    flat_binary
+    post_upsert_query
+    total_ms
+)
+require_nonnegative_path(
+    "flat_binary.post_rebuild_query.total_ms"
+    flat_binary
+    post_rebuild_query
+    total_ms
+)
 require_nonnegative_path(
     "flat_binary.mutations.erase_ms"
     flat_binary
@@ -155,6 +186,24 @@ require_nonnegative_path(
     mean_ms
 )
 require_nonnegative_path(
+    "multiprobe_binary.query.mean_result_count"
+    multiprobe_binary
+    query
+    mean_result_count
+)
+require_nonnegative_path(
+    "multiprobe_binary.post_upsert_query.total_ms"
+    multiprobe_binary
+    post_upsert_query
+    total_ms
+)
+require_nonnegative_path(
+    "multiprobe_binary.post_rebuild_query.total_ms"
+    multiprobe_binary
+    post_rebuild_query
+    total_ms
+)
+require_nonnegative_path(
     "multiprobe_binary.mutations.erase_ms"
     multiprobe_binary
     mutations
@@ -166,6 +215,44 @@ require_nonnegative_path(
     mutations
     upsert_ms
 )
+require_nonnegative_path(
+    "multiprobe_binary.mean_candidate_count"
+    multiprobe_binary
+    mean_candidate_count
+)
+require_nonnegative_path(
+    "multiprobe_binary.mean_probed_bucket_count"
+    multiprobe_binary
+    mean_probed_bucket_count
+)
+require_nonnegative_path(
+    "multiprobe_binary.mean_visited_posting_count"
+    multiprobe_binary
+    mean_visited_posting_count
+)
+require_nonnegative_path(
+    "process_peak_resident_set_bytes"
+    process_peak_resident_set_bytes
+)
+
+require_nonempty_string_path(exact_similarity_backend
+    exact_vector
+    similarity_backend
+)
+if(NOT exact_similarity_backend MATCHES "^(scalar|sse2|avx2)$")
+    message(FATAL_ERROR
+        "unexpected exact vector similarity backend: ${exact_similarity_backend}"
+    )
+endif()
+require_nonempty_string_path(flat_hamming_backend
+    flat_binary
+    hamming_backend
+)
+if(NOT flat_hamming_backend MATCHES "^(lookup_table|hardware_popcount|avx2_simd)$")
+    message(FATAL_ERROR
+        "unexpected flat binary Hamming backend: ${flat_hamming_backend}"
+    )
+endif()
 
 require_json(flat_coverage
     GET flat_binary query exact_top_k_candidate_coverage)
@@ -173,6 +260,45 @@ require_json(multiprobe_coverage
     GET multiprobe_binary query exact_top_k_candidate_coverage)
 require_range(${flat_coverage} "flat coverage" 0 1)
 require_range(${multiprobe_coverage} "multiprobe coverage" 0 1)
+
+require_json(flat_post_upsert_coverage
+    GET flat_binary post_upsert_query exact_top_k_candidate_coverage)
+require_json(flat_post_rebuild_coverage
+    GET flat_binary post_rebuild_query exact_top_k_candidate_coverage)
+require_json(multiprobe_post_upsert_coverage
+    GET multiprobe_binary post_upsert_query exact_top_k_candidate_coverage)
+require_json(multiprobe_post_rebuild_coverage
+    GET multiprobe_binary post_rebuild_query exact_top_k_candidate_coverage)
+if(NOT flat_post_upsert_coverage EQUAL flat_coverage)
+    message(FATAL_ERROR "flat coverage must return after upsert")
+endif()
+if(NOT flat_post_rebuild_coverage EQUAL flat_coverage)
+    message(FATAL_ERROR "flat coverage must return after rebuild")
+endif()
+if(NOT multiprobe_post_upsert_coverage EQUAL multiprobe_coverage)
+    message(FATAL_ERROR "multi-probe coverage must return after upsert")
+endif()
+if(NOT multiprobe_post_rebuild_coverage EQUAL multiprobe_coverage)
+    message(FATAL_ERROR "multi-probe coverage must return after rebuild")
+endif()
+
+require_json(exact_mean_result_count
+    GET exact_vector query_mean_result_count)
+require_json(flat_mean_result_count
+    GET flat_binary query mean_result_count)
+require_json(multiprobe_mean_result_count
+    GET multiprobe_binary query mean_result_count)
+require_range(${exact_mean_result_count}
+    "exact mean result count" 0 ${result_limit})
+require_range(${flat_mean_result_count}
+    "flat mean result count" 0 ${result_limit})
+require_range(${multiprobe_mean_result_count}
+    "multi-probe mean result count" 0 ${result_limit})
+
+require_json(multiprobe_mean_candidate_count
+    GET multiprobe_binary mean_candidate_count)
+require_range(${multiprobe_mean_candidate_count}
+    "multi-probe mean candidate count" 0 ${document_count})
 
 require_json(flat_erased GET flat_binary mutations erased_count)
 require_json(multiprobe_erased GET multiprobe_binary mutations erased_count)
@@ -186,11 +312,81 @@ endif()
 require_json(exact_payload GET exact_vector payload_bytes)
 require_json(flat_payload GET flat_binary payload_bytes)
 require_json(multiprobe_payload GET multiprobe_binary payload_bytes)
-if(NOT exact_payload GREATER flat_payload)
-    message(FATAL_ERROR "exact payload should be larger than flat binary payload")
+math(EXPR expected_exact_payload
+    "${document_count} * ${embedding_dimensions} * 4"
+)
+math(EXPR binary_word_count "(${bit_count} + 63) / 64")
+math(EXPR expected_binary_payload
+    "${document_count} * ${binary_word_count} * 8"
+)
+if(NOT exact_payload EQUAL expected_exact_payload)
+    message(FATAL_ERROR
+        "exact payload must be ${expected_exact_payload}, got ${exact_payload}"
+    )
+endif()
+if(NOT flat_payload EQUAL expected_binary_payload)
+    message(FATAL_ERROR
+        "flat binary payload must be ${expected_binary_payload}, got ${flat_payload}"
+    )
 endif()
 if(NOT flat_payload EQUAL multiprobe_payload)
     message(FATAL_ERROR "binary payload bytes should match between binary indexes")
+endif()
+
+require_json(exact_size_after_build GET exact_vector size_after_build)
+require_json(flat_size_after_build GET flat_binary size_after_build)
+require_json(flat_size_before_erase
+    GET flat_binary mutations size_before_erase)
+require_json(flat_size_after_erase
+    GET flat_binary mutations size_after_erase)
+require_json(flat_size_after_upsert
+    GET flat_binary mutations size_after_upsert)
+require_json(flat_size_after_clear GET flat_binary size_after_clear)
+require_json(flat_size_after_rebuild GET flat_binary size_after_rebuild)
+require_json(multiprobe_size_after_build
+    GET multiprobe_binary size_after_build)
+require_json(multiprobe_size_before_erase
+    GET multiprobe_binary mutations size_before_erase)
+require_json(multiprobe_size_after_erase
+    GET multiprobe_binary mutations size_after_erase)
+require_json(multiprobe_size_after_upsert
+    GET multiprobe_binary mutations size_after_upsert)
+require_json(multiprobe_size_after_clear
+    GET multiprobe_binary size_after_clear)
+require_json(multiprobe_size_after_rebuild
+    GET multiprobe_binary size_after_rebuild)
+math(EXPR expected_after_erase "${document_count} - ${mutation_count}")
+foreach(size_label
+        exact_size_after_build
+        flat_size_after_build
+        flat_size_before_erase
+        flat_size_after_upsert
+        flat_size_after_rebuild
+        multiprobe_size_after_build
+        multiprobe_size_before_erase
+        multiprobe_size_after_upsert
+        multiprobe_size_after_rebuild)
+    if(NOT ${size_label} EQUAL document_count)
+        message(FATAL_ERROR
+            "${size_label} must be ${document_count}, got ${${size_label}}"
+        )
+    endif()
+endforeach()
+if(NOT flat_size_after_erase EQUAL expected_after_erase)
+    message(FATAL_ERROR
+        "flat_size_after_erase must be ${expected_after_erase}"
+    )
+endif()
+if(NOT multiprobe_size_after_erase EQUAL expected_after_erase)
+    message(FATAL_ERROR
+        "multiprobe_size_after_erase must be ${expected_after_erase}"
+    )
+endif()
+if(NOT flat_size_after_clear EQUAL 0)
+    message(FATAL_ERROR "flat_size_after_clear must be 0")
+endif()
+if(NOT multiprobe_size_after_clear EQUAL 0)
+    message(FATAL_ERROR "multiprobe_size_after_clear must be 0")
 endif()
 
 require_json(table_count GET multiprobe_binary options table_count)

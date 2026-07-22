@@ -28,6 +28,11 @@ Expected result:
 - The smoke gate should not decide the production backend.
 - It should guarantee that future reports contain build/query/mutation/rebuild,
   payload, backend, and candidate-coverage fields.
+- Query timings measure the index `search()` calls. Exact top-k set materializing
+  and candidate-coverage calculation are intentionally outside the timed region.
+- Lifecycle checks should prove that erase/upsert/clear/rebuild return the index
+  to the expected size and candidate coverage, not merely that the operations
+  completed with non-negative timings.
 - On this tiny corpus, `MultiProbeHammingIndex` may not beat flat Hamming scan
   because bucket and dedup overhead can dominate before scale.
 
@@ -35,15 +40,28 @@ Actual single smoke run:
 
 | Index | Build ms | Query mean ms | Exact top-10 coverage | Erase ms | Upsert ms | Rebuild ms | Payload bytes |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| ExactVectorIndex | 0.653 | 0.102 | 1.000 oracle | n/a | n/a | n/a | 65,536 |
-| FlatBinarySignatureIndex | 1.224 | 0.037 | 0.414 | 0.042 | 0.057 | 1.113 | 4,096 |
-| MultiProbeHammingIndex | 2.734 | 0.045 | 0.381 | 0.160 | 0.111 | 2.737 | 4,096 |
+| ExactVectorIndex | 1.099 | 0.513 | 1.000 oracle | n/a | n/a | n/a | 65,536 |
+| FlatBinarySignatureIndex | 1.900 | 0.049 | 0.414 | 0.086 | 0.129 | 14.676 | 4,096 |
+| MultiProbeHammingIndex | 4.330 | 0.059 | 0.381 | 0.336 | 0.209 | 4.034 | 4,096 |
 
 Multi-probe diagnostics:
 
 | Mean candidates | Mean probed buckets | Mean visited postings |
 |---:|---:|---:|
 | 67.875 | 72.000 | 83.516 |
+
+Lifecycle invariants validated by CTest:
+
+| Stage | Expected size |
+|---|---:|
+| after build | 256 |
+| after erasing 16 records | 240 |
+| after re-upsert | 256 |
+| after clear | 0 |
+| after rebuild | 256 |
+
+The same gate verifies that post-upsert and post-rebuild candidate coverage
+return to the pre-mutation value for both binary indexes.
 
 Interpretation:
 

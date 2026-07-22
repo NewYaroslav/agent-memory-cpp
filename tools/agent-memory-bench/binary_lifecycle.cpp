@@ -328,24 +328,49 @@ namespace {
         return elapsed_ms(start, Clock::now());
     }
 
-    [[nodiscard]] std::vector<std::unordered_set<std::string>> exact_top_k_sets(
+    struct ExactQueryMeasurement final {
+        nlohmann::json query;
+        std::vector<std::unordered_set<std::string>> exact_sets;
+    };
+
+    [[nodiscard]] ExactQueryMeasurement measure_exact_queries(
         const agent_memory::ExactVectorIndex& index,
         const Dataset& dataset,
         std::size_t limit
     ) {
-        std::vector<std::unordered_set<std::string>> sets;
-        sets.reserve(dataset.queries.size());
+        std::vector<std::vector<agent_memory::VectorSearchResult>> query_results;
+        query_results.reserve(dataset.queries.size());
+        std::size_t result_count = 0;
+        const auto start = Clock::now();
         for(const auto& query : dataset.queries) {
             agent_memory::VectorSearchQuery search_query;
             search_query.embedding = query;
             search_query.limit = limit;
+            auto results = index.search(search_query);
+            result_count += results.size();
+            query_results.push_back(std::move(results));
+        }
+        const auto total_ms = elapsed_ms(start, Clock::now());
+
+        std::vector<std::unordered_set<std::string>> sets;
+        sets.reserve(dataset.queries.size());
+        for(const auto& results : query_results) {
             std::unordered_set<std::string> set;
-            for(const auto& result : index.search(search_query)) {
+            for(const auto& result : results) {
                 set.insert(result.chunk_id.value());
             }
             sets.push_back(std::move(set));
         }
-        return sets;
+
+        return {
+            {
+                {"total_ms", total_ms},
+                {"mean_ms", total_ms / static_cast<double>(dataset.queries.size())},
+                {"mean_result_count", static_cast<double>(result_count) /
+                                          static_cast<double>(dataset.queries.size())}
+            },
+            std::move(sets)
+        };
     }
 
     template <class SearchFn>
@@ -357,8 +382,9 @@ namespace {
         std::size_t limit,
         SearchFn&& search_fn
     ) {
-        double coverage_sum = 0.0;
-        std::size_t result_count = 0;
+        std::vector<std::vector<agent_memory::BinarySignatureSearchResult>>
+            query_results;
+        query_results.reserve(dataset.queries.size());
         const auto start = Clock::now();
         for(std::size_t query = 0; query < dataset.queries.size(); ++query) {
             agent_memory::BinarySignatureSearchQuery search_query;
@@ -366,7 +392,14 @@ namespace {
             search_query.signature_info = signature_info;
             search_query.limit = limit;
 
-            const auto results = search_fn(search_query);
+            query_results.push_back(search_fn(search_query));
+        }
+        const auto total_ms = elapsed_ms(start, Clock::now());
+
+        double coverage_sum = 0.0;
+        std::size_t result_count = 0;
+        for(std::size_t query = 0; query < query_results.size(); ++query) {
+            const auto& results = query_results[query];
             result_count += results.size();
             std::size_t hits = 0;
             for(const auto& result : results) {
@@ -377,7 +410,62 @@ namespace {
             coverage_sum += static_cast<double>(hits) /
                             static_cast<double>(exact_sets[query].size());
         }
+        return {
+            {"total_ms", total_ms},
+            {"mean_ms", total_ms / static_cast<double>(dataset.queries.size())},
+            {"mean_result_count", static_cast<double>(result_count) /
+                                      static_cast<double>(dataset.queries.size())},
+            {"exact_top_k_candidate_coverage",
+             coverage_sum / static_cast<double>(dataset.queries.size())}
+        };
+    }
+
+    [[nodiscard]] nlohmann::json measure_multiprobe_queries(
+        const Dataset& dataset,
+        const std::vector<agent_memory::BinarySignature>& query_signatures,
+        const agent_memory::BinarySignatureInfo& signature_info,
+        const std::vector<std::unordered_set<std::string>>& exact_sets,
+        std::size_t limit,
+        const agent_memory::MultiProbeHammingIndex& index,
+        double& candidate_sum,
+        double& bucket_sum,
+        double& posting_sum
+    ) {
+        std::vector<agent_memory::MultiProbeHammingSearchResult> query_results;
+        query_results.reserve(dataset.queries.size());
+        const auto start = Clock::now();
+        for(std::size_t query = 0; query < dataset.queries.size(); ++query) {
+            agent_memory::BinarySignatureSearchQuery search_query;
+            search_query.signature = query_signatures[query];
+            search_query.signature_info = signature_info;
+            search_query.limit = limit;
+            query_results.push_back(index.search_with_diagnostics(search_query));
+        }
         const auto total_ms = elapsed_ms(start, Clock::now());
+
+        double coverage_sum = 0.0;
+        std::size_t result_count = 0;
+        candidate_sum = 0.0;
+        bucket_sum = 0.0;
+        posting_sum = 0.0;
+        for(std::size_t query = 0; query < query_results.size(); ++query) {
+            const auto& result = query_results[query];
+            candidate_sum += static_cast<double>(result.candidate_count);
+            bucket_sum += static_cast<double>(result.probed_bucket_count);
+            posting_sum += static_cast<double>(result.visited_posting_count);
+            result_count += result.results.size();
+
+            std::size_t hits = 0;
+            for(const auto& item : result.results) {
+                if(exact_sets[query].find(item.chunk_id.value()) !=
+                   exact_sets[query].end()) {
+                    ++hits;
+                }
+            }
+            coverage_sum += static_cast<double>(hits) /
+                            static_cast<double>(exact_sets[query].size());
+        }
+
         return {
             {"total_ms", total_ms},
             {"mean_ms", total_ms / static_cast<double>(dataset.queries.size())},
@@ -394,6 +482,7 @@ namespace {
         const Records& records,
         std::size_t mutation_count
     ) {
+        const auto size_before_erase = index.size();
         const auto erase_start = Clock::now();
         std::size_t erased = 0;
         for(std::size_t index_number = 0; index_number < mutation_count; ++index_number) {
@@ -402,18 +491,23 @@ namespace {
             }
         }
         const auto erase_ms = elapsed_ms(erase_start, Clock::now());
+        const auto size_after_erase = index.size();
 
         const auto upsert_start = Clock::now();
         for(std::size_t index_number = 0; index_number < mutation_count; ++index_number) {
             index.upsert(records[index_number]);
         }
         const auto upsert_ms = elapsed_ms(upsert_start, Clock::now());
+        const auto size_after_upsert = index.size();
 
         return {
             {"mutation_count", mutation_count},
             {"erased_count", erased},
             {"erase_ms", erase_ms},
-            {"upsert_ms", upsert_ms}
+            {"upsert_ms", upsert_ms},
+            {"size_before_erase", size_before_erase},
+            {"size_after_erase", size_after_erase},
+            {"size_after_upsert", size_after_upsert}
         };
     }
 
@@ -442,12 +536,17 @@ namespace {
             true
         });
         const auto exact_build_ms = build_index(exact, vector_records);
-        const auto exact_query_start = Clock::now();
-        const auto exact_sets = exact_top_k_sets(exact, dataset, config.result_limit);
-        const auto exact_query_ms = elapsed_ms(exact_query_start, Clock::now());
+        const auto exact_size_after_build = exact.size();
+        const auto exact_measurement = measure_exact_queries(
+            exact,
+            dataset,
+            config.result_limit
+        );
+        const auto& exact_sets = exact_measurement.exact_sets;
 
         agent_memory::FlatBinarySignatureIndex flat({signature_info});
         const auto flat_build_ms = build_index(flat, binary_records);
+        const auto flat_size_after_build = flat.size();
 
         agent_memory::MultiProbeHammingIndexOptions multiprobe_options;
         multiprobe_options.signature_info = signature_info;
@@ -460,6 +559,7 @@ namespace {
             config.multiprobe_minimum_candidate_count;
         agent_memory::MultiProbeHammingIndex multiprobe(multiprobe_options);
         const auto multiprobe_build_ms = build_index(multiprobe, binary_records);
+        const auto multiprobe_size_after_build = multiprobe.size();
 
         const auto flat_query = measure_binary_queries(
             dataset,
@@ -475,43 +575,84 @@ namespace {
         double multiprobe_candidate_sum = 0.0;
         double multiprobe_bucket_sum = 0.0;
         double multiprobe_posting_sum = 0.0;
-        const auto multiprobe_query = measure_binary_queries(
+        const auto multiprobe_query = measure_multiprobe_queries(
+            dataset,
+            query_signatures,
+            signature_info,
+            exact_sets,
+            config.result_limit,
+            multiprobe,
+            multiprobe_candidate_sum,
+            multiprobe_bucket_sum,
+            multiprobe_posting_sum
+        );
+
+        auto flat_mutations = measure_mutations(flat, binary_records, config.mutation_count);
+        const auto flat_post_upsert_query = measure_binary_queries(
             dataset,
             query_signatures,
             signature_info,
             exact_sets,
             config.result_limit,
             [&](const agent_memory::BinarySignatureSearchQuery& query) {
-                const auto result = multiprobe.search_with_diagnostics(query);
-                multiprobe_candidate_sum += static_cast<double>(result.candidate_count);
-                multiprobe_bucket_sum += static_cast<double>(result.probed_bucket_count);
-                multiprobe_posting_sum += static_cast<double>(result.visited_posting_count);
-                return result.results;
+                return flat.search(query);
             }
         );
-
-        auto flat_mutations = measure_mutations(flat, binary_records, config.mutation_count);
         auto multiprobe_mutations = measure_mutations(
             multiprobe,
             binary_records,
             config.mutation_count
         );
+        const auto multiprobe_post_upsert_query = measure_binary_queries(
+            dataset,
+            query_signatures,
+            signature_info,
+            exact_sets,
+            config.result_limit,
+            [&](const agent_memory::BinarySignatureSearchQuery& query) {
+                return multiprobe.search(query);
+            }
+        );
 
         const auto flat_rebuild_start = Clock::now();
         flat.clear();
+        const auto flat_size_after_clear = flat.size();
         for(const auto& record : binary_records) {
             flat.upsert(record);
         }
         const auto flat_rebuild_ms = elapsed_ms(flat_rebuild_start, Clock::now());
+        const auto flat_size_after_rebuild = flat.size();
+        const auto flat_post_rebuild_query = measure_binary_queries(
+            dataset,
+            query_signatures,
+            signature_info,
+            exact_sets,
+            config.result_limit,
+            [&](const agent_memory::BinarySignatureSearchQuery& query) {
+                return flat.search(query);
+            }
+        );
 
         const auto multiprobe_rebuild_start = Clock::now();
         multiprobe.clear();
+        const auto multiprobe_size_after_clear = multiprobe.size();
         for(const auto& record : binary_records) {
             multiprobe.upsert(record);
         }
         const auto multiprobe_rebuild_ms = elapsed_ms(
             multiprobe_rebuild_start,
             Clock::now()
+        );
+        const auto multiprobe_size_after_rebuild = multiprobe.size();
+        const auto multiprobe_post_rebuild_query = measure_binary_queries(
+            dataset,
+            query_signatures,
+            signature_info,
+            exact_sets,
+            config.result_limit,
+            [&](const agent_memory::BinarySignatureSearchQuery& query) {
+                return multiprobe.search(query);
+            }
         );
 
         const auto query_count = static_cast<double>(dataset.queries.size());
@@ -539,19 +680,27 @@ namespace {
         };
         report["exact_vector"] = {
             {"build_ms", exact_build_ms},
-            {"query_total_ms", exact_query_ms},
-            {"query_mean_ms", exact_query_ms / query_count},
+            {"query_total_ms", exact_measurement.query.at("total_ms")},
+            {"query_mean_ms", exact_measurement.query.at("mean_ms")},
+            {"query_mean_result_count",
+             exact_measurement.query.at("mean_result_count")},
             {"similarity_backend",
              std::string(agent_memory::vector_similarity_backend_name(
                  exact.similarity_backend()
              ))},
-            {"payload_bytes", exact_payload_bytes}
+            {"payload_bytes", exact_payload_bytes},
+            {"size_after_build", exact_size_after_build}
         };
         report["flat_binary"] = {
             {"build_ms", flat_build_ms},
+            {"size_after_build", flat_size_after_build},
             {"query", flat_query},
+            {"post_upsert_query", flat_post_upsert_query},
+            {"post_rebuild_query", flat_post_rebuild_query},
             {"mutations", flat_mutations},
             {"rebuild_ms", flat_rebuild_ms},
+            {"size_after_clear", flat_size_after_clear},
+            {"size_after_rebuild", flat_size_after_rebuild},
             {"hamming_backend",
              std::string(agent_memory::hamming_distance_backend_name(
                  *flat.hamming_backend()
@@ -560,9 +709,14 @@ namespace {
         };
         report["multiprobe_binary"] = {
             {"build_ms", multiprobe_build_ms},
+            {"size_after_build", multiprobe_size_after_build},
             {"query", multiprobe_query},
+            {"post_upsert_query", multiprobe_post_upsert_query},
+            {"post_rebuild_query", multiprobe_post_rebuild_query},
             {"mutations", multiprobe_mutations},
             {"rebuild_ms", multiprobe_rebuild_ms},
+            {"size_after_clear", multiprobe_size_after_clear},
+            {"size_after_rebuild", multiprobe_size_after_rebuild},
             {"mean_candidate_count", multiprobe_candidate_sum / query_count},
             {"mean_probed_bucket_count", multiprobe_bucket_sum / query_count},
             {"mean_visited_posting_count", multiprobe_posting_sum / query_count},
