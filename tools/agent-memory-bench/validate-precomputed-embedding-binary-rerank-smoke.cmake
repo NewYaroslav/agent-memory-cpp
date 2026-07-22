@@ -96,8 +96,8 @@ if(NOT artifact_generator STREQUAL "agent-memory.fixture.semantic-axis"
    OR NOT artifact_normalization STREQUAL "l2"
    OR NOT artifact_dtype STREQUAL "float32"
    OR NOT artifact_hash_algorithm STREQUAL "sha256"
-   OR NOT artifact_config_hash STREQUAL "155dd9bc3af28f324fa36fbae9c2e39adc3fec8605eb06c1d2717857cd0789b2"
-   OR NOT artifact_artifact_hash STREQUAL "ba0c9f23305723099134ac9e51b131f9ecdd4ad229ca3a1ce77a1719d3027c0e")
+   OR NOT artifact_config_hash STREQUAL "e27a569a249450ca256b8da88340bfea5b8842fd0c4fe8a9810756c2d4024032"
+   OR NOT artifact_artifact_hash STREQUAL "28544283fde67626762cb7a15fdae492915d39258d6e24a43fa0a1dd92bc05c4")
     message(FATAL_ERROR "embedding artifact provenance was not reported")
 endif()
 

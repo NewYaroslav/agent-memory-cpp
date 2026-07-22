@@ -190,6 +190,21 @@ complete and must use the canonical hash contract:
   `model_revision`, and `qrels_revision`; do not collapse those identities into
   one ambiguous source revision.
 
+Precomputed embedding fixtures with `embedding_artifact` should also pass the
+artifact verifier:
+
+```bash
+cmake \
+    -DAGENT_MEMORY_PRECOMPUTED_EMBEDDING_DATASET=tests/eval/fixtures/precomputed-embedding-medium.json \
+    -P tools/agent-memory-bench/verify-precomputed-embedding-artifact.cmake
+```
+
+The verifier recomputes `config_hash` from the canonical generator-config
+fields and `artifact_hash` from the ordered document/query embedding payload.
+It is intentionally separate from the dataset loader: ordinary benchmark runs
+validate schema and coverage, while CI/verifier runs prove that committed
+fixtures are cryptographically tied to their declared contents.
+
 The two exact baselines answer different questions:
 
 - `current_exact_index` measures the existing `ExactVectorIndex`, including its

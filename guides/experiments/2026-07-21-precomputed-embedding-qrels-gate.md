@@ -279,8 +279,48 @@ metadata whose hashes and revisions cannot be reproduced.
 
 ### What to check next
 
-- Add an externally generated fixture using this stricter provenance contract.
-- Record the exact canonicalization command/tool that computes `config_hash`
-  and `artifact_hash`.
+- Add a verifier that recomputes `config_hash` and `artifact_hash` from the
+  canonicalized config and payload.
 - Keep real-model conclusions separate from hand-authored semantic-axis fixture
   conclusions.
+
+## 2026-07-22 — PR #70 artifact hash verifier gate
+
+### What we checked
+
+PR #70 adds the missing integrity check for committed precomputed embedding
+fixtures. The loader still validates schema/coverage, but CI now also runs a
+separate verifier that:
+
+- canonicalizes the generator-config identity fields;
+- canonicalizes ordered document/query embedding records;
+- recomputes SHA-256 for both canonical texts;
+- rejects fixtures whose declared `config_hash` or `artifact_hash` no longer
+  matches the actual content.
+
+### Canonical verifier command
+
+```bash
+cmake \
+    -DAGENT_MEMORY_PRECOMPUTED_EMBEDDING_DATASET=tests/eval/fixtures/precomputed-embedding-medium.json \
+    -P tools/agent-memory-bench/verify-precomputed-embedding-artifact.cmake
+```
+
+CTest runs the same verifier for the tiny and medium fixtures.
+
+### Interpretation
+
+This closes the main limitation left after PR #69: hashes are no longer only
+well-formed metadata. For committed fixtures, they are recomputed from the
+canonical config/payload and fail CI if they drift.
+
+The verifier is intentionally dependency-free and does not generate embeddings.
+It is the integrity gate that the next external-model fixture should pass after
+an external generator writes the frozen JSON artifact.
+
+### What to check next
+
+- Add an externally generated embedding fixture using this verifier.
+- Record the external generator command/config next to the fixture.
+- If real model prompts become non-trivial, include prompt text or prompt hashes
+  in the canonical generator config rather than relying only on prompt ids.
