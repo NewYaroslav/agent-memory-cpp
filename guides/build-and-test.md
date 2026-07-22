@@ -279,6 +279,16 @@ file is also a fixture-update operation. Treat the official regeneration
 environment as CPU execution with the pinned versions recorded in that
 requirements file.
 
+`precomputed-embedding-minilm-l6-v2-large.json` is a larger frozen MiniLM
+fixture with 36 documents, 12 queries, and 36 graded qrels. It uses a dedicated
+content contract in
+`tools/agent-memory-bench/precomputed_fixture_large_contract.py` and the same
+canonical hash helpers and requirements manifest as the small MiniLM fixture.
+CI verifies the artifact and runs a compact binary-rerank gate with
+zero-training encoders only; learned PCA/ITQ-style grids should stay in
+separate offline or follow-up benchmark runs until their runtime is acceptable
+for the main CI suite.
+
 The two exact baselines answer different questions:
 
 - `current_exact_index` measures the existing `ExactVectorIndex`, including its

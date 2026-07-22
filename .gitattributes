@@ -1,6 +1,9 @@
 tests/eval/fixtures/precomputed-embedding-external-hash.json text eol=lf
 tests/eval/fixtures/precomputed-embedding-minilm-l6-v2.json text eol=lf
+tests/eval/fixtures/precomputed-embedding-minilm-l6-v2-large.json text eol=lf
 tools/agent-memory-bench/generate-precomputed-external-hash-fixture.py text eol=lf
+tools/agent-memory-bench/generate-precomputed-minilm-large-fixture.py text eol=lf
 tools/agent-memory-bench/generate-precomputed-minilm-fixture.py text eol=lf
 tools/agent-memory-bench/precomputed_fixture_contract.py text eol=lf
+tools/agent-memory-bench/precomputed_fixture_large_contract.py text eol=lf
 tools/agent-memory-bench/requirements-minilm-fixture.txt text eol=lf
