@@ -349,9 +349,12 @@ if(AGENT_MEMORY_BUILD_TESTS)
         add_test(
             NAME agent_memory_benchmark_cli_aggregate_signature_smoke
             COMMAND
-                $<TARGET_FILE:agent-memory-aggregate-signature-bench>
-                ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/aggregate-signature-smoke.example.json
-                ${CMAKE_CURRENT_BINARY_DIR}/aggregate-signature-smoke-ctest.json
+                ${CMAKE_COMMAND}
+                -DAGENT_MEMORY_AGGREGATE_BENCH_EXE=$<TARGET_FILE:agent-memory-aggregate-signature-bench>
+                -DAGENT_MEMORY_AGGREGATE_BENCH_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/aggregate-signature-smoke.example.json
+                -DAGENT_MEMORY_AGGREGATE_BENCH_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/aggregate-signature-smoke-ctest.json
+                -DAGENT_MEMORY_AGGREGATE_BENCH_WORKDIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-aggregate-signature-smoke.cmake
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
     endif()

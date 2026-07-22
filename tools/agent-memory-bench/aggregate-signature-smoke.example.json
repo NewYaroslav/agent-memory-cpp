@@ -6,7 +6,7 @@
   "embedding_dimensions": 64,
   "bit_count": 128,
   "result_limit": 5,
-  "candidate_limits": [3, 5, 10],
+  "candidate_limits": [3, 5, 10, 24],
   "aggregation_modes": [
     "any_set_bit",
     "majority_set_bit",

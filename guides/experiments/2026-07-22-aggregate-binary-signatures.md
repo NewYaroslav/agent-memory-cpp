@@ -19,7 +19,7 @@ Setup:
 - exact object oracle: max cosine similarity over the object's child chunks
 - aggregate candidate score: Hamming distance between query code and one
   aggregate document code
-- candidate limits: 3, 5, 10
+- candidate limits: 3, 5, 10, 24
 
 Expected result:
 
@@ -36,15 +36,19 @@ Actual single smoke run:
 | AnySetBit | 3 | 0.425 | 0.875 |
 | AnySetBit | 5 | 0.575 | 0.875 |
 | AnySetBit | 10 | 0.833 | 0.875 |
+| AnySetBit | 24 | 1.000 | 0.875 |
 | MajoritySetBit | 3 | 0.442 | 0.875 |
 | MajoritySetBit | 5 | 0.567 | 0.875 |
 | MajoritySetBit | 10 | 0.817 | 0.875 |
+| MajoritySetBit | 24 | 1.000 | 0.875 |
 | AllSetBits | 3 | 0.383 | 1.000 |
 | AllSetBits | 5 | 0.525 | 1.000 |
 | AllSetBits | 10 | 0.767 | 1.000 |
+| AllSetBits | 24 | 1.000 | 1.000 |
 | ThresholdFraction 0.5 | 3 | 0.442 | 0.875 |
 | ThresholdFraction 0.5 | 5 | 0.567 | 0.875 |
 | ThresholdFraction 0.5 | 10 | 0.817 | 0.875 |
+| ThresholdFraction 0.5 | 24 | 1.000 | 0.875 |
 
 Interpretation:
 
@@ -65,6 +69,10 @@ Limitations:
   a later object-level or chunk-level reranker.
 - Aggregates use one shared global binary space. This is not ASMS/MSBSE,
   multi-slot document hashing, a learned set encoder, or a local projection.
+- The CTest validator is intentionally stronger than a process-exit smoke test:
+  it checks schema/mode identity, aggregation-mode coverage, candidate-limit
+  ordering, metric ranges, monotonic exact top-k coverage, and full coverage
+  when the candidate limit equals the document count.
 
 Next checks:
 
