@@ -82,6 +82,11 @@ require_json(query_count GET query_count)
 require_json(embedding_dimensions GET embedding_dimensions)
 require_json(bit_count GET bit_count)
 require_json(result_limit GET result_limit)
+require_json(seed GET seed)
+require_json(chunk_noise GET chunk_noise)
+require_json(query_noise GET query_noise)
+require_json(encoder_family GET encoder_family)
+require_json(encoder_version GET encoder_version)
 
 if(NOT document_count EQUAL 24)
     message(FATAL_ERROR "document_count must stay 24 in the smoke config")
@@ -100,6 +105,24 @@ if(NOT bit_count EQUAL 128)
 endif()
 if(NOT result_limit EQUAL 5)
     message(FATAL_ERROR "result_limit must stay 5 in the smoke config")
+endif()
+if(NOT seed EQUAL 42)
+    message(FATAL_ERROR "seed must stay 42 in the smoke config")
+endif()
+if(NOT chunk_noise EQUAL 0.2)
+    message(FATAL_ERROR "chunk_noise must stay 0.2 in the smoke config")
+endif()
+if(NOT query_noise EQUAL 0.08)
+    message(FATAL_ERROR "query_noise must stay 0.08 in the smoke config")
+endif()
+if(NOT encoder_family STREQUAL "random_hyperplane_rademacher")
+    message(FATAL_ERROR
+        "encoder_family must stay random_hyperplane_rademacher, got "
+        "${encoder_family}"
+    )
+endif()
+if(NOT encoder_version STREQUAL "v2")
+    message(FATAL_ERROR "encoder_version must stay v2, got ${encoder_version}")
 endif()
 
 set(expected_candidate_limits 3 5 10 24)
@@ -153,6 +176,16 @@ foreach(mode_index RANGE 0 3)
             "aggregation_reports[${mode_index}].aggregation_mode must be "
             "${expected_mode}, got ${actual_mode}"
         )
+    endif()
+    if(actual_mode STREQUAL "threshold_fraction")
+        require_json(threshold_fraction
+            GET aggregation_reports ${mode_index} threshold_fraction)
+        if(NOT threshold_fraction EQUAL 0.5)
+            message(FATAL_ERROR
+                "threshold_fraction mode must report threshold_fraction 0.5, "
+                "got ${threshold_fraction}"
+            )
+        endif()
     endif()
 
     require_json(aggregation_build_ms
