@@ -357,6 +357,17 @@ if(AGENT_MEMORY_BUILD_TESTS)
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-aggregate-signature-smoke.cmake
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
+        add_test(
+            NAME agent_memory_benchmark_cli_binary_lifecycle_smoke
+            COMMAND
+                ${CMAKE_COMMAND}
+                -DAGENT_MEMORY_BINARY_LIFECYCLE_BENCH_EXE=$<TARGET_FILE:agent-memory-binary-lifecycle-bench>
+                -DAGENT_MEMORY_BINARY_LIFECYCLE_BENCH_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/binary-lifecycle-smoke.example.json
+                -DAGENT_MEMORY_BINARY_LIFECYCLE_BENCH_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/binary-lifecycle-smoke-ctest.json
+                -DAGENT_MEMORY_BINARY_LIFECYCLE_BENCH_WORKDIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-binary-lifecycle-smoke.cmake
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
     endif()
     add_subdirectory(tests)
 endif()

@@ -1,0 +1,15 @@
+{
+  "output_path": "binary-lifecycle-smoke-output.json",
+  "document_count": 256,
+  "query_count": 64,
+  "embedding_dimensions": 64,
+  "bit_count": 128,
+  "result_limit": 10,
+  "mutation_count": 16,
+  "seed": 42,
+  "multiprobe_table_count": 8,
+  "multiprobe_bits_per_table": 8,
+  "multiprobe_max_probe_radius": 1,
+  "multiprobe_candidate_multiplier": 64,
+  "multiprobe_minimum_candidate_count": 64
+}
