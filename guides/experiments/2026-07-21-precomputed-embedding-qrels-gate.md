@@ -551,3 +551,25 @@ steps should be split instead of expanding this smoke fixture:
 3. Optional attestation hardening: record hashes for resolved model/tokenizer
    files, such as model config, tokenizer JSON, and model weights, when a
    fixture is meant to support stronger reproducibility claims.
+
+## 2026-07-22 — PR #74 provenance hygiene follow-up
+
+PR #74 keeps the PR #73 MiniLM fixture small but tightens its provenance:
+
+- shared fixture corpus, queries, qrels, and canonical hash encodings moved to
+  `tools/agent-memory-bench/precomputed_fixture_contract.py`;
+- the dependency-free external-hash generator now imports that contract module
+  and still regenerates the same JSON byte-for-byte;
+- the MiniLM fixture now records `generator_contract_source_hash` for the
+  dedicated contract module instead of the larger external-hash generator;
+- `generator_requirements_lock` now records the path and SHA-256 of
+  `tools/agent-memory-bench/requirements-minilm-fixture.txt`;
+- the MiniLM generator parses that same requirements manifest and checks the
+  declared Python/package versions before producing vectors;
+- the MiniLM CTest recomputes the generator, contract, and requirements-file
+  hashes from checked-in files.
+
+The document/query vectors did not change: `artifact_hash` remains
+`713b34f1fdddb4676930fbac458257a2897e4d7891ef47b519e65b1ad01a8ce1`.
+Only the provenance-bound `config_hash` changed because the contract-source and
+requirements-lock identities changed.

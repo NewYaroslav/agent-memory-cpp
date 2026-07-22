@@ -11,14 +11,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
-import importlib.util
 import json
+import platform
 import struct
 import sys
 from pathlib import Path
 from typing import Any
 
 sys.dont_write_bytecode = True
+
+import precomputed_fixture_contract as contract
 
 
 MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
@@ -31,10 +33,14 @@ GENERATOR_COMMAND = (
     "python tools/agent-memory-bench/generate-precomputed-minilm-fixture.py "
     "--output tests/eval/fixtures/precomputed-embedding-minilm-l6-v2.json"
 )
-GENERATOR_REQUIREMENTS_LOCK = (
-    "python==3.12.13; transformers==4.44.2; torch==2.8.0; "
-    "numpy==2.5.1; tokenizers==0.19.1; safetensors==0.4.5; "
-    "huggingface-hub==0.24.6"
+REQUIREMENTS_LOCK_FILE = "requirements-minilm-fixture.txt"
+REQUIRED_PACKAGE_PINS = (
+    "transformers",
+    "torch",
+    "numpy",
+    "tokenizers",
+    "safetensors",
+    "huggingface-hub",
 )
 DATASET_REVISION = "agent-memory-minilm-fixture:2026-07-22"
 QRELS_REVISION = "agent-memory-minilm-qrels:2026-07-22"
@@ -44,28 +50,77 @@ PROJECTION_KIND = "minilm_l6_v2_mean_pool_normalized"
 
 
 def contract_script_path() -> Path:
-    return Path(__file__).with_name("generate-precomputed-external-hash-fixture.py")
+    return Path(__file__).with_name("precomputed_fixture_contract.py")
 
 
-def load_contract_module() -> Any:
-    script = contract_script_path()
-    spec = importlib.util.spec_from_file_location(
-        "agent_memory_precomputed_external_hash_fixture",
-        script,
+def requirements_lock_path() -> Path:
+    return Path(__file__).with_name(REQUIREMENTS_LOCK_FILE)
+
+
+def requirements_lock_identity() -> str:
+    return (
+        f"tools/agent-memory-bench/{REQUIREMENTS_LOCK_FILE};"
+        f"sha256={sha256_file(requirements_lock_path())}"
     )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"failed to load shared fixture contract from {script}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
-def require_version(package: str, expected: str) -> None:
-    actual = importlib.metadata.version(package)
-    if actual != expected:
+def parse_requirements_lock() -> tuple[str, dict[str, str]]:
+    python_version = ""
+    packages: dict[str, str] = {}
+    for line_number, raw_line in enumerate(
+        requirements_lock_path().read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            marker = "# python-version:"
+            if line.startswith(marker):
+                python_version = line[len(marker):].strip()
+            continue
+        if "==" not in line:
+            raise RuntimeError(
+                f"{REQUIREMENTS_LOCK_FILE}:{line_number}: expected package==version"
+            )
+        package, version = line.split("==", 1)
+        package = package.strip()
+        version = version.strip()
+        if not package or not version:
+            raise RuntimeError(
+                f"{REQUIREMENTS_LOCK_FILE}:{line_number}: expected package==version"
+            )
+        if package in packages:
+            raise RuntimeError(
+                f"{REQUIREMENTS_LOCK_FILE}:{line_number}: duplicate package {package}"
+            )
+        packages[package] = version
+    if not python_version:
+        raise RuntimeError(f"{REQUIREMENTS_LOCK_FILE}: missing # python-version")
+    if not packages:
+        raise RuntimeError(f"{REQUIREMENTS_LOCK_FILE}: missing package pins")
+    return python_version, packages
+
+
+def verify_requirements_lock_environment() -> None:
+    expected_python, packages = parse_requirements_lock()
+    actual_python = platform.python_version()
+    if actual_python != expected_python:
         raise RuntimeError(
-            f"{package} version mismatch: expected {expected}, got {actual}"
+            f"Python version mismatch: expected {expected_python}, "
+            f"got {actual_python}"
         )
+    for package in REQUIRED_PACKAGE_PINS:
+        if package not in packages:
+            raise RuntimeError(
+                f"{REQUIREMENTS_LOCK_FILE}: missing required package pin {package}"
+            )
+    for package, expected in packages.items():
+        actual = importlib.metadata.version(package)
+        if actual != expected:
+            raise RuntimeError(
+                f"{package} version mismatch: expected {expected}, got {actual}"
+            )
 
 
 def f32_value(value: float) -> float:
@@ -83,6 +138,7 @@ def encode_texts(
     cache_dir: Path | None,
     local_files_only: bool,
 ) -> list[list[float]]:
+    verify_requirements_lock_environment()
     try:
         import torch
         import torch.nn.functional as torch_functional
@@ -90,15 +146,8 @@ def encode_texts(
     except ImportError as exc:
         raise RuntimeError(
             "MiniLM fixture generation requires torch and transformers. "
-            "Install the pinned packages from GENERATOR_REQUIREMENTS_LOCK."
+            f"Install the pinned packages from {REQUIREMENTS_LOCK_FILE}."
         ) from exc
-
-    require_version("transformers", "4.44.2")
-    require_version("torch", "2.8.0")
-    require_version("numpy", "2.5.1")
-    require_version("tokenizers", "0.19.1")
-    require_version("safetensors", "0.4.5")
-    require_version("huggingface-hub", "0.24.6")
 
     torch.set_num_threads(1)
     model_kwargs: dict[str, Any] = {
@@ -146,7 +195,6 @@ def build_fixture(
     cache_dir: Path | None,
     local_files_only: bool,
 ) -> dict[str, Any]:
-    contract = load_contract_module()
     corpus = contract.CORPUS
     queries = contract.QUERIES
     judgments = contract.JUDGMENTS
@@ -180,7 +228,7 @@ def build_fixture(
             "generator_source_hash": sha256_file(Path(__file__)),
             "generator_contract_source_hash": sha256_file(contract_script_path()),
             "generator_command": GENERATOR_COMMAND,
-            "generator_requirements_lock": GENERATOR_REQUIREMENTS_LOCK,
+            "generator_requirements_lock": requirements_lock_identity(),
             "model_revision": MODEL_REVISION,
             "tokenizer_revision": TOKENIZER_REVISION,
             "qrels_revision": QRELS_REVISION,

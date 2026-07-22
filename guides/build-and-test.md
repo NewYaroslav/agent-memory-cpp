@@ -250,7 +250,8 @@ embedding-model fixture. It was generated with
 narrowing, and L2 normalization. CI verifies the committed artifact and runs a
 small binary-rerank benchmark against it, but intentionally does not regenerate
 the vectors: regeneration downloads/runs a transformer model and requires the
-pinned Python environment recorded in `generator_requirements_lock`.
+pinned Python environment recorded by
+`tools/agent-memory-bench/requirements-minilm-fixture.txt`.
 
 To regenerate it locally:
 
@@ -267,11 +268,16 @@ the checked-in scripts without rerunning the model.
 
 Changing either generator script is an intentional fixture-update operation:
 rerun the generator, refresh the generator source hashes, and commit the updated
-artifact in the same PR. A later provenance-hygiene PR should move the shared
-fixture contract into a dedicated helper module and replace the inline
-`generator_requirements_lock` string with a real lockfile or an explicit
-lockfile-hash policy. Until then, treat the official regeneration environment
-as CPU execution with the pinned versions recorded in the artifact.
+artifact in the same PR. The shared dataset/qrels and canonical byte encodings
+live in `tools/agent-memory-bench/precomputed_fixture_contract.py`, so
+`generator_contract_source_hash` is tied to that contract module instead of the
+surrogate external-hash generator. The artifact's
+`generator_requirements_lock` field records the path and SHA-256 of the
+requirements file; the generator parses that same file and checks the declared
+Python and package versions before producing vectors. Changing the requirements
+file is also a fixture-update operation. Treat the official regeneration
+environment as CPU execution with the pinned versions recorded in that
+requirements file.
 
 The two exact baselines answer different questions:
 
