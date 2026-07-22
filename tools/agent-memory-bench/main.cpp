@@ -3257,8 +3257,16 @@ namespace {
             document["embedding_artifact"] = {
                 {"generator_id", artifact.generator_id},
                 {"generator_version", artifact.generator_version},
-                {"source_revision", artifact.source_revision},
+                {"dataset_revision", artifact.dataset_revision},
+                {"generator_revision", artifact.generator_revision},
+                {"model_revision", artifact.model_revision},
+                {"qrels_revision", artifact.qrels_revision},
+                {"document_prompt_id", artifact.document_prompt_id},
+                {"query_prompt_id", artifact.query_prompt_id},
                 {"projection_kind", artifact.projection_kind},
+                {"normalization", artifact.normalization},
+                {"dtype", artifact.dtype},
+                {"hash_algorithm", artifact.hash_algorithm},
                 {"config_hash", artifact.config_hash},
                 {"artifact_hash", artifact.artifact_hash}
             };

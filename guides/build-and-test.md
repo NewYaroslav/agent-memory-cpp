@@ -173,7 +173,22 @@ and reranked binary results are both evaluated with the shared qrels metric
 pipeline, while embedding generation remains outside the C++ test run. Dataset
 fixtures may carry optional `embedding_artifact` provenance; benchmark reports
 preserve it so frozen vectors can be traced back to the generator/model/config
-that produced them.
+that produced them. When `embedding_artifact` is present, the block must be
+complete and must use the canonical hash contract:
+
+- `hash_algorithm` is currently `sha256`;
+- `config_hash` and `artifact_hash` are lowercase 64-character SHA-256 hex
+  strings without a `sha256:` prefix;
+- `config_hash` covers the canonical generator configuration, including model
+  id/revision, document/query prompt identities, normalization, dtype,
+  pooling/truncation, projection transform, random seed, and other
+  behavior-affecting settings;
+- `artifact_hash` covers the canonical embedding payload before any
+  self-referential provenance wrapper is added. For JSON fixtures this means the
+  ordered document/query embedding records with ids and float values;
+- provenance separates `dataset_revision`, `generator_revision`,
+  `model_revision`, and `qrels_revision`; do not collapse those identities into
+  one ambiguous source revision.
 
 The two exact baselines answer different questions:
 

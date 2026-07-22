@@ -230,7 +230,57 @@ semantic axes; that is a useful diagnostic, not a claim about real embeddings.
 ### What to check next
 
 - Add an externally generated embedding fixture with the same provenance fields.
-- Preserve generator/model/config/source revision and artifact hash for every
-  real fixture.
+- Preserve generator/model/config revisions, dataset revision, qrels revision,
+  prompt identities, config hash, and artifact hash for every real fixture.
 - Compare synthetic, hand-authored semantic-axis, and external-model fixtures
   side by side before making backend decisions.
+
+## 2026-07-22 — PR #69 provenance contract hardening
+
+### What we checked
+
+PR #69 tightens the provenance shape before committing any external-model
+embedding artifact:
+
+- one ambiguous `source_revision` is split into `dataset_revision`,
+  `generator_revision`, `model_revision`, and `qrels_revision`;
+- asymmetric embedding setups get explicit `document_prompt_id` and
+  `query_prompt_id`;
+- `normalization`, `dtype`, and `hash_algorithm` are part of artifact identity;
+- `config_hash` and `artifact_hash` are validated as lowercase 64-character
+  SHA-256 hex strings;
+- CTest validates that the complete provenance object survives
+  dataset-load -> benchmark-run -> report-JSON serialization.
+
+### Canonical hash scope
+
+`config_hash` is the SHA-256 digest of the canonical generator configuration:
+
+```text
+model id/revision
+document/query prompt identities
+normalization and dtype
+pooling/truncation
+projection transform
+random seed
+other behavior-affecting generator settings
+```
+
+`artifact_hash` is the SHA-256 digest of the canonical embedding payload before
+any self-referential provenance wrapper is added. For JSON fixtures this means
+the ordered document/query embedding records with ids and float values, not the
+whole JSON file containing `embedding_artifact.artifact_hash` itself.
+
+### Interpretation
+
+This PR is intentionally a contract hardening PR, not a new quality benchmark.
+It prevents the next external fixture from becoming a pile of plausible-looking
+metadata whose hashes and revisions cannot be reproduced.
+
+### What to check next
+
+- Add an externally generated fixture using this stricter provenance contract.
+- Record the exact canonicalization command/tool that computes `config_hash`
+  and `artifact_hash`.
+- Keep real-model conclusions separate from hand-authored semantic-axis fixture
+  conclusions.

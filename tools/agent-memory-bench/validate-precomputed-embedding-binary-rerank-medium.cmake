@@ -45,11 +45,59 @@ endif()
 string(JSON artifact_generator GET
     "${report_json}" embedding_artifact generator_id
 )
+string(JSON artifact_version GET
+    "${report_json}" embedding_artifact generator_version
+)
+string(JSON artifact_dataset_revision GET
+    "${report_json}" embedding_artifact dataset_revision
+)
+string(JSON artifact_generator_revision GET
+    "${report_json}" embedding_artifact generator_revision
+)
+string(JSON artifact_model_revision GET
+    "${report_json}" embedding_artifact model_revision
+)
+string(JSON artifact_qrels_revision GET
+    "${report_json}" embedding_artifact qrels_revision
+)
+string(JSON artifact_document_prompt GET
+    "${report_json}" embedding_artifact document_prompt_id
+)
+string(JSON artifact_query_prompt GET
+    "${report_json}" embedding_artifact query_prompt_id
+)
 string(JSON artifact_projection GET
     "${report_json}" embedding_artifact projection_kind
 )
+string(JSON artifact_normalization GET
+    "${report_json}" embedding_artifact normalization
+)
+string(JSON artifact_dtype GET
+    "${report_json}" embedding_artifact dtype
+)
+string(JSON artifact_hash_algorithm GET
+    "${report_json}" embedding_artifact hash_algorithm
+)
+string(JSON artifact_config_hash GET
+    "${report_json}" embedding_artifact config_hash
+)
+string(JSON artifact_artifact_hash GET
+    "${report_json}" embedding_artifact artifact_hash
+)
 if(NOT artifact_generator STREQUAL "agent-memory.fixture.semantic-axis"
-   OR NOT artifact_projection STREQUAL "semantic_axes_8d")
+   OR NOT artifact_version STREQUAL "v1"
+   OR NOT artifact_dataset_revision STREQUAL "hand-authored:2026-07-22"
+   OR NOT artifact_generator_revision STREQUAL "agent-memory-cpp:820e967"
+   OR NOT artifact_model_revision STREQUAL "fixture-semantic-axis-8d-v1"
+   OR NOT artifact_qrels_revision STREQUAL "hand-authored:2026-07-22"
+   OR NOT artifact_document_prompt STREQUAL "identity-document-v1"
+   OR NOT artifact_query_prompt STREQUAL "identity-query-v1"
+   OR NOT artifact_projection STREQUAL "semantic_axes_8d"
+   OR NOT artifact_normalization STREQUAL "l2"
+   OR NOT artifact_dtype STREQUAL "float32"
+   OR NOT artifact_hash_algorithm STREQUAL "sha256"
+   OR NOT artifact_config_hash STREQUAL "7bbe5bc80c17c5d9c4374784b74492e192c6286f03dc643e613fd81a87fb246f"
+   OR NOT artifact_artifact_hash STREQUAL "01e88e82ce9663a7e51a7f14958c934c478b7c5c56f389c7f329387015f04776")
     message(FATAL_ERROR "embedding artifact provenance was not reported")
 endif()
 

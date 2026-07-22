@@ -11,10 +11,18 @@
   "embedding_artifact": {
     "generator_id": "agent-memory.fixture.semantic-axis",
     "generator_version": "v1",
-    "source_revision": "hand-authored:2026-07-21",
+    "dataset_revision": "hand-authored:2026-07-21",
+    "generator_revision": "agent-memory-cpp:820e967",
+    "model_revision": "fixture-semantic-axis-4d-v1",
+    "qrels_revision": "hand-authored:2026-07-21",
+    "document_prompt_id": "identity-document-v1",
+    "query_prompt_id": "identity-query-v1",
     "projection_kind": "semantic_axes_4d",
-    "config_hash": "sha256:de1a42cfb4401a1d1ab5d71c468f1e3a3ed11883a1930f6f9685f913ed023586",
-    "artifact_hash": "sha256:ba0c9f23305723099134ac9e51b131f9ecdd4ad229ca3a1ce77a1719d3027c0e"
+    "normalization": "l2",
+    "dtype": "float32",
+    "hash_algorithm": "sha256",
+    "config_hash": "155dd9bc3af28f324fa36fbae9c2e39adc3fec8605eb06c1d2717857cd0789b2",
+    "artifact_hash": "ba0c9f23305723099134ac9e51b131f9ecdd4ad229ca3a1ce77a1719d3027c0e"
   },
   "corpus": [
     {"id": "doc:alpha", "title": "Alpha", "text": "alpha topic"},
