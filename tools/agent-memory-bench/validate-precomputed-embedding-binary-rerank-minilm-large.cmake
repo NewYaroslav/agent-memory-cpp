@@ -185,12 +185,63 @@ endif()
 
 math(EXPR last_report "${report_count} - 1")
 foreach(report_index RANGE 0 ${last_report})
+    if(report_index LESS 2)
+        set(expected_encoder_family "random_hyperplane_rademacher")
+    else()
+        set(expected_encoder_family "randomized_hadamard_projection")
+    endif()
+    if(report_index EQUAL 0 OR report_index EQUAL 2)
+        set(expected_bit_count 128)
+    else()
+        set(expected_bit_count 256)
+    endif()
+
+    string(JSON actual_encoder_family GET
+        "${report_json}" reports ${report_index} encoder_family
+    )
+    string(JSON actual_bit_count GET
+        "${report_json}" reports ${report_index} bit_count
+    )
+    string(JSON actual_encoder_seed GET
+        "${report_json}" reports ${report_index} encoder_seed
+    )
+    if(NOT actual_encoder_family STREQUAL expected_encoder_family
+       OR NOT actual_bit_count EQUAL expected_bit_count
+       OR NOT actual_encoder_seed EQUAL 42)
+        message(FATAL_ERROR
+            "unexpected large MiniLM report identity at index ${report_index}"
+        )
+    endif()
+
     string(JSON rerank_count LENGTH "${report_json}" reports ${report_index} rerank)
     if(NOT rerank_count EQUAL 4)
         message(FATAL_ERROR
             "each large MiniLM report must contain 4 candidate rows"
         )
     endif()
+
+    foreach(rerank_index RANGE 0 3)
+        if(rerank_index EQUAL 0)
+            set(expected_candidate_limit 10)
+        elseif(rerank_index EQUAL 1)
+            set(expected_candidate_limit 18)
+        elseif(rerank_index EQUAL 2)
+            set(expected_candidate_limit 27)
+        else()
+            set(expected_candidate_limit 36)
+        endif()
+
+        string(JSON actual_candidate_limit GET
+            "${report_json}" reports ${report_index} rerank ${rerank_index}
+            candidate_limit
+        )
+        if(NOT actual_candidate_limit EQUAL expected_candidate_limit)
+            message(FATAL_ERROR
+                "unexpected large MiniLM candidate limit at report "
+                "${report_index}, row ${rerank_index}"
+            )
+        endif()
+    endforeach()
 
     string(JSON first_qrels_coverage GET
         "${report_json}" reports ${report_index} rerank 0
