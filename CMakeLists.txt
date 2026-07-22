@@ -321,6 +321,18 @@ if(AGENT_MEMORY_BUILD_TESTS)
                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/precomputed_fixture_large_contract.py
                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
             )
+            add_test(
+                NAME agent_memory_precomputed_embedding_content_contract_negative
+                COMMAND
+                    ${CMAKE_COMMAND}
+                    -DAGENT_MEMORY_PYTHON_EXECUTABLE=${Python3_EXECUTABLE}
+                    -DAGENT_MEMORY_PRECOMPUTED_CONTENT_CONTRACT_VERIFY=${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/verify-precomputed-fixture-content-contract.py
+                    -DAGENT_MEMORY_PRECOMPUTED_CONTENT_CONTRACT_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-minilm-l6-v2.json
+                    -DAGENT_MEMORY_PRECOMPUTED_CONTENT_CONTRACT_MODULE=${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/precomputed_fixture_contract.py
+                    -DAGENT_MEMORY_PRECOMPUTED_CONTENT_CONTRACT_NEGATIVE_WORKDIR=${CMAKE_CURRENT_BINARY_DIR}/precomputed-embedding-content-contract-negative
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-precomputed-fixture-content-contract-negative.cmake
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            )
         else()
             message(WARNING
                 "Python3 interpreter not found; skipping Python-based precomputed fixture tests")
