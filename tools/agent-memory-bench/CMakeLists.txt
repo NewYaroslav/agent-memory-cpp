@@ -21,3 +21,12 @@ target_link_libraries(agent-memory-hamming-hot-path-bench
         agent_memory::agent_memory
         agent_memory::json
 )
+
+add_executable(agent-memory-precomputed-artifact-verify
+    precomputed_artifact_verify.cpp
+)
+
+target_link_libraries(agent-memory-precomputed-artifact-verify
+    PRIVATE
+        agent_memory::json
+)

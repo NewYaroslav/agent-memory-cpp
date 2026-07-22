@@ -194,16 +194,28 @@ Precomputed embedding fixtures with `embedding_artifact` should also pass the
 artifact verifier:
 
 ```bash
-cmake \
-    -DAGENT_MEMORY_PRECOMPUTED_EMBEDDING_DATASET=tests/eval/fixtures/precomputed-embedding-medium.json \
-    -P tools/agent-memory-bench/verify-precomputed-embedding-artifact.cmake
+cmake --build build --target agent-memory-precomputed-artifact-verify
+build/tools/agent-memory-bench/agent-memory-precomputed-artifact-verify \
+    tests/eval/fixtures/precomputed-embedding-medium.json
 ```
 
 The verifier recomputes `config_hash` from the canonical generator-config
-fields and `artifact_hash` from the ordered document/query embedding payload.
-It is intentionally separate from the dataset loader: ordinary benchmark runs
-validate schema and coverage, while CI/verifier runs prove that committed
-fixtures are cryptographically tied to their declared contents.
+fields and `artifact_hash` from the canonical binary document/query embedding
+payload. The payload encoding is:
+
+- ASCII magic `agent-memory-precomputed-embedding-payload-v1`;
+- document embedding records in fixture order, then query embedding records in
+  fixture order;
+- one record type byte: `1` for documents and `2` for queries;
+- little-endian `uint32` id byte length, followed by the UTF-8 id bytes;
+- little-endian `uint32` vector dimension;
+- each vector value rounded to IEEE-754 `float32`, encoded little-endian, with
+  negative zero canonicalized to positive zero.
+
+The verifier currently requires `dtype = "float32"` and `hash_algorithm =
+"sha256"`. It is intentionally separate from the dataset loader: ordinary
+benchmark runs validate schema and coverage, while CI/verifier runs prove that
+committed fixtures are cryptographically tied to their declared contents.
 
 The two exact baselines answer different questions:
 

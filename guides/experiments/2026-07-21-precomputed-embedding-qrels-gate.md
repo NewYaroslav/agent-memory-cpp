@@ -294,16 +294,16 @@ separate verifier that:
 
 - canonicalizes the generator-config identity fields;
 - canonicalizes ordered document/query embedding records;
-- recomputes SHA-256 for both canonical texts;
+- recomputes SHA-256 for the canonical config text and embedding payload;
 - rejects fixtures whose declared `config_hash` or `artifact_hash` no longer
   matches the actual content.
 
 ### Canonical verifier command
 
 ```bash
-cmake \
-    -DAGENT_MEMORY_PRECOMPUTED_EMBEDDING_DATASET=tests/eval/fixtures/precomputed-embedding-medium.json \
-    -P tools/agent-memory-bench/verify-precomputed-embedding-artifact.cmake
+cmake --build build --target agent-memory-precomputed-artifact-verify
+build/tools/agent-memory-bench/agent-memory-precomputed-artifact-verify \
+    tests/eval/fixtures/precomputed-embedding-medium.json
 ```
 
 CTest runs the same verifier for the tiny and medium fixtures.
@@ -324,3 +324,45 @@ an external generator writes the frozen JSON artifact.
 - Record the external generator command/config next to the fixture.
 - If real model prompts become non-trivial, include prompt text or prompt hashes
   in the canonical generator config rather than relying only on prompt ids.
+
+## 2026-07-22 — PR #71 canonical artifact encoding
+
+### What we changed
+
+PR #71 replaces the prototype CMake verifier with a small C++ verifier
+executable. The verifier still recomputes `config_hash` and `artifact_hash`,
+but `artifact_hash` is no longer based on incidental JSON number spelling.
+Embedding records are encoded as a canonical binary payload before hashing:
+
+- ASCII magic `agent-memory-precomputed-embedding-payload-v1`;
+- document embedding records in fixture order, followed by query embedding
+  records in fixture order;
+- record type byte: `1` for documents and `2` for queries;
+- little-endian `uint32` id byte length, followed by UTF-8 id bytes;
+- little-endian `uint32` vector dimension;
+- every numeric value parsed from JSON, rounded to IEEE-754 `float32`, encoded
+  little-endian, with negative zero canonicalized to positive zero.
+
+The verifier currently accepts only `dtype = "float32"` and
+`hash_algorithm = "sha256"`. It also checks the declared normalization contract:
+`embedding_model.normalized = true` requires `normalization = "l2"`, while
+`false` requires `normalization = "none"`.
+
+### Why this matters
+
+Equivalent JSON spellings such as `1.0`, `1.00`, and `1e0` now produce the same
+payload bytes. Real changes to stored float32 vectors, record ids, record order,
+or behavior-affecting config fields still change the declared hashes.
+
+CTest covers both positive fixture verification and negative mutations for:
+
+- generator/model config drift;
+- embedding vector payload drift;
+- ordered record payload drift.
+
+### Interpretation
+
+This PR does not add a new quality benchmark. It makes the precomputed-embedding
+gate safer before introducing external-model fixtures: future benchmark results
+can point to frozen vectors whose config and payload hashes are reproducible
+inside the C++ test suite.
