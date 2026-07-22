@@ -461,11 +461,32 @@ namespace {
     }
 
     void self_test_sha256() {
-        constexpr std::string_view kExpected =
-            "ba7816bf8f01cfea414140de5dae2223"
-            "b00361a396177a9cb410ff61f20015ad";
-        if(sha256_hex("abc") != kExpected) {
-            throw std::logic_error("internal SHA-256 self-test failed");
+        struct TestVector {
+            std::string_view input;
+            std::string_view expected_hex;
+        };
+        constexpr std::array<TestVector, 3> kVectors{{
+            {
+                "",
+                "e3b0c44298fc1c149afbf4c8996fb924"
+                "27ae41e4649b934ca495991b7852b855",
+            },
+            {
+                "abc",
+                "ba7816bf8f01cfea414140de5dae2223"
+                "b00361a396177a9cb410ff61f20015ad",
+            },
+            {
+                "The quick brown fox jumps over the lazy dog",
+                "d7a8fbb307d7809469ca9abcb0082e4f"
+                "8d5651e46d3cdb762d02d0bf37c9e592",
+            },
+        }};
+
+        for(const auto& vector : kVectors) {
+            if(sha256_hex(vector.input) != vector.expected_hex) {
+                throw std::logic_error("internal SHA-256 self-test failed");
+            }
         }
     }
 

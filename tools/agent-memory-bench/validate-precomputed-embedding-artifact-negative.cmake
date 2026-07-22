@@ -23,7 +23,7 @@ function(write_mutated_fixture file_name needle replacement)
     set(mutated_path "${mutated_path}" PARENT_SCOPE)
 endfunction()
 
-function(expect_verifier_failure case_name fixture_path)
+function(expect_verifier_failure case_name fixture_path expected_stderr)
     execute_process(
         COMMAND
             "${AGENT_MEMORY_PRECOMPUTED_ARTIFACT_VERIFY_EXE}"
@@ -37,6 +37,14 @@ function(expect_verifier_failure case_name fixture_path)
             "artifact verifier unexpectedly accepted ${case_name}: ${fixture_path}"
         )
     endif()
+    string(FIND "${verifier_stderr}" "${expected_stderr}" expected_offset)
+    if(expected_offset EQUAL -1)
+        message(FATAL_ERROR
+            "artifact verifier rejected ${case_name} for the wrong reason.\n"
+            "Expected stderr to contain: ${expected_stderr}\n"
+            "Actual stderr: ${verifier_stderr}"
+        )
+    endif()
 endfunction()
 
 write_mutated_fixture(
@@ -44,18 +52,18 @@ write_mutated_fixture(
     "\"model_revision\": \"fixture-semantic-axis-4d-v1\""
     "\"model_revision\": \"fixture-semantic-axis-4d-v2\""
 )
-expect_verifier_failure("mutated config" "${mutated_path}")
+expect_verifier_failure("mutated config" "${mutated_path}" "config_hash mismatch")
 
 write_mutated_fixture(
     "mutated-vector.json"
     "{\"id\": \"doc:alpha\", \"vector\": [1.0, 0.0, 0.0, 0.0]}"
     "{\"id\": \"doc:alpha\", \"vector\": [0.5, 0.0, 0.0, 0.0]}"
 )
-expect_verifier_failure("mutated vector" "${mutated_path}")
+expect_verifier_failure("mutated vector" "${mutated_path}" "artifact_hash mismatch")
 
 write_mutated_fixture(
     "mutated-record-order.json"
     "    {\"id\": \"doc:alpha\", \"vector\": [1.0, 0.0, 0.0, 0.0]},\n    {\"id\": \"doc:alpha-near\", \"vector\": [0.98, 0.2, 0.0, 0.0]}"
     "    {\"id\": \"doc:alpha-near\", \"vector\": [0.98, 0.2, 0.0, 0.0]},\n    {\"id\": \"doc:alpha\", \"vector\": [1.0, 0.0, 0.0, 0.0]}"
 )
-expect_verifier_failure("mutated record order" "${mutated_path}")
+expect_verifier_failure("mutated record order" "${mutated_path}" "artifact_hash mismatch")
