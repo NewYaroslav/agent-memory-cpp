@@ -237,6 +237,20 @@ target_link_libraries(agent_memory_binary_signature_test
 
 add_test(NAME agent_memory_binary_signature_test COMMAND agent_memory_binary_signature_test)
 
+add_executable(agent_memory_aggregate_binary_signature_test
+    index/aggregate_binary_signature_test.cpp
+)
+
+target_link_libraries(agent_memory_aggregate_binary_signature_test
+    PRIVATE
+        agent_memory::agent_memory
+)
+
+add_test(
+    NAME agent_memory_aggregate_binary_signature_test
+    COMMAND agent_memory_aggregate_binary_signature_test
+)
+
 add_executable(agent_memory_flat_binary_signature_index_test
     index/flat_binary_signature_index_test.cpp
 )
