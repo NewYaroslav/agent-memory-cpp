@@ -276,7 +276,8 @@ and canonical byte encodings live in
 `generator_contract_source_hash` is tied to that contract module instead of the
 surrogate external-hash generator. CI also runs a cheap Python content-contract
 check that compares each MiniLM fixture's `corpus`, `queries`, and `judgments`
-against its source contract module without loading the model. The artifact's
+against its source contract module without loading the model, plus negative
+mutations for corpus, query, and judgment drift. The artifact's
 `generator_requirements_lock` field records the path and SHA-256 of the
 requirements file; the generator parses that same file and checks the declared
 Python and package versions before producing vectors. Changing the requirements
