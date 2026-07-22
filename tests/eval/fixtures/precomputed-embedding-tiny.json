@@ -21,8 +21,8 @@
     "normalization": "l2",
     "dtype": "float32",
     "hash_algorithm": "sha256",
-    "config_hash": "e27a569a249450ca256b8da88340bfea5b8842fd0c4fe8a9810756c2d4024032",
-    "artifact_hash": "28544283fde67626762cb7a15fdae492915d39258d6e24a43fa0a1dd92bc05c4"
+    "config_hash": "6ac8ddbc5192646369704c4d5b338d8e479cb24190d5c5e505ff6212dd57410e",
+    "artifact_hash": "ab4a96d1e96b7394cf3e4f68bb50f77a33842b896482d181e63c469bda949f6b"
   },
   "corpus": [
     {"id": "doc:alpha", "title": "Alpha", "text": "alpha topic"},

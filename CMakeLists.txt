@@ -190,9 +190,28 @@ if(AGENT_MEMORY_BUILD_TESTS)
         add_test(
             NAME agent_memory_precomputed_embedding_artifact_verify_tiny
             COMMAND
+                $<TARGET_FILE:agent-memory-precomputed-artifact-verify>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-tiny.json
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        add_test(
+            NAME agent_memory_precomputed_embedding_artifact_verify_negative
+            COMMAND
                 ${CMAKE_COMMAND}
+                -DAGENT_MEMORY_PRECOMPUTED_ARTIFACT_VERIFY_EXE=$<TARGET_FILE:agent-memory-precomputed-artifact-verify>
                 -DAGENT_MEMORY_PRECOMPUTED_EMBEDDING_DATASET=${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-tiny.json
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/verify-precomputed-embedding-artifact.cmake
+                -DAGENT_MEMORY_PRECOMPUTED_EMBEDDING_NEGATIVE_WORKDIR=${CMAKE_CURRENT_BINARY_DIR}/precomputed-embedding-artifact-negative
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-precomputed-embedding-artifact-negative.cmake
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        add_test(
+            NAME agent_memory_precomputed_embedding_artifact_verify_canonicalization
+            COMMAND
+                ${CMAKE_COMMAND}
+                -DAGENT_MEMORY_PRECOMPUTED_ARTIFACT_VERIFY_EXE=$<TARGET_FILE:agent-memory-precomputed-artifact-verify>
+                -DAGENT_MEMORY_PRECOMPUTED_EMBEDDING_DATASET=${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-tiny.json
+                -DAGENT_MEMORY_PRECOMPUTED_EMBEDDING_CANONICAL_WORKDIR=${CMAKE_CURRENT_BINARY_DIR}/precomputed-embedding-artifact-canonical
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-precomputed-embedding-artifact-canonicalization.cmake
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
         add_test(
@@ -209,9 +228,8 @@ if(AGENT_MEMORY_BUILD_TESTS)
         add_test(
             NAME agent_memory_precomputed_embedding_artifact_verify_medium
             COMMAND
-                ${CMAKE_COMMAND}
-                -DAGENT_MEMORY_PRECOMPUTED_EMBEDDING_DATASET=${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-medium.json
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/verify-precomputed-embedding-artifact.cmake
+                $<TARGET_FILE:agent-memory-precomputed-artifact-verify>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-medium.json
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
         add_test(
