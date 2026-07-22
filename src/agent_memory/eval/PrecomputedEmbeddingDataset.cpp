@@ -275,6 +275,36 @@ namespace agent_memory {
                 read_string(*artifact_json, "generator_revision", artifact_loc);
             artifact.model_revision =
                 read_string(*artifact_json, "model_revision", artifact_loc);
+            artifact.tokenizer_revision = read_optional_string(
+                *artifact_json,
+                "tokenizer_revision",
+                "",
+                artifact_loc
+            );
+            artifact.generator_source_hash = read_optional_string(
+                *artifact_json,
+                "generator_source_hash",
+                "",
+                artifact_loc
+            );
+            artifact.generator_contract_source_hash = read_optional_string(
+                *artifact_json,
+                "generator_contract_source_hash",
+                "",
+                artifact_loc
+            );
+            artifact.generator_command = read_optional_string(
+                *artifact_json,
+                "generator_command",
+                "",
+                artifact_loc
+            );
+            artifact.generator_requirements_lock = read_optional_string(
+                *artifact_json,
+                "generator_requirements_lock",
+                "",
+                artifact_loc
+            );
             artifact.qrels_revision =
                 read_string(*artifact_json, "qrels_revision", artifact_loc);
             artifact.document_prompt_id =
@@ -485,6 +515,48 @@ namespace agent_memory {
                 "generator_revision"
             );
             require_non_empty_artifact_field(artifact.model_revision, "model_revision");
+            const bool has_extended_generator_provenance =
+                !artifact.tokenizer_revision.empty()
+                || !artifact.generator_source_hash.empty()
+                || !artifact.generator_contract_source_hash.empty()
+                || !artifact.generator_command.empty()
+                || !artifact.generator_requirements_lock.empty();
+            if(has_extended_generator_provenance) {
+                require_non_empty_artifact_field(
+                    artifact.tokenizer_revision,
+                    "tokenizer_revision"
+                );
+                require_non_empty_artifact_field(
+                    artifact.generator_source_hash,
+                    "generator_source_hash"
+                );
+                if(!is_lowercase_sha256_hex(artifact.generator_source_hash)) {
+                    throw std::runtime_error(
+                        "embedding_artifact.generator_source_hash must be 64 "
+                        "lowercase SHA-256 hex characters"
+                    );
+                }
+                require_non_empty_artifact_field(
+                    artifact.generator_contract_source_hash,
+                    "generator_contract_source_hash"
+                );
+                if(!is_lowercase_sha256_hex(
+                       artifact.generator_contract_source_hash
+                   )) {
+                    throw std::runtime_error(
+                        "embedding_artifact.generator_contract_source_hash must be "
+                        "64 lowercase SHA-256 hex characters"
+                    );
+                }
+                require_non_empty_artifact_field(
+                    artifact.generator_command,
+                    "generator_command"
+                );
+                require_non_empty_artifact_field(
+                    artifact.generator_requirements_lock,
+                    "generator_requirements_lock"
+                );
+            }
             require_non_empty_artifact_field(artifact.qrels_revision, "qrels_revision");
             require_non_empty_artifact_field(
                 artifact.document_prompt_id,

@@ -49,6 +49,11 @@ namespace agent_memory {
         std::string dataset_revision;
         std::string generator_revision;
         std::string model_revision;
+        std::string tokenizer_revision;
+        std::string generator_source_hash;
+        std::string generator_contract_source_hash;
+        std::string generator_command;
+        std::string generator_requirements_lock;
         std::string qrels_revision;
         std::string document_prompt_id;
         std::string query_prompt_id;

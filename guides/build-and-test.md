@@ -243,6 +243,36 @@ regenerates this fixture into the build tree and compares it byte-for-byte with
 the committed JSON. The fixture is pinned to LF line endings so this
 reproducibility check is stable across Windows, macOS, and Linux checkouts.
 
+`precomputed-embedding-minilm-l6-v2.json` is the first real third-party
+embedding-model fixture. It was generated with
+`sentence-transformers/all-MiniLM-L6-v2` at model/tokenizer revision
+`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, mean pooling, explicit float32
+narrowing, and L2 normalization. CI verifies the committed artifact and runs a
+small binary-rerank benchmark against it, but intentionally does not regenerate
+the vectors: regeneration downloads/runs a transformer model and requires the
+pinned Python environment recorded in `generator_requirements_lock`.
+
+To regenerate it locally:
+
+```bash
+python tools/agent-memory-bench/generate-precomputed-minilm-fixture.py \
+    --output tests/eval/fixtures/precomputed-embedding-minilm-l6-v2.json
+```
+
+If dependencies are installed in a non-default location, set `PYTHONPATH` before
+running the command. The artifact records a `generator_source_hash` for the
+MiniLM generator and a `generator_contract_source_hash` for the shared canonical
+fixture-contract script; the MiniLM benchmark CTest compares both hashes against
+the checked-in scripts without rerunning the model.
+
+Changing either generator script is an intentional fixture-update operation:
+rerun the generator, refresh the generator source hashes, and commit the updated
+artifact in the same PR. A later provenance-hygiene PR should move the shared
+fixture contract into a dedicated helper module and replace the inline
+`generator_requirements_lock` string with a real lockfile or an explicit
+lockfile-hash policy. Until then, treat the official regeneration environment
+as CPU execution with the pinned versions recorded in the artifact.
+
 The two exact baselines answer different questions:
 
 - `current_exact_index` measures the existing `ExactVectorIndex`, including its

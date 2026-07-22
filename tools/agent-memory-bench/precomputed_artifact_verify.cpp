@@ -11,6 +11,7 @@
 #include <iterator>
 #include <limits>
 #include <locale>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -272,6 +273,28 @@ namespace {
         return value.get<std::string>();
     }
 
+    [[nodiscard]] std::optional<std::string> read_optional_string(
+        const nlohmann::json& object,
+        std::string_view field
+    ) {
+        const auto iter = object.find(field);
+        if(iter == object.end() || iter->is_null()) {
+            return std::nullopt;
+        }
+        if(!iter->is_string()) {
+            throw std::runtime_error(
+                "JSON field must be a string when present: " + std::string{field}
+            );
+        }
+        const auto text = iter->get<std::string>();
+        if(text.empty()) {
+            throw std::runtime_error(
+                "JSON field must not be empty when present: " + std::string{field}
+            );
+        }
+        return text;
+    }
+
     [[nodiscard]] std::uint32_t read_u32(
         const nlohmann::json& object,
         std::string_view field
@@ -531,6 +554,22 @@ namespace {
         output << "generator_id=" << read_string(artifact, "generator_id") << '\n';
         output << "generator_revision=" << read_string(artifact, "generator_revision")
                << '\n';
+        if(const auto command = read_optional_string(artifact, "generator_command")) {
+            output << "generator_command=" << *command << '\n';
+        }
+        if(const auto requirements =
+               read_optional_string(artifact, "generator_requirements_lock")) {
+            output << "generator_requirements_lock=" << *requirements << '\n';
+        }
+        if(const auto contract_source_hash =
+               read_optional_string(artifact, "generator_contract_source_hash")) {
+            output << "generator_contract_source_hash=" << *contract_source_hash
+                   << '\n';
+        }
+        if(const auto source_hash =
+               read_optional_string(artifact, "generator_source_hash")) {
+            output << "generator_source_hash=" << *source_hash << '\n';
+        }
         output << "generator_version=" << read_string(artifact, "generator_version") << '\n';
         output << "model_revision=" << read_string(artifact, "model_revision") << '\n';
         output << "normalization=" << read_string(artifact, "normalization") << '\n';
@@ -539,6 +578,9 @@ namespace {
         output << "qrels_revision=" << read_string(artifact, "qrels_revision") << '\n';
         output << "query_prompt_id=" << read_string(artifact, "query_prompt_id") << '\n';
         output << "similarity_metric=" << read_string(model, "similarity_metric") << '\n';
+        if(const auto revision = read_optional_string(artifact, "tokenizer_revision")) {
+            output << "tokenizer_revision=" << *revision << '\n';
+        }
         return output.str();
     }
 
