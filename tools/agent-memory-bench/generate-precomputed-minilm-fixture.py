@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
-import importlib.util
 import json
 import struct
 import sys
@@ -19,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 sys.dont_write_bytecode = True
+
+import precomputed_fixture_contract as contract
 
 
 MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
@@ -31,11 +32,7 @@ GENERATOR_COMMAND = (
     "python tools/agent-memory-bench/generate-precomputed-minilm-fixture.py "
     "--output tests/eval/fixtures/precomputed-embedding-minilm-l6-v2.json"
 )
-GENERATOR_REQUIREMENTS_LOCK = (
-    "python==3.12.13; transformers==4.44.2; torch==2.8.0; "
-    "numpy==2.5.1; tokenizers==0.19.1; safetensors==0.4.5; "
-    "huggingface-hub==0.24.6"
-)
+REQUIREMENTS_LOCK_FILE = "requirements-minilm-fixture.txt"
 DATASET_REVISION = "agent-memory-minilm-fixture:2026-07-22"
 QRELS_REVISION = "agent-memory-minilm-qrels:2026-07-22"
 DOCUMENT_PROMPT_ID = "title-plus-text-v1"
@@ -44,20 +41,18 @@ PROJECTION_KIND = "minilm_l6_v2_mean_pool_normalized"
 
 
 def contract_script_path() -> Path:
-    return Path(__file__).with_name("generate-precomputed-external-hash-fixture.py")
+    return Path(__file__).with_name("precomputed_fixture_contract.py")
 
 
-def load_contract_module() -> Any:
-    script = contract_script_path()
-    spec = importlib.util.spec_from_file_location(
-        "agent_memory_precomputed_external_hash_fixture",
-        script,
+def requirements_lock_path() -> Path:
+    return Path(__file__).with_name(REQUIREMENTS_LOCK_FILE)
+
+
+def requirements_lock_identity() -> str:
+    return (
+        f"tools/agent-memory-bench/{REQUIREMENTS_LOCK_FILE};"
+        f"sha256={sha256_file(requirements_lock_path())}"
     )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"failed to load shared fixture contract from {script}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def require_version(package: str, expected: str) -> None:
@@ -90,7 +85,7 @@ def encode_texts(
     except ImportError as exc:
         raise RuntimeError(
             "MiniLM fixture generation requires torch and transformers. "
-            "Install the pinned packages from GENERATOR_REQUIREMENTS_LOCK."
+            f"Install the pinned packages from {REQUIREMENTS_LOCK_FILE}."
         ) from exc
 
     require_version("transformers", "4.44.2")
@@ -146,7 +141,6 @@ def build_fixture(
     cache_dir: Path | None,
     local_files_only: bool,
 ) -> dict[str, Any]:
-    contract = load_contract_module()
     corpus = contract.CORPUS
     queries = contract.QUERIES
     judgments = contract.JUDGMENTS
@@ -180,7 +174,7 @@ def build_fixture(
             "generator_source_hash": sha256_file(Path(__file__)),
             "generator_contract_source_hash": sha256_file(contract_script_path()),
             "generator_command": GENERATOR_COMMAND,
-            "generator_requirements_lock": GENERATOR_REQUIREMENTS_LOCK,
+            "generator_requirements_lock": requirements_lock_identity(),
             "model_revision": MODEL_REVISION,
             "tokenizer_revision": TOKENIZER_REVISION,
             "qrels_revision": QRELS_REVISION,

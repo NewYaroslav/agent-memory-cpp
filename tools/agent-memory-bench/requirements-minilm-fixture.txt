@@ -1,0 +1,12 @@
+# Top-level pins for regenerating precomputed-embedding-minilm-l6-v2.json.
+#
+# This is a regeneration contract, not a CI dependency list: CI verifies the
+# committed fixture and does not download or execute the model. The generator
+# also checks these package versions at runtime before producing vectors.
+python==3.12.13
+transformers==4.44.2
+torch==2.8.0
+numpy==2.5.1
+tokenizers==0.19.1
+safetensors==0.4.5
+huggingface-hub==0.24.6
