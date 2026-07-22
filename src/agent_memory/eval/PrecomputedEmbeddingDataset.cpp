@@ -291,6 +291,10 @@ namespace agent_memory {
                 read_string(*artifact_json, "hash_algorithm", artifact_loc);
             artifact.config_hash =
                 read_string(*artifact_json, "config_hash", artifact_loc);
+            artifact.dataset_hash =
+                read_string(*artifact_json, "dataset_hash", artifact_loc);
+            artifact.qrels_hash =
+                read_string(*artifact_json, "qrels_hash", artifact_loc);
             artifact.artifact_hash =
                 read_string(*artifact_json, "artifact_hash", artifact_loc);
             return artifact;
@@ -500,10 +504,22 @@ namespace agent_memory {
                 );
             }
             require_non_empty_artifact_field(artifact.config_hash, "config_hash");
+            require_non_empty_artifact_field(artifact.dataset_hash, "dataset_hash");
+            require_non_empty_artifact_field(artifact.qrels_hash, "qrels_hash");
             require_non_empty_artifact_field(artifact.artifact_hash, "artifact_hash");
             if(!is_lowercase_sha256_hex(artifact.config_hash)) {
                 throw std::runtime_error(
                     "embedding_artifact.config_hash must be 64 lowercase SHA-256 hex characters"
+                );
+            }
+            if(!is_lowercase_sha256_hex(artifact.dataset_hash)) {
+                throw std::runtime_error(
+                    "embedding_artifact.dataset_hash must be 64 lowercase SHA-256 hex characters"
+                );
+            }
+            if(!is_lowercase_sha256_hex(artifact.qrels_hash)) {
+                throw std::runtime_error(
+                    "embedding_artifact.qrels_hash must be 64 lowercase SHA-256 hex characters"
                 );
             }
             if(!is_lowercase_sha256_hex(artifact.artifact_hash)) {

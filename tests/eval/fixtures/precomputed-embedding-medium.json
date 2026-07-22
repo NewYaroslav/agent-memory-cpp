@@ -22,6 +22,8 @@
     "dtype": "float32",
     "hash_algorithm": "sha256",
     "config_hash": "5f0de6c910f99a3573c77999f5aca82c95569e4ce73409cab33c9d064acdc717",
+    "dataset_hash": "087b9ff2d2dbf31d3e90b843e2894569410b615608e357b3b88ee517b3ff33bb",
+    "qrels_hash": "9ab8c1289530e952302b814e0a6523a8e04ba61ea7fc65e594b7e32814f54e32",
     "artifact_hash": "a9c966effbf84d6bf05c40181f9aec942a091140ef3eb9896f84620c72a3af64"
   },
   "corpus": [

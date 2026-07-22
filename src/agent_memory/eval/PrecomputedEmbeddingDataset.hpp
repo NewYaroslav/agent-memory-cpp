@@ -37,10 +37,12 @@ namespace agent_memory {
     /// the canonical generator configuration: model id/revision, document and
     /// query prompt identities, normalization, dtype, pooling/truncation,
     /// projection transform, random seed, and other behavior-affecting
-    /// settings. `artifact_hash` is the lowercase hexadecimal digest of the
-    /// canonical embedding payload before any self-referential provenance
-    /// wrapper is added. For JSON fixtures this payload is the ordered
-    /// document/query embedding records with ids and float values.
+    /// settings. `dataset_hash` and `qrels_hash` cover the canonical retrieval
+    /// corpus/query and judgment payloads, respectively. `artifact_hash` is the
+    /// lowercase hexadecimal digest of the canonical embedding payload before
+    /// any self-referential provenance wrapper is added. For JSON fixtures this
+    /// payload is the ordered document/query embedding records with ids and
+    /// float values.
     struct PrecomputedEmbeddingArtifactInfo final {
         std::string generator_id;
         std::string generator_version;
@@ -55,6 +57,8 @@ namespace agent_memory {
         std::string dtype;
         std::string hash_algorithm;
         std::string config_hash;
+        std::string dataset_hash;
+        std::string qrels_hash;
         std::string artifact_hash;
     };
 

@@ -62,6 +62,20 @@ write_mutated_fixture(
 expect_verifier_failure("mutated vector" "${mutated_path}" "artifact_hash mismatch")
 
 write_mutated_fixture(
+    "mutated-corpus.json"
+    "{\"id\": \"doc:alpha\", \"title\": \"Alpha\", \"text\": \"alpha topic\"}"
+    "{\"id\": \"doc:alpha\", \"title\": \"Alpha\", \"text\": \"changed alpha topic\"}"
+)
+expect_verifier_failure("mutated corpus" "${mutated_path}" "dataset_hash mismatch")
+
+write_mutated_fixture(
+    "mutated-qrels.json"
+    "{\"query_id\": \"q:alpha\", \"item_id\": \"doc:alpha\", \"relevance_grade\": 3}"
+    "{\"query_id\": \"q:alpha\", \"item_id\": \"doc:alpha\", \"relevance_grade\": 2}"
+)
+expect_verifier_failure("mutated qrels" "${mutated_path}" "qrels_hash mismatch")
+
+write_mutated_fixture(
     "mutated-record-order.json"
     "    {\"id\": \"doc:alpha\", \"vector\": [1.0, 0.0, 0.0, 0.0]},\n    {\"id\": \"doc:alpha-near\", \"vector\": [0.98, 0.2, 0.0, 0.0]}"
     "    {\"id\": \"doc:alpha-near\", \"vector\": [0.98, 0.2, 0.0, 0.0]},\n    {\"id\": \"doc:alpha\", \"vector\": [1.0, 0.0, 0.0, 0.0]}"

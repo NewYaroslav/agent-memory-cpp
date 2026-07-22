@@ -149,6 +149,7 @@ endif()
 if(AGENT_MEMORY_BUILD_TESTS)
     enable_testing()
     if(AGENT_MEMORY_BUILD_BENCHMARKS)
+        find_package(Python3 COMPONENTS Interpreter QUIET)
         add_test(
             NAME agent_memory_benchmark_cli_synthetic_sweep
             COMMAND
@@ -232,6 +233,40 @@ if(AGENT_MEMORY_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-medium.json
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
+        add_test(
+            NAME agent_memory_benchmark_cli_precomputed_embedding_binary_rerank_grid_external_hash
+            COMMAND
+                ${CMAKE_COMMAND}
+                -DAGENT_MEMORY_BENCH_EXE=$<TARGET_FILE:agent-memory-bench>
+                -DAGENT_MEMORY_BENCH_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/precomputed-embedding-binary-rerank-grid-external-hash.example.json
+                -DAGENT_MEMORY_BENCH_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/precomputed-embedding-binary-rerank-grid-external-hash-ctest.json
+                -DAGENT_MEMORY_BENCH_WORKDIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-precomputed-embedding-binary-rerank-external-hash.cmake
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        add_test(
+            NAME agent_memory_precomputed_embedding_artifact_verify_external_hash
+            COMMAND
+                $<TARGET_FILE:agent-memory-precomputed-artifact-verify>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-external-hash.json
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        if(Python3_Interpreter_FOUND)
+            add_test(
+                NAME agent_memory_precomputed_embedding_external_hash_regeneration
+                COMMAND
+                    ${CMAKE_COMMAND}
+                    -DAGENT_MEMORY_PYTHON_EXECUTABLE=${Python3_EXECUTABLE}
+                    -DAGENT_MEMORY_PRECOMPUTED_EXTERNAL_HASH_GENERATOR=${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/generate-precomputed-external-hash-fixture.py
+                    -DAGENT_MEMORY_PRECOMPUTED_EXTERNAL_HASH_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/tests/eval/fixtures/precomputed-embedding-external-hash.json
+                    -DAGENT_MEMORY_PRECOMPUTED_EXTERNAL_HASH_REGEN_WORKDIR=${CMAKE_CURRENT_BINARY_DIR}/precomputed-embedding-external-hash-regeneration
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-precomputed-embedding-external-hash-regeneration.cmake
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            )
+        else()
+            message(WARNING
+                "Python3 interpreter not found; skipping external-hash fixture regeneration test")
+        endif()
         add_test(
             NAME agent_memory_benchmark_cli_hamming_hot_path
             COMMAND

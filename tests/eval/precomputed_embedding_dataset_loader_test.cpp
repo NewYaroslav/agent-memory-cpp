@@ -31,6 +31,8 @@ namespace {
     "dtype": "float32",
     "hash_algorithm": "sha256",
     "config_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "dataset_hash": "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
+    "qrels_hash": "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01",
     "artifact_hash": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
   },
   "corpus": [
@@ -110,6 +112,14 @@ int main() {
        != "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789") {
         fail("embedding artifact hash was not loaded");
     }
+    if(dataset.embedding_artifact->dataset_hash
+       != "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0") {
+        fail("embedding artifact dataset hash was not loaded");
+    }
+    if(dataset.embedding_artifact->qrels_hash
+       != "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01") {
+        fail("embedding artifact qrels hash was not loaded");
+    }
     if(dataset.embedding_artifact->dataset_revision != "unit-test-dataset") {
         fail("embedding artifact dataset revision was not loaded");
     }
@@ -145,6 +155,28 @@ int main() {
             agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
         },
         "empty embedding artifact hash must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.embedding_artifact->dataset_hash.clear();
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "empty embedding artifact dataset hash must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.embedding_artifact->qrels_hash.clear();
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "empty embedding artifact qrels hash must be rejected"
     );
     expect_runtime_error(
         [] {
@@ -192,6 +224,18 @@ int main() {
             agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
         },
         "uppercase embedding artifact hash must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.embedding_artifact->dataset_hash =
+                "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789";
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "uppercase embedding artifact dataset hash must be rejected"
     );
     expect_runtime_error(
         [] {

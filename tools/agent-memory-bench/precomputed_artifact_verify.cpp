@@ -228,6 +228,10 @@ namespace {
         sha.update(bytes.data(), bytes.size());
     }
 
+    void update_i32_le(Sha256& sha, std::int32_t value) {
+        update_u32_le(sha, static_cast<std::uint32_t>(value));
+    }
+
     void update_string_bytes(Sha256& sha, const std::string& value) {
         if(value.size() > std::numeric_limits<std::uint32_t>::max()) {
             throw std::runtime_error("string field is too large for canonical payload");
@@ -310,6 +314,23 @@ namespace {
         return value.get<bool>();
     }
 
+    [[nodiscard]] std::int32_t read_i32(
+        const nlohmann::json& object,
+        std::string_view field
+    ) {
+        const auto& value = require_field(object, field);
+        if(!value.is_number_integer()) {
+            throw std::runtime_error("JSON field must be an integer: " + std::string{field});
+        }
+        const auto parsed = value.get<std::int64_t>();
+        if(parsed < std::numeric_limits<std::int32_t>::min()
+           || parsed > std::numeric_limits<std::int32_t>::max()) {
+            throw std::runtime_error("JSON integer is outside int32 range: "
+                                     + std::string{field});
+        }
+        return static_cast<std::int32_t>(parsed);
+    }
+
     [[nodiscard]] float read_float32(
         const nlohmann::json& object,
         std::size_t index
@@ -363,6 +384,135 @@ namespace {
                 update_float32_le(sha, read_float32(vector, index));
             }
         }
+    }
+
+    void update_metadata_object(Sha256& sha, const nlohmann::json& object) {
+        if(!object.is_object()) {
+            throw std::runtime_error("metadata must be an object");
+        }
+        if(object.size() > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::runtime_error("metadata object is too large");
+        }
+        update_u32_le(sha, static_cast<std::uint32_t>(object.size()));
+        for(auto iter = object.begin(); iter != object.end(); ++iter) {
+            if(!iter.value().is_string()) {
+                throw std::runtime_error("metadata values must be strings");
+            }
+            update_string_bytes(sha, iter.key());
+            update_string_bytes(sha, iter.value().get<std::string>());
+        }
+    }
+
+    void update_metadata_filters(Sha256& sha, const nlohmann::json& query) {
+        const auto iter = query.find("metadata_filters");
+        if(iter == query.end()) {
+            update_u32_le(sha, 0U);
+            return;
+        }
+        if(!iter->is_array()) {
+            throw std::runtime_error("metadata_filters must be an array");
+        }
+        if(iter->size() > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::runtime_error("metadata_filters array is too large");
+        }
+        update_u32_le(sha, static_cast<std::uint32_t>(iter->size()));
+        for(const auto& filter : *iter) {
+            if(!filter.is_object()) {
+                throw std::runtime_error("metadata filter must be an object");
+            }
+            update_string_bytes(sha, read_string(filter, "key"));
+            update_string_bytes(sha, read_string(filter, "value"));
+        }
+    }
+
+    [[nodiscard]] std::string read_optional_string_or(
+        const nlohmann::json& object,
+        std::string_view field,
+        std::string_view fallback
+    ) {
+        const auto iter = object.find(field);
+        if(iter == object.end() || iter->is_null()) {
+            return std::string{fallback};
+        }
+        if(!iter->is_string()) {
+            throw std::runtime_error("JSON field must be a string: " + std::string{field});
+        }
+        return iter->get<std::string>();
+    }
+
+    [[nodiscard]] std::string canonical_dataset_hash(const nlohmann::json& root) {
+        Sha256 sha;
+        sha.update("agent-memory-precomputed-embedding-dataset-v1");
+
+        const auto& corpus = require_field(root, "corpus");
+        if(!corpus.is_array()) {
+            throw std::runtime_error("corpus must be an array");
+        }
+        if(corpus.size() > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::runtime_error("corpus is too large");
+        }
+        update_u32_le(sha, static_cast<std::uint32_t>(corpus.size()));
+        for(const auto& item : corpus) {
+            if(!item.is_object()) {
+                throw std::runtime_error("corpus item must be an object");
+            }
+            update_string_bytes(sha, read_string(item, "id"));
+            update_string_bytes(sha, read_string(item, "title"));
+            update_string_bytes(sha, read_string(item, "text"));
+            const auto metadata = item.find("metadata");
+            if(metadata == item.end()) {
+                update_u32_le(sha, 0U);
+            } else {
+                update_metadata_object(sha, *metadata);
+            }
+        }
+
+        const auto& queries = require_field(root, "queries");
+        if(!queries.is_array()) {
+            throw std::runtime_error("queries must be an array");
+        }
+        if(queries.size() > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::runtime_error("queries are too large");
+        }
+        update_u32_le(sha, static_cast<std::uint32_t>(queries.size()));
+        for(const auto& query : queries) {
+            if(!query.is_object()) {
+                throw std::runtime_error("query must be an object");
+            }
+            update_string_bytes(sha, read_string(query, "id"));
+            update_string_bytes(sha, read_string(query, "text"));
+            update_string_bytes(sha, read_string(query, "query_type"));
+            update_u32_le(sha, read_u32(query, "limit"));
+            update_metadata_filters(sha, query);
+            update_string_bytes(
+                sha,
+                read_optional_string_or(query, "answer_mode", "JudgedRetrieval")
+            );
+        }
+
+        return to_hex(sha.digest());
+    }
+
+    [[nodiscard]] std::string canonical_qrels_hash(const nlohmann::json& root) {
+        Sha256 sha;
+        sha.update("agent-memory-precomputed-embedding-qrels-v1");
+        const auto& judgments = require_field(root, "judgments");
+        if(!judgments.is_array()) {
+            throw std::runtime_error("judgments must be an array");
+        }
+        if(judgments.size() > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::runtime_error("judgments are too large");
+        }
+        update_u32_le(sha, static_cast<std::uint32_t>(judgments.size()));
+        for(const auto& judgment : judgments) {
+            if(!judgment.is_object()) {
+                throw std::runtime_error("judgment must be an object");
+            }
+            update_string_bytes(sha, read_string(judgment, "query_id"));
+            update_string_bytes(sha, read_string(judgment, "item_id"));
+            update_i32_le(sha, read_i32(judgment, "relevance_grade"));
+        }
+        return to_hex(sha.digest());
     }
 
     [[nodiscard]] std::string canonical_config_text(const nlohmann::json& root) {
@@ -442,14 +592,30 @@ namespace {
         }
 
         const auto expected_config_hash = read_string(artifact, "config_hash");
+        const auto expected_dataset_hash = read_string(artifact, "dataset_hash");
+        const auto expected_qrels_hash = read_string(artifact, "qrels_hash");
         const auto expected_artifact_hash = read_string(artifact, "artifact_hash");
         const auto actual_config_hash = sha256_hex(canonical_config_text(root));
+        const auto actual_dataset_hash = canonical_dataset_hash(root);
+        const auto actual_qrels_hash = canonical_qrels_hash(root);
         const auto actual_artifact_hash = canonical_artifact_hash(root);
 
         if(actual_config_hash != expected_config_hash) {
             throw std::runtime_error(
                 "config_hash mismatch: expected " + expected_config_hash
                 + ", got " + actual_config_hash
+            );
+        }
+        if(actual_dataset_hash != expected_dataset_hash) {
+            throw std::runtime_error(
+                "dataset_hash mismatch: expected " + expected_dataset_hash
+                + ", got " + actual_dataset_hash
+            );
+        }
+        if(actual_qrels_hash != expected_qrels_hash) {
+            throw std::runtime_error(
+                "qrels_hash mismatch: expected " + expected_qrels_hash
+                + ", got " + actual_qrels_hash
             );
         }
         if(actual_artifact_hash != expected_artifact_hash) {

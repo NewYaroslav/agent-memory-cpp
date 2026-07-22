@@ -81,6 +81,12 @@ string(JSON artifact_hash_algorithm GET
 string(JSON artifact_config_hash GET
     "${report_json}" embedding_artifact config_hash
 )
+string(JSON artifact_dataset_hash GET
+    "${report_json}" embedding_artifact dataset_hash
+)
+string(JSON artifact_qrels_hash GET
+    "${report_json}" embedding_artifact qrels_hash
+)
 string(JSON artifact_artifact_hash GET
     "${report_json}" embedding_artifact artifact_hash
 )
@@ -97,6 +103,8 @@ if(NOT artifact_generator STREQUAL "agent-memory.fixture.semantic-axis"
    OR NOT artifact_dtype STREQUAL "float32"
    OR NOT artifact_hash_algorithm STREQUAL "sha256"
    OR NOT artifact_config_hash STREQUAL "6ac8ddbc5192646369704c4d5b338d8e479cb24190d5c5e505ff6212dd57410e"
+   OR NOT artifact_dataset_hash STREQUAL "2ed6b9f427c3109e6d6d6d195210b47b7b1ae58193e777438f239d06676e8e6c"
+   OR NOT artifact_qrels_hash STREQUAL "ee35cf9bc06bda79012d34208457d262550af11eeab61085461afafdcc8fbba0"
    OR NOT artifact_artifact_hash STREQUAL "ab4a96d1e96b7394cf3e4f68bb50f77a33842b896482d181e63c469bda949f6b")
     message(FATAL_ERROR "embedding artifact provenance was not reported")
 endif()

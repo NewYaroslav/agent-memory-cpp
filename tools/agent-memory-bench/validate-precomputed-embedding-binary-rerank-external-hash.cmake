@@ -22,7 +22,7 @@ execute_process(
 if(NOT bench_result EQUAL 0)
     message(STATUS "benchmark stdout:\n${bench_stdout}")
     message(STATUS "benchmark stderr:\n${bench_stderr}")
-    message(FATAL_ERROR "precomputed embedding medium benchmark failed")
+    message(FATAL_ERROR "precomputed external-hash embedding benchmark failed")
 endif()
 
 file(READ "${AGENT_MEMORY_BENCH_OUTPUT}" report_json)
@@ -36,10 +36,22 @@ if(NOT mode STREQUAL "precomputed_embedding_binary_rerank_grid")
     message(FATAL_ERROR "unexpected mode: ${mode}")
 endif()
 
+string(JSON dataset_name GET "${report_json}" dataset_name)
 string(JSON corpus_size GET "${report_json}" corpus_size)
 string(JSON query_count GET "${report_json}" query_count)
-if(NOT corpus_size EQUAL 12 OR NOT query_count EQUAL 4)
-    message(FATAL_ERROR "unexpected precomputed medium dataset dimensions")
+if(NOT dataset_name STREQUAL "precomputed-embedding-external-hash"
+   OR NOT corpus_size EQUAL 12
+   OR NOT query_count EQUAL 5)
+    message(FATAL_ERROR "unexpected external-hash dataset identity or dimensions")
+endif()
+
+string(JSON model_id GET "${report_json}" embedding_model model_id)
+string(JSON model_dimension GET "${report_json}" embedding_model dimension)
+string(JSON model_normalized GET "${report_json}" embedding_model normalized)
+if(NOT model_id STREQUAL "agent-memory.external-hash-embedding-32d-v1"
+   OR NOT model_dimension EQUAL 32
+   OR NOT model_normalized)
+    message(FATAL_ERROR "unexpected external-hash embedding model metadata")
 endif()
 
 string(JSON artifact_generator GET
@@ -90,29 +102,29 @@ string(JSON artifact_qrels_hash GET
 string(JSON artifact_artifact_hash GET
     "${report_json}" embedding_artifact artifact_hash
 )
-if(NOT artifact_generator STREQUAL "agent-memory.fixture.semantic-axis"
+if(NOT artifact_generator STREQUAL "agent-memory.tools.external-hash-embedding"
    OR NOT artifact_version STREQUAL "v1"
-   OR NOT artifact_dataset_revision STREQUAL "hand-authored:2026-07-22"
-   OR NOT artifact_generator_revision STREQUAL "agent-memory-cpp:820e967"
-   OR NOT artifact_model_revision STREQUAL "fixture-semantic-axis-8d-v1"
-   OR NOT artifact_qrels_revision STREQUAL "hand-authored:2026-07-22"
-   OR NOT artifact_document_prompt STREQUAL "identity-document-v1"
-   OR NOT artifact_query_prompt STREQUAL "identity-query-v1"
-   OR NOT artifact_projection STREQUAL "semantic_axes_8d"
+   OR NOT artifact_dataset_revision STREQUAL "agent-memory-external-hash-fixture:2026-07-22"
+   OR NOT artifact_generator_revision STREQUAL "agent-memory-cpp:external-hash-fixture-v1"
+   OR NOT artifact_model_revision STREQUAL "external-hash-embedding-32d-v1"
+   OR NOT artifact_qrels_revision STREQUAL "agent-memory-external-hash-qrels:2026-07-22"
+   OR NOT artifact_document_prompt STREQUAL "title-plus-text-v1"
+   OR NOT artifact_query_prompt STREQUAL "query-text-v1"
+   OR NOT artifact_projection STREQUAL "external_hash_text_ngrams_32d"
    OR NOT artifact_normalization STREQUAL "l2"
    OR NOT artifact_dtype STREQUAL "float32"
    OR NOT artifact_hash_algorithm STREQUAL "sha256"
-   OR NOT artifact_config_hash STREQUAL "5f0de6c910f99a3573c77999f5aca82c95569e4ce73409cab33c9d064acdc717"
-   OR NOT artifact_dataset_hash STREQUAL "087b9ff2d2dbf31d3e90b843e2894569410b615608e357b3b88ee517b3ff33bb"
-   OR NOT artifact_qrels_hash STREQUAL "9ab8c1289530e952302b814e0a6523a8e04ba61ea7fc65e594b7e32814f54e32"
-   OR NOT artifact_artifact_hash STREQUAL "a9c966effbf84d6bf05c40181f9aec942a091140ef3eb9896f84620c72a3af64")
-    message(FATAL_ERROR "embedding artifact provenance was not reported")
+   OR NOT artifact_config_hash STREQUAL "51adac9183b83b5d90769b3063b51fb4e296460ffdba475de9e9743e54e84d36"
+   OR NOT artifact_dataset_hash STREQUAL "86a39ff110bf1becf553d360fac1e579539ed132411756fd3413b76fab749c38"
+   OR NOT artifact_qrels_hash STREQUAL "7900952369b02c1222c774d6b634d70cdb5bbc8e86a470e1744a48e958821a3a"
+   OR NOT artifact_artifact_hash STREQUAL "d34be4248d6b6391ffb5404fc337329c605937178030432503911acb6fdb6784")
+    message(FATAL_ERROR "external-hash embedding artifact provenance was not reported")
 endif()
 
 string(JSON exact_recall GET "${report_json}" exact_oracle quality recall_at_10)
 string(JSON exact_ndcg GET "${report_json}" exact_oracle quality ndcg_at_10)
-if(NOT exact_recall EQUAL 1 OR NOT exact_ndcg EQUAL 1)
-    message(FATAL_ERROR "exact oracle must recover all qrels in the medium fixture")
+if(exact_recall LESS 0.8 OR exact_ndcg LESS 0.8)
+    message(FATAL_ERROR "external-hash exact oracle quality unexpectedly regressed")
 endif()
 
 string(JSON report_count LENGTH "${report_json}" reports)
@@ -120,55 +132,11 @@ if(NOT report_count EQUAL 7)
     message(FATAL_ERROR "expected 7 encoder/bit reports, got ${report_count}")
 endif()
 
-set(saw_random_4 FALSE)
-set(saw_random_8 FALSE)
-set(saw_coordinate_8 FALSE)
-set(saw_pca_4 FALSE)
-set(saw_pca_8 FALSE)
-set(saw_itq_4 FALSE)
-set(saw_itq_8 FALSE)
 math(EXPR last_report "${report_count} - 1")
 foreach(report_index RANGE 0 ${last_report})
-    string(JSON encoder_family GET
-        "${report_json}" reports ${report_index} encoder_family
-    )
-    string(JSON bit_count GET "${report_json}" reports ${report_index} bit_count)
-    if(encoder_family STREQUAL "random_hyperplane_rademacher")
-        if(bit_count EQUAL 4)
-            set(saw_random_4 TRUE)
-        elseif(bit_count EQUAL 8)
-            set(saw_random_8 TRUE)
-        else()
-            message(FATAL_ERROR "unexpected random-hyperplane bit_count")
-        endif()
-    elseif(encoder_family STREQUAL "coordinate_sign")
-        if(NOT bit_count EQUAL 8)
-            message(FATAL_ERROR "coordinate_sign must emit 8 bits for this fixture")
-        endif()
-        set(saw_coordinate_8 TRUE)
-    elseif(encoder_family STREQUAL "pca_projection")
-        if(bit_count EQUAL 4)
-            set(saw_pca_4 TRUE)
-        elseif(bit_count EQUAL 8)
-            set(saw_pca_8 TRUE)
-        else()
-            message(FATAL_ERROR "unexpected PCA bit_count")
-        endif()
-    elseif(encoder_family STREQUAL "itq_rotation_projection")
-        if(bit_count EQUAL 4)
-            set(saw_itq_4 TRUE)
-        elseif(bit_count EQUAL 8)
-            set(saw_itq_8 TRUE)
-        else()
-            message(FATAL_ERROR "unexpected ITQ bit_count")
-        endif()
-    else()
-        message(FATAL_ERROR "unexpected encoder_family: ${encoder_family}")
-    endif()
-
     string(JSON rerank_count LENGTH "${report_json}" reports ${report_index} rerank)
     if(NOT rerank_count EQUAL 3)
-        message(FATAL_ERROR "each report must contain 3 candidate-limit rows")
+        message(FATAL_ERROR "each external-hash report must contain 3 candidate rows")
     endif()
 
     string(JSON full_candidate_limit GET
@@ -182,24 +150,11 @@ foreach(report_index RANGE 0 ${last_report})
         "${report_json}" reports ${report_index} rerank 2
         qrels_candidate_relevant_coverage
     )
-    string(JSON full_recall GET
-        "${report_json}" reports ${report_index} rerank 2 reranked_recall_at_10
-    )
-    string(JSON full_ndcg GET
-        "${report_json}" reports ${report_index} rerank 2 reranked_ndcg_at_10
-    )
     if(NOT full_candidate_limit EQUAL 12
        OR NOT full_exact_coverage EQUAL 1
-       OR NOT full_qrels_coverage EQUAL 1
-       OR NOT full_recall EQUAL 1
-       OR NOT full_ndcg EQUAL 1)
+       OR NOT full_qrels_coverage EQUAL 1)
         message(FATAL_ERROR
-            "full-corpus candidate row must recover exact top-k and qrels quality"
+            "full external-hash candidate row must cover exact top-k and qrels"
         )
     endif()
 endforeach()
-
-if(NOT saw_random_4 OR NOT saw_random_8 OR NOT saw_coordinate_8
-   OR NOT saw_pca_4 OR NOT saw_pca_8 OR NOT saw_itq_4 OR NOT saw_itq_8)
-    message(FATAL_ERROR "precomputed medium report is missing an expected encoder row")
-endif()
