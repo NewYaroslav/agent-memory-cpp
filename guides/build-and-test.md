@@ -188,6 +188,9 @@ complete and must use the canonical hash contract:
   ordered document/query embedding records with ids and float values;
 - `dataset_hash` covers the canonical corpus/query payload consumed by
   evaluation, and `qrels_hash` covers the canonical graded relevance judgments;
+- dataset, qrels, and embedding payload hashes are ordered canonical payloads:
+  fixture record order is part of the frozen artifact identity unless a future
+  schema explicitly defines sorted semantics;
 - provenance separates `dataset_revision`, `generator_revision`,
   `model_revision`, and `qrels_revision`; do not collapse those identities into
   one ambiguous source revision.
@@ -233,6 +236,12 @@ To regenerate it:
 python tools/agent-memory-bench/generate-precomputed-external-hash-fixture.py \
     --output tests/eval/fixtures/precomputed-embedding-external-hash.json
 ```
+
+When Python 3 is available, CI also runs
+`agent_memory_precomputed_embedding_external_hash_regeneration`, which
+regenerates this fixture into the build tree and compares it byte-for-byte with
+the committed JSON. The fixture is pinned to LF line endings so this
+reproducibility check is stable across Windows, macOS, and Linux checkouts.
 
 The two exact baselines answer different questions:
 

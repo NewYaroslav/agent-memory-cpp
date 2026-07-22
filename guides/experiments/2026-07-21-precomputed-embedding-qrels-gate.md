@@ -408,10 +408,20 @@ The C++ verifier recomputes all four hashes:
 - `qrels_hash` from canonical graded relevance judgments;
 - `artifact_hash` from canonical binary float32 embedding payload bytes.
 
+For schema v1 these are ordered canonical payloads: corpus, query, judgment,
+and embedding record order is part of the frozen artifact identity. A future
+schema may define sorted semantics, but PR #72 intentionally keeps the fixture
+order explicit and reproducible.
+
 Negative verifier tests now reject corpus-text and qrels mutations as separate
 failure modes. This closes the remaining gap where a fixture could change its
 evaluation target while preserving embedding payload hashes and revision
 strings.
+
+The dependency-free generator is now covered by a regeneration test as well:
+CI runs the Python script into the build tree and compares the generated JSON
+byte-for-byte against the committed fixture. This proves the frozen artifact is
+not only self-verifying, but also reproducible from the checked-in generator.
 
 ### Directional result
 
@@ -444,5 +454,8 @@ revision and generator environment.
   environment is available.
 - Record prompt text or prompt hashes when the generator uses non-identity
   prompts.
+- For neural fixtures, serialize model output as explicit float32 values with
+  round-trip-safe JSON spelling instead of compact decimal rounding used by the
+  hash-derived fixture.
 - Keep generator execution outside CI unless the model dependency is vendored or
   otherwise made deterministic and cheap.

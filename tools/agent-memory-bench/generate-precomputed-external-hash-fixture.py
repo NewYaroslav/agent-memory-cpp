@@ -384,6 +384,7 @@ def main() -> None:
     args.output.write_text(
         json.dumps(fixture, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
 
 
