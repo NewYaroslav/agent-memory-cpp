@@ -243,25 +243,39 @@ def string_bytes(value: str) -> bytes:
 def canonical_config_text(root: dict[str, Any]) -> bytes:
     model = root["embedding_model"]
     artifact = root["embedding_artifact"]
-    text = (
-        f"dataset_revision={artifact['dataset_revision']}\n"
-        f"document_prompt_id={artifact['document_prompt_id']}\n"
-        f"dtype={artifact['dtype']}\n"
-        f"embedding_dimension={model['dimension']}\n"
-        f"embedding_model_id={model['model_id']}\n"
-        f"embedding_normalized={'true' if model['normalized'] else 'false'}\n"
-        f"generator_id={artifact['generator_id']}\n"
-        f"generator_revision={artifact['generator_revision']}\n"
-        f"generator_version={artifact['generator_version']}\n"
-        f"model_revision={artifact['model_revision']}\n"
-        f"normalization={artifact['normalization']}\n"
-        f"pooling_mode={model['pooling_mode']}\n"
-        f"projection_kind={artifact['projection_kind']}\n"
-        f"qrels_revision={artifact['qrels_revision']}\n"
-        f"query_prompt_id={artifact['query_prompt_id']}\n"
-        f"similarity_metric={model['similarity_metric']}\n"
+    lines = [
+        f"dataset_revision={artifact['dataset_revision']}",
+        f"document_prompt_id={artifact['document_prompt_id']}",
+        f"dtype={artifact['dtype']}",
+        f"embedding_dimension={model['dimension']}",
+        f"embedding_model_id={model['model_id']}",
+        f"embedding_normalized={'true' if model['normalized'] else 'false'}",
+        f"generator_id={artifact['generator_id']}",
+        f"generator_revision={artifact['generator_revision']}",
+    ]
+    for field in (
+        "generator_command",
+        "generator_requirements_lock",
+        "generator_contract_source_hash",
+        "generator_source_hash",
+    ):
+        if artifact.get(field):
+            lines.append(f"{field}={artifact[field]}")
+    lines.extend(
+        [
+            f"generator_version={artifact['generator_version']}",
+            f"model_revision={artifact['model_revision']}",
+            f"normalization={artifact['normalization']}",
+            f"pooling_mode={model['pooling_mode']}",
+            f"projection_kind={artifact['projection_kind']}",
+            f"qrels_revision={artifact['qrels_revision']}",
+            f"query_prompt_id={artifact['query_prompt_id']}",
+            f"similarity_metric={model['similarity_metric']}",
+        ]
     )
-    return text.encode("utf-8")
+    if artifact.get("tokenizer_revision"):
+        lines.append(f"tokenizer_revision={artifact['tokenizer_revision']}")
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def canonical_dataset_payload(root: dict[str, Any]) -> bytes:

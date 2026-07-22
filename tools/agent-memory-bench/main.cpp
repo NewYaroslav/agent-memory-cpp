@@ -3272,6 +3272,24 @@ namespace {
                 {"qrels_hash", artifact.qrels_hash},
                 {"artifact_hash", artifact.artifact_hash}
             };
+            auto& artifact_json = document["embedding_artifact"];
+            artifact_json["tokenizer_revision"] = artifact.tokenizer_revision.empty()
+                ? nlohmann::json(nullptr)
+                : nlohmann::json(artifact.tokenizer_revision);
+            artifact_json["generator_source_hash"] = artifact.generator_source_hash.empty()
+                ? nlohmann::json(nullptr)
+                : nlohmann::json(artifact.generator_source_hash);
+            artifact_json["generator_contract_source_hash"] =
+                artifact.generator_contract_source_hash.empty()
+                    ? nlohmann::json(nullptr)
+                    : nlohmann::json(artifact.generator_contract_source_hash);
+            artifact_json["generator_command"] = artifact.generator_command.empty()
+                ? nlohmann::json(nullptr)
+                : nlohmann::json(artifact.generator_command);
+            artifact_json["generator_requirements_lock"] =
+                artifact.generator_requirements_lock.empty()
+                    ? nlohmann::json(nullptr)
+                    : nlohmann::json(artifact.generator_requirements_lock);
         } else {
             document["embedding_artifact"] = nullptr;
         }

@@ -23,6 +23,11 @@ namespace {
     "dataset_revision": "unit-test-dataset",
     "generator_revision": "unit-test-generator",
     "model_revision": "unit-test-model",
+    "tokenizer_revision": "unit-test-tokenizer",
+    "generator_source_hash": "3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012",
+    "generator_contract_source_hash": "456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123",
+    "generator_command": "python generate-unit-test-fixture.py --output fixture.json",
+    "generator_requirements_lock": "python==3.12.13; fixture-generator==1.0.0",
     "qrels_revision": "unit-test-qrels",
     "document_prompt_id": "unit-test-document-prompt",
     "query_prompt_id": "unit-test-query-prompt",
@@ -123,6 +128,25 @@ int main() {
     if(dataset.embedding_artifact->dataset_revision != "unit-test-dataset") {
         fail("embedding artifact dataset revision was not loaded");
     }
+    if(dataset.embedding_artifact->tokenizer_revision != "unit-test-tokenizer") {
+        fail("embedding artifact tokenizer revision was not loaded");
+    }
+    if(dataset.embedding_artifact->generator_source_hash
+       != "3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012") {
+        fail("embedding artifact generator source hash was not loaded");
+    }
+    if(dataset.embedding_artifact->generator_contract_source_hash
+       != "456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123") {
+        fail("embedding artifact generator contract source hash was not loaded");
+    }
+    if(dataset.embedding_artifact->generator_command
+       != "python generate-unit-test-fixture.py --output fixture.json") {
+        fail("embedding artifact generator command was not loaded");
+    }
+    if(dataset.embedding_artifact->generator_requirements_lock
+       != "python==3.12.13; fixture-generator==1.0.0") {
+        fail("embedding artifact generator requirements lock was not loaded");
+    }
     if(dataset.embedding_artifact->document_prompt_id
        != "unit-test-document-prompt") {
         fail("embedding artifact document prompt id was not loaded");
@@ -200,6 +224,29 @@ int main() {
             agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
         },
         "unsupported embedding artifact hash algorithm must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.embedding_artifact->generator_command.clear();
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "incomplete extended generator provenance must be rejected"
+    );
+    expect_runtime_error(
+        [] {
+            auto dataset =
+                agent_memory::load_precomputed_embedding_dataset_from_json_string(
+                    valid_dataset_json()
+                );
+            dataset.embedding_artifact->generator_source_hash =
+                "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789";
+            agent_memory::validate_precomputed_embedding_eval_dataset(dataset);
+        },
+        "uppercase generator source hash must be rejected"
     );
     expect_runtime_error(
         [] {
