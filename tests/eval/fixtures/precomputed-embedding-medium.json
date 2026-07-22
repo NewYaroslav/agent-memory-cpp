@@ -21,8 +21,8 @@
     "normalization": "l2",
     "dtype": "float32",
     "hash_algorithm": "sha256",
-    "config_hash": "7bbe5bc80c17c5d9c4374784b74492e192c6286f03dc643e613fd81a87fb246f",
-    "artifact_hash": "01e88e82ce9663a7e51a7f14958c934c478b7c5c56f389c7f329387015f04776"
+    "config_hash": "23ba385225fea17324e2f5d53fe94340ce9a2ed5deb3f256901198b0ea155c08",
+    "artifact_hash": "542bec06c248884525e783dc30cf110a3441c1267753f9c2661cfec7588e04f0"
   },
   "corpus": [
     {"id": "doc:binary-filter", "title": "Binary filter", "text": "binary candidate filter with exact rerank"},
