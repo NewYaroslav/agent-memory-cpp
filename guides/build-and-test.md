@@ -273,9 +273,11 @@ live in `tools/agent-memory-bench/precomputed_fixture_contract.py`, so
 `generator_contract_source_hash` is tied to that contract module instead of the
 surrogate external-hash generator. The artifact's
 `generator_requirements_lock` field records the path and SHA-256 of the
-requirements file; changing the requirements file is also a fixture-update
-operation. Treat the official regeneration environment as CPU execution with
-the pinned versions recorded in that requirements file.
+requirements file; the generator parses that same file and checks the declared
+Python and package versions before producing vectors. Changing the requirements
+file is also a fixture-update operation. Treat the official regeneration
+environment as CPU execution with the pinned versions recorded in that
+requirements file.
 
 The two exact baselines answer different questions:
 

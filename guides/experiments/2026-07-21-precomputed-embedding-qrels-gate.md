@@ -564,6 +564,8 @@ PR #74 keeps the PR #73 MiniLM fixture small but tightens its provenance:
   dedicated contract module instead of the larger external-hash generator;
 - `generator_requirements_lock` now records the path and SHA-256 of
   `tools/agent-memory-bench/requirements-minilm-fixture.txt`;
+- the MiniLM generator parses that same requirements manifest and checks the
+  declared Python/package versions before producing vectors;
 - the MiniLM CTest recomputes the generator, contract, and requirements-file
   hashes from checked-in files.
 

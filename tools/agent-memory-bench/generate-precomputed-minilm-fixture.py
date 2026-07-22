@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import importlib.metadata
 import json
+import platform
 import struct
 import sys
 from pathlib import Path
@@ -33,6 +34,14 @@ GENERATOR_COMMAND = (
     "--output tests/eval/fixtures/precomputed-embedding-minilm-l6-v2.json"
 )
 REQUIREMENTS_LOCK_FILE = "requirements-minilm-fixture.txt"
+REQUIRED_PACKAGE_PINS = (
+    "transformers",
+    "torch",
+    "numpy",
+    "tokenizers",
+    "safetensors",
+    "huggingface-hub",
+)
 DATASET_REVISION = "agent-memory-minilm-fixture:2026-07-22"
 QRELS_REVISION = "agent-memory-minilm-qrels:2026-07-22"
 DOCUMENT_PROMPT_ID = "title-plus-text-v1"
@@ -55,12 +64,63 @@ def requirements_lock_identity() -> str:
     )
 
 
-def require_version(package: str, expected: str) -> None:
-    actual = importlib.metadata.version(package)
-    if actual != expected:
+def parse_requirements_lock() -> tuple[str, dict[str, str]]:
+    python_version = ""
+    packages: dict[str, str] = {}
+    for line_number, raw_line in enumerate(
+        requirements_lock_path().read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            marker = "# python-version:"
+            if line.startswith(marker):
+                python_version = line[len(marker):].strip()
+            continue
+        if "==" not in line:
+            raise RuntimeError(
+                f"{REQUIREMENTS_LOCK_FILE}:{line_number}: expected package==version"
+            )
+        package, version = line.split("==", 1)
+        package = package.strip()
+        version = version.strip()
+        if not package or not version:
+            raise RuntimeError(
+                f"{REQUIREMENTS_LOCK_FILE}:{line_number}: expected package==version"
+            )
+        if package in packages:
+            raise RuntimeError(
+                f"{REQUIREMENTS_LOCK_FILE}:{line_number}: duplicate package {package}"
+            )
+        packages[package] = version
+    if not python_version:
+        raise RuntimeError(f"{REQUIREMENTS_LOCK_FILE}: missing # python-version")
+    if not packages:
+        raise RuntimeError(f"{REQUIREMENTS_LOCK_FILE}: missing package pins")
+    return python_version, packages
+
+
+def verify_requirements_lock_environment() -> None:
+    expected_python, packages = parse_requirements_lock()
+    actual_python = platform.python_version()
+    if actual_python != expected_python:
         raise RuntimeError(
-            f"{package} version mismatch: expected {expected}, got {actual}"
+            f"Python version mismatch: expected {expected_python}, "
+            f"got {actual_python}"
         )
+    for package in REQUIRED_PACKAGE_PINS:
+        if package not in packages:
+            raise RuntimeError(
+                f"{REQUIREMENTS_LOCK_FILE}: missing required package pin {package}"
+            )
+    for package, expected in packages.items():
+        actual = importlib.metadata.version(package)
+        if actual != expected:
+            raise RuntimeError(
+                f"{package} version mismatch: expected {expected}, got {actual}"
+            )
 
 
 def f32_value(value: float) -> float:
@@ -78,6 +138,7 @@ def encode_texts(
     cache_dir: Path | None,
     local_files_only: bool,
 ) -> list[list[float]]:
+    verify_requirements_lock_environment()
     try:
         import torch
         import torch.nn.functional as torch_functional
@@ -87,13 +148,6 @@ def encode_texts(
             "MiniLM fixture generation requires torch and transformers. "
             f"Install the pinned packages from {REQUIREMENTS_LOCK_FILE}."
         ) from exc
-
-    require_version("transformers", "4.44.2")
-    require_version("torch", "2.8.0")
-    require_version("numpy", "2.5.1")
-    require_version("tokenizers", "0.19.1")
-    require_version("safetensors", "0.4.5")
-    require_version("huggingface-hub", "0.24.6")
 
     torch.set_num_threads(1)
     model_kwargs: dict[str, Any] = {
