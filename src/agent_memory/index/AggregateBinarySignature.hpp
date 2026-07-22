@@ -16,7 +16,11 @@ namespace agent_memory {
     enum class BinarySignatureAggregationMode {
         /// \brief Set the aggregate bit when any member has the bit set.
         AnySetBit,
-        /// \brief Set the aggregate bit when at least half of members have it set.
+        /// \brief Set the bit when at least half of members have it set.
+        ///
+        /// Even-count ties are intentionally set for recall-biased aggregate
+        /// signatures. In other words, this is an at-least-half majority policy,
+        /// not a strict greater-than-half policy.
         MajoritySetBit,
         /// \brief Set the aggregate bit only when every member has it set.
         AllSetBits,
@@ -59,10 +63,12 @@ namespace agent_memory {
         /// \brief Per-bit number of members whose bit is set.
         [[nodiscard]] const std::vector<std::size_t>& one_counts() const noexcept;
 
-        /// \brief Adds one member signature, adopting width on first insertion.
+        /// \brief Adds one non-zero-width member signature.
+        ///
+        /// A default-constructed accumulator adopts the first member width.
         void add(const BinarySignature& signature);
 
-        /// \brief Removes one previously added member signature.
+        /// \brief Removes one previously added non-zero-width member signature.
         /// \throws std::invalid_argument when the width mismatches or removal
         ///         would violate counter invariants.
         void remove(const BinarySignature& signature);

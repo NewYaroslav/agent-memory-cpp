@@ -155,6 +155,31 @@ namespace {
         return true;
     }
 
+    bool failed_remove_does_not_change_state() {
+        AggregateBinarySignatureBuilder builder;
+        builder.add(make_signature(4, {0}));
+        builder.add(make_signature(4, {1}));
+
+        const auto member_count_before = builder.member_count();
+        const auto counts_before = builder.one_counts();
+        const auto signature_before = bits(builder.signature());
+
+        if(!throws<std::invalid_argument>([&] {
+               builder.remove(make_signature(4, {0, 2}));
+           })) {
+            return fail("aggregate builder must reject partial counter underflow");
+        }
+
+        if(builder.member_count() != member_count_before ||
+           builder.one_counts() != counts_before ||
+           bits(builder.signature()) != signature_before) {
+            return fail(
+                "aggregate builder remove() must leave state unchanged on failure"
+            );
+        }
+        return true;
+    }
+
     bool invalid_inputs_are_rejected() {
         AggregateBinarySignatureBuilder builder;
         builder.add(make_signature(4, {0}));
@@ -174,6 +199,24 @@ namespace {
                empty.remove(make_signature(4, {0}));
            })) {
             return fail("aggregate builder must reject removal from an empty aggregate");
+        }
+
+        if(!throws<std::invalid_argument>([&] {
+               AggregateBinarySignatureBuilder invalid(0);
+           })) {
+            return fail("aggregate builder must reject configured zero width");
+        }
+        if(!throws<std::invalid_argument>([&] {
+               AggregateBinarySignatureBuilder invalid;
+               invalid.add(BinarySignature(0));
+           })) {
+            return fail("aggregate builder must reject zero-width members on add");
+        }
+        if(!throws<std::invalid_argument>([&] {
+               AggregateBinarySignatureBuilder invalid(4);
+               invalid.remove(BinarySignature(0));
+           })) {
+            return fail("aggregate builder must reject zero-width members on remove");
         }
 
         AggregateBinarySignatureBuilder underflow(4);
@@ -211,6 +254,7 @@ int main() {
         all_set_policy_is_intersection,
         threshold_fraction_policy_is_configurable,
         incremental_remove_updates_counters,
+        failed_remove_does_not_change_state,
         invalid_inputs_are_rejected
     };
 

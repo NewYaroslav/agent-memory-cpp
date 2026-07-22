@@ -27,6 +27,11 @@ namespace agent_memory {
           m_bit_count(bit_count),
           m_one_counts(bit_count, std::size_t{0}) {
         validate_options();
+        if(bit_count == 0) {
+            throw std::invalid_argument(
+                "configured binary signature aggregate width must be non-zero"
+            );
+        }
     }
 
     std::size_t AggregateBinarySignatureBuilder::bit_count() const noexcept {
@@ -66,6 +71,10 @@ namespace agent_memory {
                         "binary signature aggregate removal would underflow bit counter"
                     );
                 }
+            }
+        }
+        for(std::size_t bit = 0; bit < m_bit_count; ++bit) {
+            if(signature.bit(bit)) {
                 --m_one_counts[bit];
             }
         }
@@ -100,6 +109,11 @@ namespace agent_memory {
     }
 
     void AggregateBinarySignatureBuilder::ensure_width(const BinarySignature& signature) {
+        if(signature.bit_count() == 0) {
+            throw std::invalid_argument(
+                "binary signature aggregation requires non-zero-width signatures"
+            );
+        }
         if(m_bit_count == 0) {
             m_bit_count = signature.bit_count();
             m_one_counts.assign(m_bit_count, std::size_t{0});
@@ -110,6 +124,11 @@ namespace agent_memory {
     void AggregateBinarySignatureBuilder::require_width(
         const BinarySignature& signature
     ) const {
+        if(signature.bit_count() == 0) {
+            throw std::invalid_argument(
+                "binary signature aggregation requires non-zero-width signatures"
+            );
+        }
         if(signature.bit_count() != m_bit_count) {
             throw std::invalid_argument(
                 "binary signature aggregation requires equal-width signatures"
