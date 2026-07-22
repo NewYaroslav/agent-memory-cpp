@@ -159,6 +159,14 @@ counting or saturating counters, Bloom-like semantic sketches, learned set
 encoders, and attention pooling. Add/delete semantics are part of the
 acceptance criteria because memory objects evolve incrementally.
 
+PR #77 adds the first dependency-free primitive for this axis:
+`AggregateBinarySignatureBuilder`. It remains in the global shared binary space
+and aggregates already-compatible chunk signatures with deterministic OR,
+majority, all-bits, or fraction-threshold policies. It is not ASMS/MSBSE,
+multi-slot document hashing, a learned set encoder, or a local projection
+matrix; those remain separate research lanes in
+[`advanced-binary-techniques-roadmap.md`](advanced-binary-techniques-roadmap.md).
+
 | Family | Shared code space? | Training | Intended role | Notes |
 |---|---:|---:|---|---|
 | Coordinate sign `sign(x)` | Yes | No | Cheapest diagnostic baseline | One bit per source coordinate; no projection cost, but naturally supports only `bit_count == input_dimension`. |
@@ -199,7 +207,7 @@ Post-PR57 PR ladder:
 | PR #74 | Precomputed fixture provenance hygiene. | Split the shared fixture contract out of the surrogate generator, add a requirements-file hash identity, document the official regeneration environment, and make generator-source hash update steps explicit. | No new quality claim and no larger benchmark. |
 | PR #75 | Larger real/precomputed embedding benchmark fixture. | Add a CI-friendly 36-document/12-query MiniLM fixture, verify artifact provenance, and run a compact 128/256-bit zero-training binary-rerank gate. | No production backend choice, no heavy learned-encoder CI grid, and no statistical benchmark claim. |
 | PR #76 | MiniLM fixture provenance hygiene. | Share MiniLM generator runtime across small/large fixtures, include that runtime in generator source identity, and verify fixture content against its source contract without loading the model. | No regenerated vectors and no new benchmark claim. |
-| PR #77 | Document or memory-level aggregate binary signatures. | Improve document routing recall at fixed memory budget and define incremental add/delete aggregation semantics for max/sum/saturation/sketch-style policies. | No incompatible local projection matrices. |
+| PR #77 | Document or memory-level aggregate binary signatures. | Add a dependency-free aggregate signature builder with OR/max, majority/sum-threshold, all-bits/intersection, fraction-threshold policies, and explicit add/delete counter semantics. | No incompatible local projection matrices, no multi-slot ASMS/MSBSE claim, and no learned set encoder. |
 | PR #78 | Evaluate cluster-local/document-local projections only as hierarchical second-stage filters. | Show value after global routing, with query encoding cost counted per selected cluster/document. | No global comparison of incompatible local codes. |
 | PR #79 | Scale and lifecycle benchmark gate before production backend selection. | Measure 10k/100k/1M+ corpora with p50/p95 latency, build time, peak memory, bytes/vector, candidate recall, update/delete throughput, compaction/rebuild cost, cold start, reload, and corpus-growth behavior. | No backend decision based only on small synthetic runs. |
 | PR #80+ | Choose index/backend direction: production binary bucket, MIH/HNSW-Hamming, IVF/PQ hybrid, HNSW dense baseline, or asymmetric quantization path. | Sub-linear candidate generation or clearly lower memory-bandwidth cost at target recall and lifecycle cost. | More flat-scan polishing unless a benchmark justifies it. |
