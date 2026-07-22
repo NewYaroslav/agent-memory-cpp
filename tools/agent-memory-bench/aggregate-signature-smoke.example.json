@@ -1,0 +1,20 @@
+{
+  "output_path": "aggregate-signature-smoke-output.json",
+  "document_count": 24,
+  "chunks_per_document": 3,
+  "query_count": 24,
+  "embedding_dimensions": 64,
+  "bit_count": 128,
+  "result_limit": 5,
+  "candidate_limits": [3, 5, 10],
+  "aggregation_modes": [
+    "any_set_bit",
+    "majority_set_bit",
+    "all_set_bits",
+    "threshold_fraction"
+  ],
+  "threshold_fraction": 0.5,
+  "seed": 42,
+  "chunk_noise": 0.2,
+  "query_noise": 0.08
+}

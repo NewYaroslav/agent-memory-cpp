@@ -346,6 +346,14 @@ if(AGENT_MEMORY_BUILD_TESTS)
                 ${CMAKE_CURRENT_BINARY_DIR}/hamming-hot-path-ctest.json
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
+        add_test(
+            NAME agent_memory_benchmark_cli_aggregate_signature_smoke
+            COMMAND
+                $<TARGET_FILE:agent-memory-aggregate-signature-bench>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/aggregate-signature-smoke.example.json
+                ${CMAKE_CURRENT_BINARY_DIR}/aggregate-signature-smoke-ctest.json
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
     endif()
     add_subdirectory(tests)
 endif()
