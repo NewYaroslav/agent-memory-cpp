@@ -390,6 +390,29 @@ Worker thread батчит до batch_size или max_bytes, потом flushes 
 - Increment stats.jobs_failed.
 - Если retry > 3 — log error и drop.
 
+### 4.6. Persistent Runtime Queue
+
+`TaskQueue` / `JobStore` является downstream runtime abstraction
+`agent-memory-cpp`, а не public API `mdbx-containers`. Он владеет job lifecycle:
+`Pending`, `Running`, `Done`, `Failed`, `Dead`, retry/backoff policy,
+worker id, attempts, stale-worker recovery и cancellation.
+
+Persistent MDBX implementation uses generic storage primitives only:
+
+```text
+jobs_by_id:
+  KeyValueTable<JobId, OpaqueJobRecord>
+
+jobs_runnable:
+  ReverseIndexTable<CompositeKey<StatusTag, RunAfterMs, JobId>, JobId>
+```
+
+`claim_next` выполняется как atomic compare/claim в одной write transaction:
+прочитать первый runnable index key, перечитать primary job record, проверить
+application predicate, обновить primary record и runnable index, затем commit.
+`mdbx-containers` отвечает только за generic tables and transaction
+atomicity; runtime semantics остаются здесь.
+
 ## 5. WriteGate
 
 ### 5.1. Purpose

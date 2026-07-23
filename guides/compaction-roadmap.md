@@ -14,7 +14,7 @@
 - `CompactionHandoff` — структурированная запись для crash recovery и operational handoff.
 - Scheduling policy: hybrid on-write + on-schedule; threading model; crash recovery; admin operations (CLI + programmatic).
 
-Cross-references: `guides/memory-stacks-roadmap.md` (ADR-009, ADR-013, секция 8, 12.4, 16 шаг 14), `guides/knowledge-units-roadmap.md` (CompactionMetaComponent, Lifecycle FSM, episode compaction 5.5.4), `guides/knowledge-base-roadmap.md` (DecayAwareRetriever, eval pipeline CompactionHandoff test 9.6), `guides/policies-roadmap.md` future (DecayPolicy, WritePolicy), `guides/mdbx-containers-extension-tz.md` (12.5 TaskQueue).
+Cross-references: `guides/memory-stacks-roadmap.md` (ADR-009, ADR-013, секция 8, 12.4, 16 шаг 14), `guides/knowledge-units-roadmap.md` (CompactionMetaComponent, Lifecycle FSM, episode compaction 5.5.4), `guides/knowledge-base-roadmap.md` (DecayAwareRetriever, eval pipeline CompactionHandoff test 9.6), `guides/policies-roadmap.md` future (DecayPolicy, WritePolicy), `guides/runtime-services-roadmap.md` (persistent runtime queue), `guides/mdbx-containers-extension-tz.md` (generic storage recipe 12.5, MultiTableWriter 3.7).
 
 Non-goals: подробная спецификация embedding model адаптеров, LLM-based summary generation (использует внешний `ITextAdapter`), distributed compaction (multi-process).
 
@@ -29,7 +29,7 @@ evidence are part of the semantic contract. See
 
 ### 2.1. Architecture
 
-`CompactionWorker` — фоновый компонент `MemoryStack`, обрабатывающий compaction jobs. Один worker thread per MemoryStack (per ADR-013, см. также Open Issue 17.6 в `memory-stacks-roadmap.md`). Использует `TaskQueue`/`JobStore` из `mdbx-containers-extension-tz.md` секции 12.5 для persistent очереди и DBI `compaction_jobs` + `compaction_handoffs` из `memory-stacks-roadmap.md` секции 12.4 для operational state.
+`CompactionWorker` — фоновый компонент `MemoryStack`, обрабатывающий compaction jobs. Один worker thread per MemoryStack (per ADR-013, см. также Open Issue 17.6 в `memory-stacks-roadmap.md`). Использует downstream `TaskQueue`/`JobStore` из `runtime-services-roadmap.md` §4.6 для persistent очереди; MDBX persistence строится на storage recipe `mdbx-containers-extension-tz.md` §12.5 и DBI `compaction_jobs` + `compaction_handoffs` из `memory-stacks-roadmap.md` секции 12.4 для operational state.
 
 ```cpp
 class CompactionWorker {
@@ -739,7 +739,7 @@ if (handoff && handoff->status == HandoffStatus::InProgress) {
 | Шаг | Что | Зависимости |
 |---|---|---|
 | 14.0 | `ICompactionJob` interface + `CompactionWorker` skeleton + `JobState` сериализация | Шаги 1-2 (envelope + DBI) |
-| 14.1 | `compaction_jobs` DBI + `TaskQueue` integration (`mdbx-containers-extension-tz.md` 12.5) + `DecayJob`/`DedupeJob`/`ArchiveColdJob` (M1 minimum) | 14.0, шаги 5, 10 (components + DecayPolicy) |
+| 14.1 | `compaction_jobs` DBI + downstream `TaskQueue` integration (`runtime-services-roadmap.md` §4.6; storage recipe `mdbx-containers-extension-tz.md` §12.5) + `DecayJob`/`DedupeJob`/`ArchiveColdJob` (M1 minimum) | 14.0, шаги 5, 10 (components + DecayPolicy) |
 | 14.2 | `CompactionHandoff` structure + crash recovery + `CompactionHandoffJob` meta-job | 14.1 |
 | 14.3 | `MergeJob` для episode compaction | `ConversationEpisodePayload` (см. `knowledge-units-roadmap.md` 5.5.4) |
 | 14.4 | `SummaryPromotionJob` (с `ITextAdapter` интерфейсом) + `EmbeddingRecomputeJob` | `CompiledArticlePayload`, `DenseVectors` capability |
@@ -770,9 +770,10 @@ Internal documents:
 - `guides/knowledge-units-roadmap.md` — `CompactionMetaComponent`, Lifecycle FSM, episode compaction (секция 5.5.4).
 - `guides/knowledge-base-roadmap.md` — `DecayAwareRetriever`, `UsageStatsComponent`, Eval pipeline CompactionHandoff test case (секция 9.6), `EmbeddingMetaComponent`.
 - `guides/policies-roadmap.md` (future) — DecayPolicy / WritePolicy полные спецификации.
-- `guides/mdbx-containers-extension-tz.md` — секция 12.5 (TaskQueue / JobStore), секция 3.7 (MultiTableWriter).
+- `guides/runtime-services-roadmap.md` — секция 4.6 (`TaskQueue` / `JobStore` runtime contract).
+- `guides/mdbx-containers-extension-tz.md` — секция 12.5 (generic runtime-job storage recipe), секция 3.7 (MultiTableWriter).
 - `guides/cli-roadmap.md` (future) — `agent-memory-cli` compaction subcommands.
-- `guides/runtime-services-roadmap.md` (future) — PromptCache, AsyncIndexer, WriteGate.
+- `guides/runtime-services-roadmap.md` — PromptCache, AsyncIndexer, WriteGate, persistent runtime queue.
 
 External references (ai-agent-playbook):
 

@@ -9,9 +9,12 @@ reference for `agent-memory-cpp`. The review used the upstream GitHub
 repository snapshot cloned into `tmp/tencentdb-agent-memory` and public GitHub
 README / issue pages.
 
-`agent-memory-cpp` context: follow-up to commit
-`9b73202 docs(guides): add addressable compression reference` on branch
-`pr85-rerank-prepare-cost`.
+`agent-memory-cpp` context:
+
+- Initial note: `9b73202 docs(guides): add addressable compression reference`.
+- Boundary correction reviewed here:
+  `02dfc5e docs(guides): keep storage primitives domain-neutral`.
+- Branch: `pr85-rerank-prepare-cost`.
 
 ### Question
 
@@ -60,7 +63,7 @@ rg -n "WideSearch|SWE-bench|AA-LCR|PersonaMem|benchmark|bench|evaluation|eval" `
   tmp/tencentdb-agent-memory/src `
   tmp/tencentdb-agent-memory/tests `
   tmp/tencentdb-agent-memory/test `
-  tmp/tencentdb-agent-memory/hermes 2>$null
+  tmp/tencentdb-agent-memory/hermes-plugin 2>$null
 Get-ChildItem -LiteralPath tmp/tencentdb-agent-memory -Recurse -Force -File |
   Where-Object {
     $_.FullName -notmatch '\\.git|node_modules|dist|build' -and

@@ -20,7 +20,10 @@
 
 Расширить `external/mdbx-containers/include/mdbx_containers/` набором классов и утилит, необходимых для следующих направлений `agent-memory-cpp`:
 
-1. **Knowledge Units** — обобщение над `Chunk`, `QAPair`, `Fact`, `Event`, `Entity`, `Relation`, `Section`, `Summary`, `ConversationEpisode`, `Note`. Все типы живут в одной таблице с type tag.
+1. **Knowledge Units** — все kinds имеют общий `KnowledgeUnitEnvelope` в
+   `knowledge_units`; kind-specific и operational data хранятся в
+   `unit_components` и per-kind payload DBIs. `TypeDiscriminatedTable` не
+   является canonical storage для всего unit-а.
 2. **Fielded BM25F** — отдельные поля per source: `title`, `heading_path`, `body`, `code_blocks`, `tags`, `symbols`, `metadata_typed`, `qa_question`, `qa_answer`, `summary`. Поля должны быть доступны как inverted index с composite key `(token_id, field_id)`.
 3. **Typed graph storage** — `NodeKind`/`EdgeKind` enum, хранение outgoing/incoming edges через reverse index, bounded expansion.
 4. **QA Knowledge Base** — `QAPair` с полями `valid`, `last_verified`, `priority`, `freq`, `supersedes`. Inverted index по `question` tokens.
@@ -45,16 +48,16 @@
 - **Schema versioning framework поверх mdbx-containers** — payload versioning остаётся на стороне приложения (текущие префиксы `agent_memory.document.v1` и т.п. сохраняются).
 - **Background compaction API** — не в scope первой итерации.
 - **Bloom filters** — не в scope.
-- **Multi-process write coordination через MDBX штатный multi-process API** не входит в scope (single-writer per env остаётся правилом M0/M1/M2). **Multi-node replication** через upstream `sync` subsystem (см. §1.6) рассматривается как опциональный opt-in profile за пределами M0/M1/M2; см. §11.7 для решения adoption.
+- **Multi-process write coordination через MDBX штатный multi-process API** не входит в scope (single-writer per env остаётся правилом M0/M1/M2). **Multi-node replication** через upstream `sync` subsystem (см. §1.5) рассматривается как опциональный opt-in profile за пределами M0/M1/M2; см. §11.7 для решения adoption.
 - **Per-thread transaction model** сохраняется как primary design constraint (см. `common/Connection.hpp`); multi-table write обеспечивается одним `Transaction`-объектом, разделяемым между таблицами, а не координацией отдельных транзакций (см. `guides/memory-stacks-roadmap.md`, open issue 17.9).
 
-### 1.6. Upstream sync subsystem (informational)
+### 1.5. Upstream sync subsystem (informational)
 
-#### 1.6.1 Purpose
+#### 1.5.1 Purpose
 
 Этот раздел носит **чисто информационный характер** на момент написания ТЗ. Локальный submodule `external/mdbx-containers` (commit `e9e9f2f`, tag `v1.0.0-97-ge9e9f2f`) **не содержит** подкаталога `sync/`. Upstream `external/mdbx-containers` main snapshot `d4d219c` реализует sync subsystem, описанный ниже. Цель раздела — зафиксировать состояние upstream sync v0.1 в этом ТЗ, чтобы будущие ревизии не дрифтовали относительно фактической поверхности API. Никакие изменения в текущих DBIs секции 5 не подразумеваются; фиксация adoption — отдельный вопрос §11.7.
 
-#### 1.6.2 Source attribution policy
+#### 1.5.2 Source attribution policy
 
 Поскольку upstream `mdbx-containers` не публикует RFC / спецификации отдельно от кода, в этом разделе используется **двухуровневая citation pattern**:
 
@@ -63,7 +66,7 @@
 
 Никакие URL, arXiv ID, или DOI не публикуются без верификации; если источника нет — пишем «нет публичного источника» и приводим internal anchor.
 
-#### 1.6.3 Upstream `sync` v0.1 — файлы
+#### 1.5.3 Upstream `sync` v0.1 — файлы
 
 Директория: `include/mdbx_containers/sync/` в upstream main snapshot `d4d219c`. Состав:
 
@@ -80,11 +83,11 @@
 | `WebSocketTransport.hpp` | Framework-neutral WebSocket-shaped adapter seam | н/д |
 | `TransportMiddleware.hpp` | Transport middleware, allow-list, rate limiting, auth context policies | н/д |
 
-Внутренний layout дополнительно содержит `stores/` подкаталог с 5 системными DBIs (см. §1.6.10) и compile-time gate `MDBXC_SYNC_ENABLED` (default `0`). Подключение sync-функционала требует явного `-DMDBXC_SYNC_ENABLED=1` при сборке `mdbx-containers`.
+Внутренний layout дополнительно содержит `stores/` подкаталог с 5 системными DBIs (см. §1.5.10) и compile-time gate `MDBXC_SYNC_ENABLED` (default `0`). Подключение sync-функционала требует явного `-DMDBXC_SYNC_ENABLED=1` при сборке `mdbx-containers`.
 
-Public first-class упоминания sync subsystem в PR descriptions — это GitHub PR #86–#105 (chronologically; детали в §1.6.8). PR #104 и PR #105 уже merged на момент этого snapshot-а; transport DTO codec и HTTP adapter seam входят в v0.1.
+Public first-class упоминания sync subsystem в PR descriptions — это GitHub PR #86–#105 (chronologically; детали в §1.5.8). PR #104 и PR #105 уже merged на момент этого snapshot-а; transport DTO codec и HTTP adapter seam входят в v0.1.
 
-#### 1.6.4 v0.1 support matrix
+#### 1.5.4 v0.1 support matrix
 
 Sync v0.1 покрывает wire-format round-trip только для определённых table types upstream:
 
@@ -101,7 +104,7 @@ Sync v0.1 покрывает wire-format round-trip только для опре
 
 Покрытие для любого table type, не перечисленного как «Supported», считается **out of v0.1 scope**; см. §5.6 для влияния на DBI-схему настоящего проекта.
 
-#### 1.6.5 Wire format locks (по `DESIGN.md`)
+#### 1.5.5 Wire format locks (по `DESIGN.md`)
 
 Locked decisions, цитаты согласно `include/mdbx_containers/sync/DESIGN.md`:
 
@@ -114,7 +117,7 @@ Locked decisions, цитаты согласно `include/mdbx_containers/sync/DE
 
 Эти решения считаются **locked** до появления отдельного `DESIGN.md` update-а; пересмотр требует явного bump-а версии wire format.
 
-#### 1.6.6 Lifecycle state machine (по `SyncWorker.hpp`)
+#### 1.5.6 Lifecycle state machine (по `SyncWorker.hpp`)
 
 `SyncWorker` реализует явный state machine для фонового pull/apply:
 
@@ -135,12 +138,12 @@ Stopped -> Starting -> Idle -> Pulling -> Applying -> Idle
 - `Pulling` / `Applying` → `Backoff` — pull/apply round завершился ошибкой или конфликтом, который background loop будет ретраить.
 - `Backoff → Idle` — backoff timer истёк, повторная попытка; задержка растёт от `initial_backoff` до `max_backoff`.
 - Любое состояние → `Stopping` — user сигнал (`stop()` / shutdown).
-- `Stopping → Stopped` — текущая операция отменена через `CancellationToken` (см. §1.6.3).
+- `Stopping → Stopped` — текущая операция отменена через `CancellationToken` (см. §1.5.3).
 - `* → Failed` — unexpected exception вышел из основного worker loop.
 
 В `SyncWorkerOptions` нет `max_consecutive_failures`: background worker продолжает retry loop с bounded backoff. Foreground `run_once()` имеет другую семантику: обычный неуспешный round возвращает result с `ok=false` и переводит worker в `Failed`, потому что одноразовый вызов не имеет фонового retry loop.
 
-#### 1.6.7 Conflict reasons (по `SyncEngine.hpp`)
+#### 1.5.7 Conflict reasons (по `SyncEngine.hpp`)
 
 Возвращаемое значение `ApplyResult`:
 
@@ -160,7 +163,7 @@ Stopped -> Starting -> Idle -> Pulling -> Applying -> Idle
 
 В background worker такие round failures приводят к `Backoff` и новой попытке. Переход в `Failed` не привязан к счётчику recoverable failures; он означает unexpected exception в основном worker loop или неуспешный foreground `run_once()`.
 
-#### 1.6.8 Merged PRs since local checkout
+#### 1.5.8 Merged PRs since local checkout
 
 Upstream PR-ы, появившиеся после submodule-pointer-а `e9e9f2f` и затрагивающие sync subsystem (или напрямую предшествующие sync-work):
 
@@ -175,7 +178,7 @@ Upstream PR-ы, появившиеся после submodule-pointer-а `e9e9f2f`
 
 Точный per-PR breakdown отложен до формальной adoption (§11.7); в этом разделе фиксируется диапазон для accounting-а.
 
-#### 1.6.9 Transport status after PR #104–#105
+#### 1.5.9 Transport status after PR #104–#105
 
 - **Direct peer** — `DirectSyncPeer` остаётся единственным полностью in-process peer.
 - **HTTP seam** — `HttpSyncPeer`, `IHttpSyncClient`, `HttpSyncServer` и `HttpSyncRoutes` задают route/content-type/body/status mapping поверх `TransportMessageCodec`, но не открывают sockets и не зависят от конкретного HTTP framework.
@@ -185,7 +188,7 @@ Upstream PR-ы, появившиеся после submodule-pointer-а `e9e9f2f`
 
 Следствие для `agent-memory-cpp`: HTTP/WebSocket adapter seams больше не являются upstream blocker-ом сами по себе. Adoption всё равно откладывается из-за coverage gap по `KeyMultiValueTable` / `AnyValueTable` и отсутствия multi-host scope-routing requirement для M0/M1/M2 (§11.7).
 
-#### 1.6.10 System DBIs и `max_dbs` budget
+#### 1.5.10 System DBIs и `max_dbs` budget
 
 Upstream sync subsystem вводит 5 системных DBIs:
 
@@ -197,11 +200,14 @@ Upstream sync subsystem вводит 5 системных DBIs:
 | `_mdbxc_applied` | Last contiguous applied `seq` per origin; primary replay/skip state |
 | `_mdbxc_identity_index` | Declared identity map для opaque app keys ↔ storage identity; write path deferred в v0.1 |
 
-Эти 5 DBIs разделяют `Config::max_dbs` budget с таблицами секции 5.5. Текущее значение `max_dbs == 64` (см. §5.5 замечание о расширении 16 → 64). Adoption sync v0.1 **потребует перерасчёта budget-а** (подробнее — §11.7). На момент написания ТЗ sync subsystem не активирован, и эти 5 DBIs **не учитываются** в подсчёте `max_dbs == 64`.
+Эти 5 DBIs разделяют тот же `Config::max_dbs` budget с таблицами секции 5.5.
+На момент написания ТЗ sync subsystem не активирован и не открывается
+M0/M1/M2-профилями, но при любом opt-in adoption эти DBIs обязаны входить в
+расчёт §5.5.1.
 
-> **Note**: raw-code compression и storage budget — разные вещи. Размер wire-format payload-ов зависит от compression-а (LZ4 / ZSTD), и raw source code footprint (см. §1.6.3) не равен полному end-to-end storage footprint при включённом sync. Полная cost-модель откладывается до формальной adoption.
+> **Note**: raw-code compression и storage budget — разные вещи. Размер wire-format payload-ов зависит от compression-а (LZ4 / ZSTD), и raw source code footprint (см. §1.5.3) не равен полному end-to-end storage footprint при включённом sync. Полная cost-модель откладывается до формальной adoption.
 
-## 1.5. Текущее состояние
+### 1.6. Текущее состояние
 
 Снимок того, что уже существует в upstream `mdbx-containers` на момент расширения. Документ описывает, какие классы уже есть, а какие добавляются или расширяются.
 
@@ -303,7 +309,13 @@ public:
 };
 ```
 
-Внутри: `KeyMultiValueTable<InvertedKey, PrimaryKey>` с флагом `MDBX_DUPSORT`. Удаление последнего reference для `InvertedKey` стирает ключ целиком.
+Внутри: `KeyMultiValueTable<InvertedKey, PrimaryKey>` с флагом `MDBX_DUPSORT`.
+Удаление последнего reference для `InvertedKey` стирает ключ целиком.
+`ReverseIndexTable` является однонаправленным (`InvertedKey -> PrimaryKey[]`);
+incoming/outgoing semantics появляются только у caller-owned paired indexes
+или future `BidirectionalRelationIndex`. `remove_all_for(primary)` допустим как
+maintenance/cleanup helper и может быть O(total postings), если caller не
+поддерживает отдельную reverse orientation.
 
 MDBX flags: `MDBX_DUPSORT`. Thread-safety: per-thread transaction. Backward compat: новый класс.
 
@@ -397,38 +409,41 @@ public:
 
 Use cases:
 
-- `knowledge_units` (Chunk, QAPair, Fact, Event, Entity, Relation, Section, Summary, Episode).
 - `unit_components` (Layer B, см. ADR-001 в `guides/memory-stacks-roadmap.md`): `ComponentKind` tag ∈ {`UsageStats`, `Speaker`, `Temporal`, `EmbeddingMeta`, `CompactionMeta`}, ключ — `UnitId`, value — `ValueVariant<UsageStatsComponent, SpeakerComponent, TemporalComponent, EmbeddingMetaComponent, CompactionMetaComponent>`. Operational компоненты, читаемые лениво из retrieval layer; tag-prefix позволяет держать все компоненты в одной DBI с минимальным I/O envelope-а.
 - per-kind payload-компоненты (`QAPayload`, `FactPayload`, `ConversationEpisodePayload`, `CompiledArticlePayload`, `ChunkPayload`) — при необходимости выносятся в отдельные DBI; см. `guides/memory-stacks-roadmap.md`, секция 12.2.
 
-### 3.5 `CompositeKey<P1, P2>` и хелперы
+### 3.5 `CompositeKey<Parts...>` и хелперы
 
 **Файл:** `external/mdbx-containers/include/mdbx_containers/CompositeKey.hpp`.
 
 **Назначение:** typed composite key без `std::pair<K1, K2>` everywhere.
 
 ```cpp
-template <typename P1, typename P2>
+template <typename... Parts>
 struct CompositeKey {
-    P1 part1;
-    P2 part2;
+    std::tuple<Parts...> parts;
     // operators: ==, !=, <, hash (если C++17 std::hash доступен)
-    // to_bytes() / from_bytes() требуются от P1 и P2
+    // to_bytes() / from_bytes() требуются от каждого Parts
 };
 
-template <typename P1, typename P2>
-CompositeKey<P1, P2> make_composite_key(const P1& p1, const P2& p2);
+template <typename... Parts>
+CompositeKey<Parts...> make_composite_key(const Parts&... parts);
 
 // В detail/utils.hpp:
-template <typename P1, typename P2>
-std::array<std::uint8_t, sizeof(P1) + sizeof(P2)>
-composite_key_to_bytes(const P1& p1, const P2& p2);  // trivially copyable only
+template <typename... Parts>
+std::vector<std::uint8_t>
+composite_key_to_bytes(const Parts&... parts);  // trivially copyable only
 
-template <typename P1, typename P2>
-std::tuple<P1, P2> composite_key_from_bytes(const std::uint8_t* data, std::size_t size);
+template <typename... Parts>
+CompositeKey<Parts...> composite_key_from_bytes(const std::uint8_t* data,
+                                                std::size_t size);
 ```
 
-Требование: `P1`, `P2` — trivially copyable с `to_bytes()`/`from_bytes()`. Use cases: `(token_id, field_id)` для BM25F, `(src_node, edge_kind)` для graph outgoing.
+Требование: все `Parts` — trivially copyable с documented byte order и padding
+policy. Минимальный acceptance — поддержка 2..5 parts, потому что canonical
+manifest §5.5 использует 2-, 3-, 4- и 5-part keys. Если C++11 build не может
+использовать fold expressions, реализация делает private C++11-compatible
+helper без изменения публичной формы `CompositeKey<Parts...>`.
 
 ### 3.6 Расширения `paginated_range`
 
@@ -520,7 +535,7 @@ inline std::vector<std::uint8_t> from_hex_string(const std::string& hex);
 
 1. **Текущий target — single-env / single-writer.** M0/M1/M2 ориентированы на embedded deployment с одним MDBX env и атомарной записью через один `Transaction` / `MultiTableWriter`. Sharding сразу меняет transaction boundary: запись envelope + components + projections + secondary indexes перестаёт быть атомарной, если части unit-а попадают в разные env.
 2. **`scope_id` уже является логическим partition key.** Scope-aware secondary indexes начинаются с `scope_id` (см. §3.2 и `guides/memory-stacks-roadmap.md` ADR-012). Для текущих профилей этого достаточно, чтобы изолировать tenant / project / agent namespace без физического дробления storage.
-3. **DBI budget не должен умножаться на shards.** Секция §5.5 уже планирует десятки DBI в одном env, а §1.6.10 добавляет потенциальные 5 sync DBI при opt-in adoption. Физический shard-per-scope или shard-per-capability быстро превращает `max_dbs` budget из локального ограничения в distributed capacity model; это отдельный дизайн.
+3. **DBI budget не должен умножаться на shards.** Секция §5.5 уже планирует десятки DBI в одном env, а §1.5.10 добавляет потенциальные 5 sync DBI при opt-in adoption. Физический shard-per-scope или shard-per-capability быстро превращает `max_dbs` budget из локального ограничения в distributed capacity model; это отдельный дизайн.
 4. **CAP / consistency trade-offs не возникают бесплатно.** Как только shards живут в разных env / process / hosts, нужны явные ответы про consistency, availability under partition, resharding, tombstones, read-your-writes и cross-shard query merge. Встраивать только имена shard-ов без этих контрактов опаснее, чем не встраивать sharding вообще.
 
 Важно не смешивать sharding с DUPSORT:
@@ -549,9 +564,20 @@ inline std::vector<std::uint8_t> from_hex_string(const std::string& hex);
 
 Все additions только аддитивные. Сигнатуры существующих методов не меняются.
 
-## 5. MDBX-таблицы, которые появятся в `agent-memory-cpp`
+## 5. DBI inventory и canonical physical manifest
 
-### 5.1 Lexical (по `guides/lexical-search-roadmap.md`)
+Секции §5.1-§5.4 являются source inventory из старых roadmap-документов и
+существующих adapters. Они не являются одновременным physical manifest-ом для
+новой компонентной архитектуры. Единственный canonical layout для
+`Envelope + Components + SearchProjections` находится в §5.5; каждую DBI из
+§5.1-§5.4 нужно явно сохранить, заменить или перевести в profile-specific
+adapter перед реализацией.
+
+### 5.1 Lexical inventory (profile-specific, не canonical manifest)
+
+Эти DBI относятся к lexical-search roadmap и открываются только профилями,
+которые выбрали lexical backend. В canonical memory-stack manifest они
+представлены через `inverted_token_to_unit` и `field_to_postings` из §5.5.
 
 ```text
 lexical_token_by_text   KeyValueTable<string, uint64_t>
@@ -562,7 +588,12 @@ lexical_token_stats     KeyValueTable<TokenId, LexicalTokenStats>
 lexical_field_postings  ReverseIndexTable<CompositeKey<TokenId, uint8_t>, LexicalPosting>
 ```
 
-### 5.2 Optimization (по `guides/optimization-roadmap.md`)
+### 5.2 Optimization inventory (profile-specific, не canonical manifest)
+
+Эти DBI относятся к optimization roadmap. `embedding_store` и `chunk_store`
+являются legacy names; canonical component layout использует
+`embedding_meta`, `embedding_vectors`, `chunk_payloads` и `unit_projections`
+из §5.5.
 
 ```text
 binary_bucket_index     RangeIndexTable<uint64_t_short_key, BucketPostingBlob>
@@ -570,10 +601,16 @@ embedding_store         KeyValueTable<ChunkId, vector<float>>
 chunk_store             KeyValueTable<ChunkId, CompressedBlob>
 ```
 
-### 5.3 Knowledge base (новые)
+### 5.3 Legacy knowledge-base inventory (superseded by §5.5)
+
+Эта секция сохранена как migration/source inventory. Она не должна
+реализовываться как параллельная схема. `knowledge_units
+TypeDiscriminatedTable<KnowledgeUnitKind, ...>` заменён canonical
+`knowledge_units KeyValueTable<UnitId, KnowledgeUnitEnvelope>` +
+`unit_components` + per-kind payload DBIs из §5.5.
 
 ```text
-knowledge_units             TypeDiscriminatedTable<KnowledgeUnitKind, KnowledgeUnitId, ...>
+legacy_polymorphic_units    TypeDiscriminatedTable<KnowledgeUnitKind, KnowledgeUnitId, ...>  // superseded; do not implement as `knowledge_units`
 qa_knowledge                KeyValueTable<QAPairId, QAPairPayload>
 qa_inverted                 ReverseIndexTable<token, QAPairId>
 fact_store                  KeyValueTable<FactId, FactPayload>
@@ -587,7 +624,12 @@ resource_metadata_filters   ReverseIndexTable<CompositeKey<metadata_key, metadat
 resource_kinds              TypeDiscriminatedTable<DerivedRecordKind, ResourceId, payload>
 ```
 
-### 5.4 Infrastructure (existing, остаются)
+### 5.4 Existing infrastructure inventory (adapter-local)
+
+Эти DBI принадлежат существующим document/resource adapters. Они могут
+сосуществовать с §5.5 только в профилях, которые явно включают legacy
+document-storage adapter; canonical memory-stack budget §5.5.1 считает их
+отдельно от core manifest.
 
 ```text
 agent_memory_documents           KeyValueTable<DocumentId, string>
@@ -693,32 +735,40 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
   application payload поверх `KeyValueTable`, а не как публичный тип
   `mdbx_containers`.
 
-Все таблицы используют префикс payload versioning (`agent_memory.knowledge_unit.v1`, `agent_memory.qa.v1`, и т.п.), `Config::max_dbs` увеличивается с 16 до 64.
+Все таблицы используют префикс payload versioning (`agent_memory.knowledge_unit.v1`, `agent_memory.qa.v1`, и т.п.). `Config::max_dbs = 64` является текущим ceiling для одного MDBX env.
 
 #### 5.5.1 DBI budget checkpoint
 
 `Config::max_dbs = 64` является capacity ceiling, а не обещанием открыть 64
-named DBIs в каждом профиле. На момент этого TZ проверяемый peak budget:
+named DBIs в каждом профиле. Подсчёт ниже относится только к canonical
+physical manifest §5.5. Legacy/profile-specific inventory из §5.1-§5.4 не
+считается автоматически; каждая такая DBI должна попасть в конкретный
+`MemoryProfileSpec` manifest, прежде чем её можно учитывать в budget.
 
 | Bucket | Steady DBIs | Migration peak | Sync status | Notes |
 |---|---:|---:|---|---|
-| Existing/general DBIs from §5.1-§5.4 | 16 | 16 | mixed | Historical baseline used by this TZ. |
-| Memory-stack DBIs from §5.5 | 22 | 22 | mixed | All capability-specific tables enabled; typical profiles open fewer. |
-| Optional sync system DBIs from §1.6.10 | 0 by default, +5 opt-in | +5 | opt-in only | Not used by M0/M1/M2 while §11.7 is DEFER. |
+| Canonical memory-stack DBIs from §5.5 | 22 | 22 | mixed | Count every row in the §5.5 summary table exactly once. |
+| Existing document/resource adapter DBIs from §5.4 | 0 by default, +4 if legacy adapter enabled | +4 | KV supported | Adapter-local; not part of canonical memory-stack layout. |
+| Optional sync system DBIs from §1.5.10 | 0 by default, +5 opt-in | +5 | opt-in only | Not used by M0/M1/M2 while §11.7 is DEFER. |
 | Migration / dual-write reserve | 0 | +8 | application-owned | Reserved for transitional tables during profile migrations. |
-| Planned peak under current assumptions | 38 without sync | 51 with sync + reserve | within ceiling | Leaves at least 13 DBI slots of headroom under `max_dbs = 64`. |
+| Planned canonical peak under current assumptions | 22 default | 39 with legacy adapter + sync + reserve | within ceiling | Leaves at least 25 DBI slots of headroom under `max_dbs = 64`. |
 
 Any future addition must update this table with capability, default-open
 status, underlying MDBX table type, number of physical DBI, paired reverse
 orientation, steady-state count, migration peak, and sync support status.
+Manual acceptance check: enumerate the §5.5 summary table rows, add only
+profile-selected deltas, then verify `steady + sync + migration_reserve <= 64`.
 
 ### 5.6. Sync subsystem mapping (informational)
 
-Этот подраздел фиксирует соответствие между таблицами секций 5.1–5.5 и sync v0.1 coverage из §1.6.4. На момент написания ТЗ sync subsystem **не активирован** (см. §1.6 и §11.7), поэтому mapping носит **прогнозный / informational** характер: формальный статус каждого DBI будет пересмотрен при adoption.
+Этот подраздел фиксирует соответствие между таблицами секций 5.1–5.5 и sync v0.1 coverage из §1.5.4. На момент написания ТЗ sync subsystem **не активирован** (см. §1.5 и §11.7), поэтому mapping носит **прогнозный / informational** характер: формальный статус каждого DBI будет пересмотрен при adoption.
 
 #### 5.6.1 Per-DBI sync coverage
 
-Для каждой DBI из §5.5 (а также §5.1, §5.2, §5.3) приводим предполагаемый underlying table type и соответствующий статус sync v0.1:
+Для каждой canonical DBI из §5.5, а также для legacy/profile-specific
+inventory из §5.1-§5.4, приводим предполагаемый underlying table type и
+соответствующий статус sync v0.1. Legacy rows не добавляются к canonical DBI
+budget автоматически; они считаются только при явном включении в профиль.
 
 | DBI | Underlying mdbx-containers type | Sync v0.1 status | Замечание |
 |---|---|---|---|
@@ -726,8 +776,8 @@ orientation, steady-state count, migration peak, and sync support status.
 | `knowledge_units_by_kind` | `KeyMultiValueTable<KnowledgeUnitKind, UnitId>` DUPSORT (§5.5) | **NOT supported** | DUPSORT не покрыт в v0.1; reverse index layer не синхронизируется |
 | `unit_components` | `TypeDiscriminatedTable<ComponentKind, UnitId, ValueVariant<…>>` через `AnyValueTable` (§3.4) | **NOT supported** | `AnyValueTable` не покрыт в v0.1 |
 | `qa_payloads`, `fact_payloads`, `conversation_episode_payloads`, `compiled_article_payloads`, `chunk_payloads` | `KeyValueTable<UnitId, PerKindPayload>` (§5.5 Layer B) | Supported | Per-kind payloads — обычные KV |
-| `unit_projections` | `KeyValueTable<CompositeKey<...>, SearchProjection>` (§5.5 Layer C) | Supported | Composite key — opaque bytes на wire (см. §1.6.5) |
-| `embedding_meta`, `embedding_vectors` | `KeyValueTable<CompositeKey<...>, …>` (§5.5) | Supported | KV; vector store дополнительно через indirect path (§1.6.4) |
+| `unit_projections` | `KeyValueTable<CompositeKey<...>, SearchProjection>` (§5.5 Layer C) | Supported | Composite key — opaque bytes на wire (см. §1.5.5) |
+| `embedding_meta`, `embedding_vectors` | `KeyValueTable<CompositeKey<...>, …>` (§5.5) | Supported | KV; vector store дополнительно через indirect path (§1.5.4) |
 | `inverted_token_to_unit` | `ReverseIndexTable<CompositeKey<ScopeId, TokenId, ProjectionKind, FieldId>, UnitId>` поверх `KeyMultiValueTable` (§3.2) | **NOT supported** | См. §5.6.2 — critical gap для lexical inverted index |
 | `field_to_postings` | `ReverseIndexTable<CompositeKey<…>, PostingStats>` поверх `KeyMultiValueTable` | **NOT supported** | Та же DUPSORT-проблема, что и у `inverted_token_to_unit` |
 | `metadata_filters` | `ReverseIndexTable<CompositeKey<ScopeId, MetadataKey, MetadataValue>, UnitId>` поверх `KeyMultiValueTable` | **NOT supported** | Pre-filter indexes не синхронизируются в v0.1 |
@@ -758,7 +808,7 @@ orientation, steady-state count, migration peak, and sync support status.
 
 Та же проблема распространяется на остальные DUPSORT-производные DBI (`field_to_postings`, `metadata_filters`, `graph_edges_by_src/dst`, `speaker_to_units`, `session_to_units`, `usage_stats_index`, BM25 `lexical_postings`).
 
-Цитата из upstream `DESIGN.md` (по указанному в §1.6.3 файлу):
+Цитата из upstream `DESIGN.md` (по указанному в §1.5.3 файлу):
 
 > "Do not add `record_op()` paths for unsupported table types without first updating this design document and adding round-trip replication tests for the new wire-format semantics."
 
@@ -814,14 +864,14 @@ orientation, steady-state count, migration peak, and sync support status.
 - **Doxygen:** все новые публичные API документированы на английском (см. `external/mdbx-containers/guides/coding-style.md`).
 - **Application schema versioning:** версии payload-ов остаются на стороне `agent-memory-cpp` через `schema_info` (`envelope_schema_version`, `component_schema_versions[]`, `profile_signature`, `migration_phase`). `mdbx-containers` не мигрирует и не интерпретирует application payload schema.
 - **Canonical `profile_signature`:** детерминированный hash от application-level profile manifest-а: `envelope_schema_version`, отсортированный список `component_schema_versions`, DBI manifest (`dbi_name`, table type, MDBX flags, key/value layout ids), index layout versions, capability set и `migration_phase`. Термин `schema checksum` в этом ТЗ не используется как отдельное поле; если он появится позже, он должен быть явно mapped к `profile_signature` или заменён им.
-- **Sync schema compatibility (opt-in):** если §11.7 когда-либо разрешит включить upstream sync subsystem из §1.6, `agent-memory-cpp` предоставляет application-level compatibility guard до запуска upstream sync / до передачи user DBI batches в `SyncEngine`. `mdbx-containers` не читает `schema_info`, не знает `profile_signature` и не выполняет application schema validation.
+- **Sync schema compatibility (opt-in):** если §11.7 когда-либо разрешит включить upstream sync subsystem из §1.5, `agent-memory-cpp` предоставляет application-level compatibility guard до запуска upstream sync / до передачи user DBI batches в `SyncEngine`. `mdbx-containers` не читает `schema_info`, не знает `profile_signature` и не выполняет application schema validation.
 
 Минимальный контракт для будущего sync adoption:
 
 1. `agent-memory-cpp` compatibility guard выполняет handshake и сравнивает `profile_signature` + `migration_phase` до передачи user batches в upstream `SyncEngine`. Несовместимые peers получают диагностируемый application-level отказ без записи в user DBI.
 2. Payload migrations выполняются application-level процедурой: dual-read/backfill/switch/drop-old, а не автоматической трансляцией внутри `mdbx-containers`.
 3. During migration sync либо выключен, либо разрешён только между peers с одинаковым migration phase marker в `schema_info`.
-4. Application profile validator проверяет полный DBI manifest до включения sync и запрещает запуск, если профиль содержит table types без upstream round-trip coverage (`KeyMultiValueTable`, `AnyValueTable`, `HashedKeyValueStore` в snapshot §1.6.4).
+4. Application profile validator проверяет полный DBI manifest до включения sync и запрещает запуск, если профиль содержит table types без upstream round-trip coverage (`KeyMultiValueTable`, `AnyValueTable`, `HashedKeyValueStore` в snapshot §1.5.4).
 5. Частичная репликация KV-derived DBI без DUPSORT/`AnyValueTable`-derived DBI не считается schema-compatible profile для `agent-memory-cpp`; это ровно причина defer-решения в §11.7.
 
 ## 8. Тестирование
@@ -845,10 +895,17 @@ orientation, steady-state count, migration peak, and sync support status.
 
 ### 8.2 Integration тесты в `agent-memory-cpp/tests/`
 
-- `MdbxKnowledgeUnitStore` использует `TypeDiscriminatedTable` для всех 9 типов.
-- `MdbxQAKnowledgeBase` использует `KeyValueTable<QAPairId, QAPairPayload>` + `ReverseIndexTable` для inverted index.
-- `MdbxGraphStore` использует два `ReverseIndexTable` для outgoing/incoming.
-- `MdbxTemporalIndex` использует `RangeIndexTable<uint64_timestamp, ...>` для range queries.
+- `MdbxKnowledgeUnitStore` пишет `KnowledgeUnitEnvelope` в `knowledge_units`,
+  operational components в `unit_components`, search projections в
+  `unit_projections`, и kind-specific payloads в соответствующие §5.5 DBI.
+- `MdbxQAKnowledgeBase` использует canonical `qa_payloads` +
+  `inverted_token_to_unit` / `field_to_postings` projections; старый
+  `qa_knowledge` inventory из §5.3 не открывается в canonical profile.
+- `MdbxGraphStore` использует `graph_edges_by_src` и `graph_edges_by_dst` как
+  две явные physical orientations; traversal policy остаётся downstream.
+- `MdbxTemporalIndex` использует `temporal_event_index` /
+  `temporal_unit_index` для range queries; event payload semantics остаются
+  downstream.
 
 Все интеграционные тесты должны проходить в C++11 и C++17 режимах.
 
@@ -858,12 +915,12 @@ orientation, steady-state count, migration peak, and sync support status.
 
 Contract tests для будущей adoption-ветки:
 
-1. **Support matrix lock.** Тест фиксирует матрицу §1.6.4: `KeyValueTable`, `KeyTable`, `ValueTable`, `SequenceTable` и indirect `VectorStore` проходят round-trip. Отсутствие upstream round-trip support для `KeyMultiValueTable`, `AnyValueTable` и `HashedKeyValueStore` проверяется через application profile validator, а не через предположение о generic runtime `UnsupportedTableType` в `mdbx-containers`.
+1. **Support matrix lock.** Тест фиксирует матрицу §1.5.4: `KeyValueTable`, `KeyTable`, `ValueTable`, `SequenceTable` и indirect `VectorStore` проходят round-trip. Отсутствие upstream round-trip support для `KeyMultiValueTable`, `AnyValueTable` и `HashedKeyValueStore` проверяется через application profile validator, а не через предположение о generic runtime `UnsupportedTableType` в `mdbx-containers`.
 2. **Application schema identity guard.** Два peers с разными `profile_signature` / `migration_phase` не передают user DBI batches в upstream `SyncEngine`. Проверка должна доказывать, что application-level отказ возникает до записи в `knowledge_units`, `unit_projections` или `embedding_*`.
 3. **Partial coverage guard.** Fixture с KV-derived таблицей и DUPSORT-derived inverted index не должен объявляться fully synced profile: успешный KV round-trip не маскирует отсутствие `KeyMultiValueTable` coverage. Этот guard принадлежит `agent-memory-cpp` profile validator-у.
 4. **DirectSyncPeer / SyncEngine contract.** Для `DirectSyncPeer` и `SyncEngine` отдельно проверяются pull/push, `ApplyResult::{Applied,Skipped,Conflict}`, conflict diagnostic и idempotent replay (`Skipped`).
 5. **SyncWorker over DirectSyncPeer contract.** Для `SyncWorker` поверх `DirectSyncPeer` отдельно проверяются round failure, переход в `Backoff`, retry и возврат в `Idle` после успешного round-а.
-6. **System DBI budget.** Для зафиксированного upstream snapshot `d4d219c` проверяется, что 5 системных DBI из §1.6.10 учитываются в `max_dbs` budget и отражены в diagnostics. При обновлении pinned upstream snapshot ожидание пересматривается по system-DBI manifest.
+6. **System DBI budget.** Для зафиксированного upstream snapshot `d4d219c` проверяется, что 5 системных DBI из §1.5.10 учитываются в `max_dbs` budget и отражены в diagnostics. При обновлении pinned upstream snapshot ожидание пересматривается по system-DBI manifest.
 
 Текущий TZ не требует создавать эти тесты до формальной adoption. Их назначение — зафиксировать future acceptance criteria, чтобы sync v0.1 не был случайно включён как «почти готовый» distributed mode.
 
@@ -877,7 +934,7 @@ Contract tests для будущей adoption-ветки:
 
 - `reverse_index_demo.cpp` — secondary index pattern для inverted token → chunk_id.
 - `range_index_demo.cpp` — temporal range query + binary bucket neighbor expansion.
-- `type_discriminated_demo.cpp` — knowledge unit с Chunk + QAPair + Fact в одной таблице.
+- `type_discriminated_demo.cpp` — heterogeneous component payloads в одной таблице, без использования как canonical `KnowledgeUnit` store.
 - `multi_table_transaction_demo.cpp` — atomic write primary + secondary.
 - `composite_key_demo.cpp` — BM25F field posting с `(token_id, field_id)`.
 
@@ -951,7 +1008,7 @@ Opt-in sync metrics применяются только в сборках с `MD
 
 6. **`max_dbs` увеличение.** Текущее значение 16 недостаточно для всех таблиц секции 5. План: 64 (16 существующих + 48 новых). Verify, что MDBX env flags поддерживают это без `MDBX_NOTLS` reconfiguration.
 
-7. **Sync subsystem adoption** (см. §1.6 и §5.6). Принимать ли upstream `sync` v0.1, отложить adoption полностью, или форкать custom решение?
+7. **Sync subsystem adoption** (см. §1.5 и §5.6). Принимать ли upstream `sync` v0.1, отложить adoption полностью, или форкать custom решение?
 
    **Контекст.** v0.1 покрывает только KV-derived table types (`KeyValueTable`, `KeyTable`, `ValueTable`, `SequenceTable`, `VectorStore` indirect). Это **исключает** наши критические paths: lexical inverted index через `inverted_token_to_unit` (`KeyMultiValueTable` underlying) и `unit_components` storage (`AnyValueTable` underlying через `TypeDiscriminatedTable`). Тот же gap покрывает BM25 postings, scope-aware secondary indexes (`field_to_postings`, `metadata_filters`, `graph_edges_by_*`, `speaker_to_units`, `session_to_units`, `usage_stats_index`), а также все DUPSORT-производные пути из §5.3.
 
@@ -963,18 +1020,18 @@ Opt-in sync metrics применяются только в сборках с `MD
 
    Дополнительные соображения:
 
-   - **Budget impact.** Активация sync v0.1 добавляет 5 системных DBIs (`_mdbxc_meta`, `_mdbxc_changelog`, `_mdbxc_origins`, `_mdbxc_applied`, `_mdbxc_identity_index`, см. §1.6.10) в `max_dbs` budget. Текущий план — 64 (см. §5.5.1). При текущем manifest-е это укладывается в peak 51 DBI с sync + migration reserve. Любая новая capability обязана обновить §5.5.1 до adoption.
+   - **Budget impact.** Активация sync v0.1 добавляет 5 системных DBIs (`_mdbxc_meta`, `_mdbxc_changelog`, `_mdbxc_origins`, `_mdbxc_applied`, `_mdbxc_identity_index`, см. §1.5.10) в `max_dbs` budget. Текущий план — 64 (см. §5.5.1). При текущем canonical manifest-е это укладывается в peak 39 DBI с legacy document adapter + sync + migration reserve. Любая новая capability обязана обновить §5.5.1 до adoption.
    - **`IdentityIndexStore` write path deferred upstream.** Не все identity-mapping writes покрыты в v0.1; конкретные edges помечены в upstream `SyncEngine.hpp` TODO-комментариями. Это влияет на dedup state, но не блокирует базовый pull/push.
    - **HTTP/WebSocket transport seams.** GitHub PR #104 и #105 уже merged в upstream main snapshot `d4d219c`: `TransportMessageCodec` и framework-neutral HTTP seam входят в v0.1; WebSocket seam также присутствует в текущем `DESIGN.md`. Это снимает прежний blocker «нет HTTP seam», но не превращает sync v0.1 в готовый distributed profile для `agent-memory-cpp`: concrete production socket transport остаётся adapter-local responsibility, а table coverage gaps ниже важнее для M0/M1/M2.
-   - **Wire-format byte cost.** 5 sync DBIs суммарно хранят metadata/changelog/origins/applied/identity. Полная on-disk cost-модель (включая compression overhead) — отдельная задача, не решается в этом TZ; ссылка на общий принцип raw-code vs end-to-end storage footprint — §1.6.10 note.
+   - **Wire-format byte cost.** 5 sync DBIs суммарно хранят metadata/changelog/origins/applied/identity. Полная on-disk cost-модель (включая compression overhead) — отдельная задача, не решается в этом TZ; ссылка на общий принцип raw-code vs end-to-end storage footprint — §1.5.10 note.
 
    **Decision deadline** привязан к двум внешним триггерам и одному readiness-check:
 
    - (a) **Upstream v0.2** ship-ит `KeyMultiValueTable` wire format. Без этого блокируется lexical inverted index sync; см. §5.6.2.
-   - (b) **agent-memory-cpp** достигает multi-host scope routing (см. `guides/memory-stacks-roadmap.md` §13.2 строка 1006 «Distributed scope routing» и §13.3 строка 1028 «Distributed scope routing (multi-process / multi-host scope namespaces)»). До этого момента single-host остаётся правилом M0/M1/M2.
+   - (b) **agent-memory-cpp** достигает multi-host scope routing (см. `guides/memory-stacks-roadmap.md` §13.2 / §13.3, headings `Distributed scope routing`). До этого момента single-host остаётся правилом M0/M1/M2.
    - (c) **Transport readiness-check** для выбранного deployment-а: подтвердить, что framework-neutral HTTP/WebSocket seam из upstream достаточно закрывает нужный transport boundary, или добавить adapter-local bridge / concrete binding вне core library.
 
-   **Recommendation.** **DEFER** formal adoption sync v0.1 как минимум до выполнения **(a) + (b)** и прохождения readiness-check **(c)**. До этих условий: sync subsystem не активируется, текущий TZ остаётся informational (§1.6, §5.6.1), а future revision этого документа будет обязана пересмотреть §11.7 при срабатывании любого из (a)/(b) или при выборе concrete multi-host deployment-а. v0.1 **не блокирует** M0/M1/M2 deliverables; это явное исключение из «everything upstream-goes» policy-и данного TZ.
+   **Recommendation.** **DEFER** formal adoption sync v0.1 как минимум до выполнения **(a) + (b)** и прохождения readiness-check **(c)**. До этих условий: sync subsystem не активируется, текущий TZ остаётся informational (§1.5, §5.6.1), а future revision этого документа будет обязана пересмотреть §11.7 при срабатывании любого из (a)/(b) или при выборе concrete multi-host deployment-а. v0.1 **не блокирует** M0/M1/M2 deliverables; это явное исключение из «everything upstream-goes» policy-и данного TZ.
 
 ## 12. Дополнительные API decisions (из обзора roadmap-документов)
 
@@ -1031,70 +1088,35 @@ requirements are limited to storing opaque usage counters/timestamps, updating
 them transactionally, and allowing deterministic reads of the indexes that
 `agent-memory-cpp` uses to compute decay-aware scores.
 
-### 12.5 TaskQueue / JobStore для async jobs
+### 12.5 Runtime job storage recipe (out of upstream scope)
 
-Требование: предоставить generic `TaskQueue` (он же `JobStore`) для persistent
-очереди задач с retry-семантикой только после появления второго реального
-consumer-а. Payload, job type и retry policy остаются application-owned.
-Цель — не навязать `agent-memory-cpp` workflow, а избежать повторной ручной
-реализации одной и той же transactional queue поверх `KeyValueTable`.
+Runtime worker lifecycle не входит в upstream scope. `mdbx-containers` не
+получает `TaskQueue`, `JobStatus`, retry/backoff/failure state machine,
+worker leases или cancellation API как требование этого TZ.
 
-```cpp
-namespace mdbx_containers {
+Storage recipe, который `agent-memory-cpp` может реализовать поверх generic
+таблиц:
 
-enum class JobStatus { Pending, Running, Done, Failed, Dead };
+```text
+jobs_by_id:
+  KeyValueTable<JobId, OpaqueJobRecord>
 
-struct Job {
-    JobId id;
-    std::string type;          ///< free-form job type discriminator
-    std::string payload_json;  ///< opaque payload (JSON-encoded)
-    JobStatus status;
-    std::int64_t created_at_ms;
-    std::int64_t run_after_ms; ///< earliest claim time
-    std::uint32_t attempts;
-    std::string last_error;
-    std::optional<std::string> worker_id; ///< set while status == Running
-};
-
-class TaskQueue {
-public:
-    /// @brief Append a new job to the queue.
-    void enqueue(Job job, const Transaction& txn);
-
-    /// @brief Atomically claim the next runnable job for @c worker_id.
-    /// @return std::nullopt if no job is currently runnable.
-    std::optional<Job> claim_next(const std::string& worker_id,
-                                  std::int64_t now_ms,
-                                  const Transaction& txn);
-
-    /// @brief Mark a previously claimed job as successfully done.
-    void mark_done(JobId id, const Transaction& txn);
-
-    /// @brief Mark a job as failed. Increments @c attempts; if
-    ///        @c retry_after_ms is set, status returns to Pending
-    ///        with updated @c run_after_ms, otherwise transitions to Dead.
-    void mark_failed(JobId id, const std::string& error,
-                     std::optional<std::int64_t> retry_after_ms,
-                     const Transaction& txn);
-};
-
-} // namespace mdbx_containers
+jobs_runnable:
+  ReverseIndexTable<CompositeKey<StatusTag, RunAfterMs, JobId>, JobId>
 ```
 
-Контрактные требования:
+Atomic claim pattern:
 
-- **Атомарность `claim_next`.** Выбор job-а и обновление `status = Running` с записью `worker_id` выполняется в одной write-транзакции. Два параллельных вызова получают разные job-ы (или оба получают `nullopt` при пустой очереди).
-- **Runnability.** Job считается доступным для claim, если `status == Pending` и `run_after_ms <= now_ms`.
-- **Retry policy.** `mark_failed` с заданным `retry_after_ms` возвращает job в `Pending` с обновлённым `run_after_ms`; `nullopt` — финальный fail (`status = Dead`).
-- **`max_attempts` опционально.** На уровне API не задаётся жёсткий лимит попыток; при необходимости приложение само интерпретирует `attempts` и решает, переводить ли job в `Dead` явно.
-- **Файл.** Реализация размещается в `include/mdbx_containers/TaskQueue.hpp`.
-- **C++11 baseline.** `std::optional` и structured bindings guarded через `MDBXC_HAS_CPP17`.
+1. в write transaction найти первый runnable key;
+2. перечитать `jobs_by_id[JobId]`;
+3. application-level predicate проверяет, что job всё ещё runnable;
+4. обновить primary opaque record;
+5. удалить старую runnable index entry и, если нужно, добавить новую;
+6. commit/rollback выполняет обычный `MultiTableWriter`.
 
-Use case (опционально для `agent-memory-cpp`): retry-able background jobs,
-например re-parse документа или embedding extraction после добавления
-документа. На первых итерациях допускается реализация на уровне приложения;
-upstream module нужен только если появится повторное использование за пределами
-одного consumer-а.
+Possible upstream `PersistentQueue` рассматривается только отдельным proposal
+после двух независимых не-agent-memory consumer-ов. До этого полный контракт
+`TaskQueue` принадлежит `guides/runtime-services-roadmap.md`.
 
 ### 12.6 Готовые наборы сигнатур для наших generic-примитивов
 
@@ -1103,32 +1125,10 @@ upstream module нужен только если появится повторн
 #### 12.6.1 `ReverseIndexTable`
 
 ```cpp
-/// @brief References keyed by the forward orientation.
-/// @return Vector of (inverted_key, primary) pairs where @c node_id
-///         appears as the forward key.
-std::vector<std::pair<InvertedKey, PrimaryKey>>
-references_from(const PrimaryKey& node_id, const Transaction& txn) const;
-
-/// @brief References keyed by the reverse orientation.
-std::vector<std::pair<InvertedKey, PrimaryKey>>
-references_to(const PrimaryKey& node_id, const Transaction& txn) const;
-
-/// @brief Related primary keys reachable through a logical relation type,
-///        where the type is encoded into @c InvertedKey.
-std::vector<PrimaryKey>
-related(const PrimaryKey& node_id, const InvertedKey& relation_type,
-        const Transaction& txn) const;
-
 /// @brief Cardinality of postings for an inverted key.
 ///        Equivalent to find(inv, txn).size() but possibly cheaper.
 std::size_t count_by_inverted(const InvertedKey& inv,
                               const Transaction& txn) const;
-
-/// @brief Bulk-remove all references to @c primary_ref. Returns
-///        the number of (inverted_key, primary) pairs removed.
-///        Already specified in 3.2; verify presence in upstream.
-std::size_t remove_all_for(const PrimaryKey& primary_ref,
-                           const Transaction& txn);
 ```
 
 #### 12.6.2 `RangeIndexTable`
@@ -1200,26 +1200,24 @@ void MdbxGraphIndex::add_edge(const GraphEdge& edge,
 belong to `agent-memory-cpp`; `MultiTableWriter` only guarantees that both
 physical orientations commit or roll back together.
 
-#### 12.7.3 `TaskQueue` для async embedding extraction
+#### 12.7.3 Runtime job storage recipe
 
 ```cpp
-// EmbeddingExtractionWorker.cpp
-void EmbeddingExtractionWorker::tick(std::int64_t now_ms,
-                                      const Transaction& txn) {
-    auto job = task_queue_.claim_next(worker_id_, now_ms, txn);
-    if (!job) return;
-
-    try {
-        extract_and_store(job->payload_json, txn);
-        task_queue_.mark_done(job->id, txn);
-    } catch (const std::exception& e) {
-        task_queue_.mark_failed(job->id, e.what(),
-                                /*retry_after_ms=*/60'000, txn);
-    }
+// RuntimeQueueStorage.cpp (adapter-local pseudo-code)
+void RuntimeQueueStorage::move_job_index(const JobIndexKey& old_key,
+                                         const JobIndexKey& new_key,
+                                         JobId id,
+                                         const OpaqueJobRecord& record,
+                                         const Transaction& txn) {
+    writer_.put(jobs_by_id_, id, record, txn);
+    writer_.remove(jobs_runnable_, old_key, id, txn);
+    writer_.put(jobs_runnable_, new_key, id, txn);
 }
 ```
 
-Использует API 12.5; сценарий помечен как опциональный для `agent-memory-cpp` и активируется при появлении второго реального потребителя job-очереди.
+`RuntimeQueueStorage` является adapter-local `agent-memory-cpp` abstraction.
+`mdbx-containers` предоставляет только `KeyValueTable`, `ReverseIndexTable` и
+atomic transaction mechanics из §12.5.
 
 ### 12.8 Downstream addressable compression pattern (informational)
 
@@ -1258,6 +1256,20 @@ storage properties, не интерпретируя application payload:
 
 ```cpp
 template <class Source, class Target, class Tag, class Payload>
+struct OutgoingRelation {
+    Target target;
+    Tag tag;
+    Payload payload;
+};
+
+template <class Source, class Target, class Tag, class Payload>
+struct IncomingRelation {
+    Source source;
+    Tag tag;
+    Payload payload;
+};
+
+template <class Source, class Target, class Tag, class Payload>
 class BidirectionalRelationIndex {
 public:
     void add(const Source& source,
@@ -1266,13 +1278,15 @@ public:
              const Payload& payload,
              const Transaction& txn);
 
-    std::vector<Payload> outgoing(const Source& source,
-                                  const Tag& tag,
-                                  const Transaction& txn) const;
+    std::vector<OutgoingRelation<Source, Target, Tag, Payload>>
+    outgoing(const Source& source,
+             const std::optional<Tag>& tag,
+             const Transaction& txn) const;
 
-    std::vector<Payload> incoming(const Target& target,
-                                  const Tag& tag,
-                                  const Transaction& txn) const;
+    std::vector<IncomingRelation<Source, Target, Tag, Payload>>
+    incoming(const Target& target,
+             const std::optional<Tag>& tag,
+             const Transaction& txn) const;
 
     std::size_t remove_all_for_source(const Source& source,
                                       const Transaction& txn);
@@ -1288,6 +1302,8 @@ Acceptance для такого helper-а storage-only:
 - traversal order детерминирован;
 - delete не оставляет dangling reverse entries;
 - key/value encoding bounded и documented;
+- `std::optional<Tag>` заменяется на project-local optional compatibility type
+  в C++11 build-ах;
 - payload/tag не интерпретируются upstream.
 
 #### 12.8.2 Informational downstream validation
@@ -1302,20 +1318,63 @@ Upstream acceptance criteria stay limited to CRUD correctness, deterministic
 ordering, transactional consistency, bounded encoding, cleanup behavior for
 paired indexes, and report-only generic microbenchmarks.
 
+### 12.9 Large values and raw document bodies
+
+MDBX может хранить raw documents внутри env. Запрет относится только к
+secondary/reverse indexes и descriptor/ref tables: туда нельзя класть большие
+inline bodies, потому что это раздувает B-tree, дублирует payload и ухудшает
+cache locality/write amplification.
+
+Downstream decision для `agent-memory-cpp`:
+
+- raw documents/tool logs могут храниться в MDBX через primary
+  `ResourceBodyStore`;
+- `ResourceBodyStore` владеет `ResourceId`, `SourceRef`, codec/version prefix
+  вроде `agent_memory.resource_body.v1`, max encoded descriptor size,
+  compression/checksum/encryption policy и cleanup;
+- reverse indexes хранят только ids, compact postings или compact relation
+  payloads, но не body bytes.
+
+`KeyValueTable<ResourceId, bytes>` достаточно, если body immutable, читается
+целиком и profile задаёт небольшой maximum encoded value size. Candidate
+generic upstream primitive `LargeValueStore` / `ChunkedBlobStore` нужен только
+если есть хотя бы одно из требований:
+
+- partial reads или range reads без загрузки всего body;
+- chunk-level checksum/compression и repair;
+- bounded chunk size для больших documents/tool logs;
+- append/replace chunk без перезаписи всего value;
+- orphan chunk cleanup и manifest/body consistency checks;
+- repeated use outside `agent-memory-cpp`.
+
+В текущий canonical budget §5.5.1 raw body DBI не входит. Если профиль включает
+MDBX-backed `ResourceBodyStore`, он обязан добавить явный profile delta:
+
+```text
+resource_bodies        +1  // simple KV body store
+или
+resource_body_manifest +1
+resource_body_chunks   +1  // chunked body store
+```
+
+После появления двух независимых не-agent-memory consumer-ов можно оформить
+отдельный upstream proposal для generic `LargeValueStore<BlobId>` /
+`ChunkedBlobStore<BlobId>`. До этого это application-owned adapter pattern.
+
 ## 13. Перекрёстные ссылки (потребители в agent-memory-cpp)
 
-Этот раздел фиксирует downstream-потребителей TZ: какие roadmap-документы и компоненты `agent-memory-cpp` будут использовать конкретные DBIs из секции 5.5 и API из секции 12.
+Этот раздел фиксирует downstream-потребителей TZ: какие roadmap-документы и компоненты `agent-memory-cpp` будут использовать конкретные DBIs из секции 5.5 и storage decisions/patterns из секции 12.
 
 - [`guides/optimization-roadmap.md`](optimization-roadmap.md) §"Dense Index Modes (Backend Selection)" (mode/encoder/quality targets), §"HNSW Vector Index" — потребители `embedding_vectors` и `embedding_meta` DBI; `HammingTopK` kernel использует `hamming_neighbors_uint64` и popcount-хелперы из `detail/utils.hpp`.
 - [`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md) §5 — потребители `KnowledgeUnitStore` (использует `knowledge_units` + `unit_components` + `unit_projections`), `ComponentStore` (`unit_components` через `TypeDiscriminatedTable`), `FactStore`/`QAKnowledgeBase`/`GraphStore` (соответствующие per-kind payload DBI).
 - [`guides/lexical-search-roadmap.md`](lexical-search-roadmap.md) §"BM25 baseline" — потребитель `lexical_index_*` DBI (`inverted_token_to_unit`, `field_to_postings`); `MultiTableWriter` обеспечивает атомарность write primary + secondary indexes.
-- [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md) §"PromptCache" / §"AsyncIndexer" / §"WriteGate" — потребитель `context_cache_*` DBI (M2+ persistence для `IResponseCache`), `TaskQueue` (TZ §12.5) для `IAsyncIndexer`.
-- [`guides/compaction-roadmap.md`](compaction-roadmap.md) §"CompactionWorker" — потребитель `MultiTableWriter` (атомарный compaction), `usage_stats_index` (для `DecayJob`), `embedding_meta` (для `EmbeddingRecomputeJob`), `TaskQueue` (TZ §12.5) для job lifecycle.
+- [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md) §"PromptCache" / §"AsyncIndexer" / §"WriteGate" — владелец runtime queue abstraction; при MDBX persistence использует storage recipe §12.5.
+- [`guides/compaction-roadmap.md`](compaction-roadmap.md) §"CompactionWorker" — потребитель `MultiTableWriter` (атомарный compaction), `usage_stats_index` (для `DecayJob`), `embedding_meta` (для `EmbeddingRecomputeJob`) и downstream runtime queue из `runtime-services-roadmap.md`.
 - [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md) §3 — владелец canonical `SourceRef` / `ResourceId` provenance contract; future compact-projection traceability should reuse `graph_edges_by_src` / `graph_edges_by_dst` and application-owned payloads instead of adding domain-specific `mdbx_containers` APIs.
 - [`guides/experiments/2026-07-23-tencentdb-agent-memory-reference.md`](experiments/2026-07-23-tencentdb-agent-memory-reference.md) — TencentDB Agent Memory reference review that motivated the downstream addressable-compression pattern in §12.8.
 - [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §"Layer 1 (Storage Primitives)" — основной downstream-потребитель: все секции 5.5 DBIs становятся частью capability-aware MDBX-схемы компонентной архитектуры.
 
-## Перекрёстные ссылки
+## 14. Reference documents
 
 - `external/mdbx-containers/PHILOSOPHY.md` — death-of-the-author, header-only
 - `external/mdbx-containers/AGENTS.md` — coding agent workflow, critical defaults
