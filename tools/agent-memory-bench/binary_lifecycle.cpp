@@ -377,7 +377,6 @@ namespace {
         const auto start = Clock::now();
         for(const auto& query : queries) {
             auto results = index.search(query);
-            result_count += results.size();
             query_results.push_back(std::move(results));
         }
         const auto total_ms = elapsed_ms(start, Clock::now());
@@ -385,6 +384,7 @@ namespace {
         std::vector<std::unordered_set<std::string>> sets;
         sets.reserve(query_results.size());
         for(const auto& results : query_results) {
+            result_count += results.size();
             std::unordered_set<std::string> set;
             for(const auto& result : results) {
                 set.insert(result.chunk_id.value());

@@ -29,8 +29,9 @@ Expected result:
 - It should guarantee that future reports contain build/query/mutation/rebuild,
   payload, backend, and candidate-coverage fields.
 - Query timings measure the prepared-query search loop. Query-object
-  construction, exact top-k set materializing, multi-probe diagnostics, and
-  candidate-coverage calculation are intentionally outside the timed region.
+  construction, exact top-k set materializing, explicit multi-probe diagnostic
+  collection and aggregation, and candidate-coverage calculation are
+  intentionally outside the timed region.
 - Lifecycle checks should prove that erase/upsert/clear/rebuild return the index
   to the expected size and candidate coverage, not merely that the operations
   completed with non-negative timings.
@@ -41,9 +42,9 @@ Actual single smoke run:
 
 | Index | Build ms | Query mean ms | Exact top-10 coverage | Erase ms | Upsert ms | Rebuild ms | Payload bytes |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| ExactVectorIndex | 1.099 | 0.513 | 1.000 oracle | n/a | n/a | n/a | 65,536 |
-| FlatBinarySignatureIndex | 1.900 | 0.049 | 0.414 | 0.086 | 0.129 | 14.676 | 4,096 |
-| MultiProbeHammingIndex | 4.330 | 0.059 | 0.381 | 0.336 | 0.209 | 4.034 | 4,096 |
+| ExactVectorIndex | 0.708 | 0.093 | 1.000 oracle | n/a | n/a | n/a | 65,536 |
+| FlatBinarySignatureIndex | 1.204 | 0.028 | 0.414 | 0.050 | 0.068 | 1.074 | 4,096 |
+| MultiProbeHammingIndex | 2.477 | 0.036 | 0.381 | 0.160 | 0.117 | 2.529 | 4,096 |
 
 Multi-probe diagnostics:
 
