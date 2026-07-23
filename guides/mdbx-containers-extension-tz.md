@@ -26,12 +26,16 @@
 4. **QA Knowledge Base** — `QAPair` с полями `valid`, `last_verified`, `priority`, `freq`, `supersedes`. Inverted index по `question` tokens.
 5. **Temporal index** — range queries по timestamp (`valid_from`, `valid_until`, `recorded_at`) с inclusive/exclusive bounds.
 6. **Metadata filters** — поддержка `(metadata_key, metadata_value) -> ResourceId` reverse index для pre-filter.
-7. **ContextBuilder** — multi-table write в одной транзакции (primary + secondary indexes атомарно).
-8. **Retrieval composition** — multi-retriever + RRF + cross-encoder rerank slot.
-9. **Addressable Compression / Progressive Disclosure** — хранение
-   compact projections, derivation links и drill-down refs, чтобы верхние
-   слои памяти могли оставаться маленькими, но детерминированно
-   раскрывались до raw evidence.
+7. **Atomic multi-table writes** — primary + secondary indexes обновляются в
+   одной транзакции; `ContextBuilder` является downstream consumer-ом, а не
+   upstream storage primitive.
+8. **Composable secondary-index reads** — generic primitives для lookup,
+   range-scan и typed relation traversal. RRF, cross-encoder rerank и
+   retrieval orchestration остаются Layer 2 behavior-ом `agent-memory-cpp`.
+9. **Application-owned traceability support** — generic opaque payload storage
+   и bidirectional relation patterns, достаточные для downstream
+   Addressable Compression / Progressive Disclosure без переноса доменных
+   enum-ов памяти агента в `mdbx-containers`.
 
 ### Non-goals
 
@@ -610,7 +614,6 @@ fact_payloads                         KeyValueTable<UnitId, FactPayload>        
 conversation_episode_payloads         KeyValueTable<UnitId, ConversationEpisodePayload> // capability ConversationMemory
 compiled_article_payloads             KeyValueTable<UnitId, CompiledArticlePayload>     // capability CompiledArticles
 chunk_payloads                        KeyValueTable<UnitId, ChunkPayload>                // для kind == Chunk
-artifact_refs                         KeyValueTable<ArtifactId, ArtifactRefPayload>      // raw/offloaded payload refs
 
 // Layer C — search projections (multi-version)
 unit_projections                      KeyValueTable<CompositeKey<ScopeId, UnitId, ProjectionKind, uint64_revision>,
@@ -636,10 +639,6 @@ temporal_unit_index                   RangeIndexTable<uint64_timestamp, UnitId> 
 speaker_to_units                      ReverseIndexTable<CompositeKey<ScopeId, SpeakerId>, UnitId>
 session_to_units                      ReverseIndexTable<CompositeKey<ScopeId, SessionId>, UnitId>
 usage_stats_index                     ReverseIndexTable<CompositeKey<ScopeId, UnitId>, UsageStatsComponent>
-derivation_edges                      ReverseIndexTable<CompositeKey<ScopeId, FromUnitId, DerivationKind>, DerivationEdgePayload>
-evidence_edges                        ReverseIndexTable<CompositeKey<ScopeId, ClaimUnitId, EvidenceKind>, EvidenceRefPayload>
-drilldown_refs                        ReverseIndexTable<CompositeKey<ScopeId, ProjectionId, DrillDownKind>, UnitId>
-artifact_to_units                     ReverseIndexTable<CompositeKey<ScopeId, ArtifactId>, UnitId>
 
 // Schema metadata
 schema_info                           KeyValueTable<string, SchemaInfo>                  // envelope_version, component_versions[], profile_signature
@@ -659,7 +658,6 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 | `conversation_episode_payloads` | по capability `ConversationMemory` | `agent_memory.episode.v1` | TBD | Per-kind payload для `ConversationEpisode` units |
 | `compiled_article_payloads` | по capability `CompiledArticles` | `agent_memory.compiled_article.v1` | TBD | Per-kind payload для `CompiledArticle` units |
 | `chunk_payloads` | по capability `ChunkedContent` | `agent_memory.chunk.v1` | TBD | Per-kind payload для `Chunk` units |
-| `artifact_refs` | по capability `AddressableCompression` | `agent_memory.artifact_ref.v1` | TBD | Ссылки на offloaded/raw payloads (tool logs, source files, trace blobs) |
 | `unit_projections` | да (Layer C projections) | `agent_memory.projection.v1` | TBD | Multi-version `(scope, unit, ProjectionKind, revision)` projections |
 | `embedding_meta` | по capability `DenseVectors` | `agent_memory.embedding_meta.v1` | TBD | Версионированная мета (model_id, version, dim, encoder_id) |
 | `embedding_vectors` | по capability `DenseVectors` | `agent_memory.embedding_vector.v1` | TBD | Vector blob по `(scope, model_id, ProjectionKind, unit_id)` |
@@ -673,10 +671,6 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 | `speaker_to_units` | по capability `SpeakerAttribution` | `agent_memory.speaker.v1` | TBD | Reverse index `(scope, speaker_id) -> UnitId` |
 | `session_to_units` | по capability `SpeakerAttribution` | `agent_memory.session.v1` | TBD | Reverse index `(scope, session_id) -> UnitId` |
 | `usage_stats_index` | по capability `UsageTracking` | `agent_memory.usage_stats.v1` | TBD | Reverse index `(scope, unit_id) -> UsageStatsComponent` |
-| `derivation_edges` | по capability `AddressableCompression` | `agent_memory.derivation_edge.v1` | TBD | Reverse index для `derived_from`, `supports`, `contradicts`, `supersedes` |
-| `evidence_edges` | по capability `AddressableCompression` | `agent_memory.evidence_edge.v1` | TBD | Claim/profile/scenario -> source evidence refs |
-| `drilldown_refs` | по capability `AddressableCompression` | `agent_memory.drilldown_ref.v1` | TBD | Projection/node -> UnitId refs для lazy detail expansion |
-| `artifact_to_units` | по capability `AddressableCompression` | `agent_memory.artifact_ref.v1` | TBD | Artifact/raw payload -> derived UnitId refs |
 | `schema_info` | да (schema metadata) | `agent_memory.schema.v1` | TBD | Envelope_version, component_versions[], profile_signature |
 
 Владелец каждой DBI будет зафиксирован в соответствующем PR; на этапе TZ — TBD. Версия payload соответствует общему контракту `agent_memory.<concept>.v1`, см. `guides/memory-stacks-roadmap.md`, секция 12 и ADR-001.
@@ -687,13 +681,36 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 - `embedding_meta` хранит версионированную мета-информацию (model_id + version), чтобы CompactionWorker мог удалять versions старше N дней при отсутствии ссылок (см. roadmap, open issue 17.3).
 - `embedding_vectors` упорядочен по `(scope_id, model_id, ProjectionKind, UnitId)` для cluster-friendly чтения при exact scan; для ANN-расширений порядок может быть пересмотрен в `guides/optimization-roadmap.md`.
 - Все secondary indexes начинаются с `ScopeId` (ADR-012); profile validation в `MemoryStack::open()` проверяет обязательность `scope_id` для каждого write (см. roadmap, секция 10).
-- `derivation_edges`, `evidence_edges`, `drilldown_refs` и `artifact_to_units`
-  вводят storage-основу для Progressive Disclosure / Addressable Compression:
-  compact projection или synthesized unit не считается полноценно
-  сохранённым, если у него нет детерминированного пути к raw source,
-  evidence unit или external artifact ref.
+- Derivation/evidence/drill-down semantics не получают отдельных DBI в
+  `mdbx-containers`. Downstream `agent-memory-cpp` должен кодировать такие
+  отношения через уже существующую пару `graph_edges_by_src` /
+  `graph_edges_by_dst` с application-owned `EdgeKind` и opaque payload. Это
+  сохраняет две физические ориентации relation index без скрытых DBI.
+- Raw source identity принадлежит canonical `SourceRef` / `ResourceId`
+  контракту `agent-memory-cpp` (см.
+  [`knowledge-units-roadmap.md`](knowledge-units-roadmap.md) §3). Если позже
+  потребуется artifact descriptor сверх `SourceRef`, он вводится как
+  application payload поверх `KeyValueTable`, а не как публичный тип
+  `mdbx_containers`.
 
 Все таблицы используют префикс payload versioning (`agent_memory.knowledge_unit.v1`, `agent_memory.qa.v1`, и т.п.), `Config::max_dbs` увеличивается с 16 до 64.
+
+#### 5.5.1 DBI budget checkpoint
+
+`Config::max_dbs = 64` является capacity ceiling, а не обещанием открыть 64
+named DBIs в каждом профиле. На момент этого TZ проверяемый peak budget:
+
+| Bucket | Steady DBIs | Migration peak | Sync status | Notes |
+|---|---:|---:|---|---|
+| Existing/general DBIs from §5.1-§5.4 | 16 | 16 | mixed | Historical baseline used by this TZ. |
+| Memory-stack DBIs from §5.5 | 22 | 22 | mixed | All capability-specific tables enabled; typical profiles open fewer. |
+| Optional sync system DBIs from §1.6.10 | 0 by default, +5 opt-in | +5 | opt-in only | Not used by M0/M1/M2 while §11.7 is DEFER. |
+| Migration / dual-write reserve | 0 | +8 | application-owned | Reserved for transitional tables during profile migrations. |
+| Planned peak under current assumptions | 38 without sync | 51 with sync + reserve | within ceiling | Leaves at least 13 DBI slots of headroom under `max_dbs = 64`. |
+
+Any future addition must update this table with capability, default-open
+status, underlying MDBX table type, number of physical DBI, paired reverse
+orientation, steady-state count, migration peak, and sync support status.
 
 ### 5.6. Sync subsystem mapping (informational)
 
@@ -779,10 +796,14 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 - `SequenceTable::reserve`, `append_if_absent`
 - `AnyValueTable::bulk_set_of_type<T>`
 
-**P4 (после появления первого consumer-а compact projections):**
-- `ArtifactRefTable` или thin wrapper над `KeyValueTable<ArtifactId, ArtifactRefPayload>`
-- `DerivationIndex` / `EvidenceIndex` helper поверх `ReverseIndexTable`
-- `DrillDownIndex` helper поверх `ReverseIndexTable`
+**P4 (после появления двух независимых consumer-ов relation helper):**
+- Никакие agent-memory-specific `ArtifactRefTable`, `DerivationIndex`,
+  `EvidenceIndex` или `DrillDownIndex` не добавляются в public API
+  `mdbx-containers`.
+- Если два и более независимых downstream consumer-а докажут повторную
+  применимость, можно вынести generic
+  `BidirectionalRelationIndex<Source, Target, Tag, Payload>` helper поверх
+  пары `ReverseIndexTable` orientations. `Tag` и `Payload` остаются opaque.
 
 ## 7. Backward compatibility
 
@@ -898,8 +919,8 @@ Contract tests для будущей adoption-ветки:
 | P3 | `KeyValueTable::snapshot` | memory overhead | `< 2×` raw storage size |
 | P3 | `SequenceTable::reserve` / `append_if_absent` | throughput per ID | `> 1M IDs/sec` |
 | P3 | `AnyValueTable::bulk_set_of_type<T>` | bulk write throughput | `> 0.5×` `KeyValueTable::add_many` |
-| P3 | `GraphStore::purge_expired` (TZ §12.2) | correctness (eviction policy) | `0` orphaned edges после purge на synthetic workload |
-| P3 | `EventStore::recent` (TZ §12.3) | ordering by `observed_at_ms` vs `occurred_at_ms` | `100%` correct order на shuffled fixture |
+| P3 | Paired relation cleanup pattern (TZ §12.2) | correctness | `0` dangling reverse entries после purge на synthetic workload |
+| P3 | `RangeIndexTable::recent` / tail pagination (TZ §12.3) | ordering by sortable key | `100%` correct order на shuffled fixture |
 
 Opt-in sync metrics применяются только в сборках с `MDBXC_SYNC_ENABLED=1` и не являются gate-ом для M0/M1/M2, пока §11.7 остаётся в состоянии **DEFER**:
 
@@ -942,7 +963,7 @@ Opt-in sync metrics применяются только в сборках с `MD
 
    Дополнительные соображения:
 
-   - **Budget impact.** Активация sync v0.1 добавляет 5 системных DBIs (`_mdbxc_meta`, `_mdbxc_changelog`, `_mdbxc_origins`, `_mdbxc_applied`, `_mdbxc_identity_index`, см. §1.6.10) в `max_dbs` budget. Текущий план — 64 (см. §5.5 замечание). Adoption потребует перерасчёта: либо bump до ~80+, либо группировка некоторых из текущих 23 DBIs секции 5.5 в `TypeDiscriminatedTable`-агрегаты.
+   - **Budget impact.** Активация sync v0.1 добавляет 5 системных DBIs (`_mdbxc_meta`, `_mdbxc_changelog`, `_mdbxc_origins`, `_mdbxc_applied`, `_mdbxc_identity_index`, см. §1.6.10) в `max_dbs` budget. Текущий план — 64 (см. §5.5.1). При текущем manifest-е это укладывается в peak 51 DBI с sync + migration reserve. Любая новая capability обязана обновить §5.5.1 до adoption.
    - **`IdentityIndexStore` write path deferred upstream.** Не все identity-mapping writes покрыты в v0.1; конкретные edges помечены в upstream `SyncEngine.hpp` TODO-комментариями. Это влияет на dedup state, но не блокирует базовый pull/push.
    - **HTTP/WebSocket transport seams.** GitHub PR #104 и #105 уже merged в upstream main snapshot `d4d219c`: `TransportMessageCodec` и framework-neutral HTTP seam входят в v0.1; WebSocket seam также присутствует в текущем `DESIGN.md`. Это снимает прежний blocker «нет HTTP seam», но не превращает sync v0.1 в готовый distributed profile для `agent-memory-cpp`: concrete production socket transport остаётся adapter-local responsibility, а table coverage gaps ниже важнее для M0/M1/M2.
    - **Wire-format byte cost.** 5 sync DBIs суммарно хранят metadata/changelog/origins/applied/identity. Полная on-disk cost-модель (включая compression overhead) — отдельная задача, не решается в этом TZ; ссылка на общий принцип raw-code vs end-to-end storage footprint — §1.6.10 note.
@@ -955,208 +976,68 @@ Opt-in sync metrics применяются только в сборках с `MD
 
    **Recommendation.** **DEFER** formal adoption sync v0.1 как минимум до выполнения **(a) + (b)** и прохождения readiness-check **(c)**. До этих условий: sync subsystem не активируется, текущий TZ остаётся informational (§1.6, §5.6.1), а future revision этого документа будет обязана пересмотреть §11.7 при срабатывании любого из (a)/(b) или при выборе concrete multi-host deployment-а. v0.1 **не блокирует** M0/M1/M2 deliverables; это явное исключение из «everything upstream-goes» policy-и данного TZ.
 
-## 12. Дополнительные требования к API (из обзора существующих roadmap-документов upstream)
+## 12. Дополнительные API decisions (из обзора roadmap-документов)
 
-Данный раздел фиксирует самостоятельный набор требований к публичному API `mdbx-containers`, выявленных при обзоре существующих roadmap-документов `external/mdbx-containers/` и смежных направлений `agent-memory-cpp`. Требования сформулированы как независимые и не привязаны к каким-либо внешним системам учёта.
+Данный раздел фиксирует дополнительные API decisions и boundary decisions,
+выявленные при обзоре существующих roadmap-документов
+`external/mdbx-containers/` и смежных направлений `agent-memory-cpp`. Если
+пункт помечен как out of upstream scope или informational, он не является
+требованием к публичному API `mdbx-containers`.
 
-### 12.1 HybridSearch helper (RRF)
+### 12.1 Retrieval fusion (out of upstream scope)
 
-Требование: предоставить free function для Reciprocal Rank Fusion (RRF) как часть публичного API `mdbx-containers`. Helper должен жить в отдельном header `include/mdbx_containers/HybridSearch.hpp` и не зависеть от внутренних деталей конкретных контейнеров.
+RRF, cross-encoder rerank и любые retrieval fusion algorithms остаются в
+`agent-memory-cpp` Layer 2. `mdbx-containers` не получает `HybridSearch.hpp`,
+`ScoredId` или `rrf_fuse` как public API. Для upstream storage library
+достаточно deterministic iteration order, pagination и bounded result encoding
+в generic table primitives.
 
-Сигнатура (ориентировочная):
+Downstream `agent-memory-cpp::HybridRetrievalEngine` может продолжать держать
+локальную RRF-реализацию и тестировать её в retrieval/eval harness-е.
 
-```cpp
-namespace mdbx_containers {
+### 12.2 Expiring relation storage pattern
 
-/// @brief Identifier with an associated retrieval score.
-struct ScoredId {
-    std::uint64_t id;
-    double score;
-};
+Soft-edge expiration является application policy. `mdbx-containers` не
+определяет `GraphStore`, `EdgeKind`, `NodeId` или семантику "expired edge".
+Generic requirements:
 
-/// @brief Reciprocal Rank Fusion of multiple ranked result lists.
-///
-/// Merges the input lists, deduplicating by @c id and summing
-/// reciprocal-rank contributions across lists. Output is sorted
-/// in descending order of the fused score; ties are broken
-/// deterministically by ascending @c id.
-///
-/// @param lists       Ranked result lists, each sorted by descending
-///                    relevance in the originating retriever.
-/// @param top_k       Maximum number of returned items.
-/// @param k_constant  RRF smoothing constant (default 60).
-/// @return Top-@c top_k ScoredId values, fused and deduplicated.
-std::vector<ScoredId> rrf_fuse(
-    const std::vector<std::vector<ScoredId>>& lists,
-    std::size_t top_k,
-    int k_constant = 60);
+- relation payload may contain an application-owned `expires_at_ms`;
+- application code decides whether `0`, missing value, or `null` means
+  non-expiring;
+- if fast purge is required, application may maintain a paired
+  `RangeIndexTable<ExpiresAt, RelationKey>` and remove both orientations in one
+  transaction;
+- `ReverseIndexTable::remove_all_for` and any future generic
+  bidirectional-relation helper must leave no dangling reverse entries.
 
-} // namespace mdbx_containers
-```
+### 12.3 Temporal and source-attributed records
 
-Контрактные требования:
+`Event`, `occurred_at_ms`, `observed_at_ms`, `source_id` and freshness ranking
+belong to `agent-memory-cpp` domain payloads. `mdbx-containers` only needs
+generic support for:
 
-- **Детерминизм.** При равном fused score порядок сортировки должен быть стабильным и определяться сравнением `id` (по возрастанию). Это критично для воспроизводимости retrieval traces и eval-датасетов.
-- **Merge дублей по `id`.** Если один и тот же `id` встречается в нескольких списках, его fused score вычисляется как сумма вкладов RRF: `sum_i 1.0 / (k_constant + rank_i(id))`. Значение `score` из входных `ScoredId` используется только как tie-breaker при прочих равных и **не** входит в формулу RRF напрямую.
-- **Top-k обрезка.** Возвращается не более `top_k` элементов; при `top_k == 0` возвращается пустой вектор.
-- **Header-only.** Реализация размещается в `include/mdbx_containers/HybridSearch.hpp` и не требует линковки с дополнительными translation units.
-- **C++11 baseline.** Использовать `MDBXC_HAS_CPP17` guard для `std::optional` в расширенных вариантах API (если такие появятся).
+- inclusive/exclusive bounds in `RangeIndexTable`;
+- deterministic `recent(n)` / tail pagination when implemented over a sortable
+  key;
+- optional application-maintained reverse indexes such as
+  `(scope_id, source_id) -> record_id`;
+- atomic multi-table writes for primary record + temporal/source indexes.
 
-Use case: `agent-memory-cpp::HybridRetrievalEngine` будет вызывать `rrf_fuse` для слияния результатов BM25-retriever, vector-retriever и (опционально) graph-retriever, заменяя локальную RRF-имплементацию в `agent-memory-cpp`.
+### 12.4 Decay policy (out of upstream scope)
 
-### 12.2 Soft-link expiration в GraphStore
-
-Требование: расширить `GraphStore` (или эквивалентный domain-модуль, описанный в upstream roadmap) поддержкой soft-edges с временем жизни. Edge-структура получает дополнительное опциональное поле `expires_at_ms`.
-
-```cpp
-namespace mdbx_containers {
-
-struct Edge {
-    NodeId from;
-    NodeId to;
-    EdgeKind kind;
-    EdgePayload payload;
-    std::int64_t created_at_ms;
-    std::optional<std::int64_t> expires_at_ms; ///< nullopt или 0 — нет expiration
-};
-
-class GraphStore {
-public:
-    /// @brief True, если edge истёк на момент @c now_ms.
-    bool is_expired(const Edge& edge, std::int64_t now_ms) const noexcept;
-
-    /// @brief Traversal должен пропускать edges, для которых
-    ///        is_expired(edge, traversal_now_ms) == true.
-    std::vector<Edge> out_edges(NodeId node, std::int64_t now_ms,
-                                const Transaction& txn) const;
-    std::vector<Edge> in_edges(NodeId node, std::int64_t now_ms,
-                               const Transaction& txn) const;
-
-    /// @brief Удалить все истёкшие edges, возвращает количество удалённых.
-    std::size_t purge_expired(std::int64_t now_ms, const Transaction& txn);
-};
-
-} // namespace mdbx_containers
-```
-
-Контрактные требования:
-
-- **Семантика expiration.** `expires_at_ms == nullopt` или `expires_at_ms == 0` трактуются как «нет expiration» (edge живёт вечно). Иначе `is_expired(edge, now_ms) == (now_ms >= edge.expires_at_ms)`.
-- **Traversal фильтрация.** Все методы обхода графа, принимающие `now_ms`, обязаны пропускать expired edges на уровне storage. Существующие API без `now_ms` сохраняют старое поведение (без фильтрации).
-- **Атомарность `purge_expired`.** Удаление выполняется в одной транзакции, идемпотентно.
-- **Payload-совместимость.** Расширение `Edge` — только аддитивное. Старые сериализованные payloads без поля `expires_at_ms` десериализуются как `nullopt`.
-
-Use case: knowledge graph с soft-edges вида `related_to`, временный `supersedes`, `co_mentioned_until` — для memory-агентов, где временные связи между сущностями автоматически истекают.
-
-### 12.3 Event `observed_at_ms` и `source_id`
-
-Требование: Event-структура обязана различать время, когда событие произошло в реальности, и время, когда система о нём узнала. Это два независимых timestamp-поля, плюс явная ссылка на источник.
-
-```cpp
-namespace mdbx_containers {
-
-struct Event {
-    EventId id;
-    EventPayload payload;
-
-    /// @brief When the event occurred in reality. 0 == unknown.
-    std::int64_t occurred_at_ms;
-
-    /// @brief When the system learned about the event
-    ///        (typically == indexing time).
-    std::int64_t observed_at_ms;
-
-    /// @brief Reference to the source that reported the event.
-    std::optional<SourceId> source_id;
-};
-
-class EventStore {
-public:
-    /// @brief Last N events ordered by @c observed_at_ms (default)
-    ///        or @c occurred_at_ms (when @c by_occurred == true).
-    std::vector<Event> recent(std::size_t n, bool by_occurred,
-                              const Transaction& txn) const;
-
-    /// @brief All events attributed to the given source.
-    std::vector<Event> by_source(SourceId source_id,
-                                 const Transaction& txn) const;
-
-    /// @brief Events with @c occurred_at_ms in [from_ms, to_ms].
-    ///        Bounds are inclusive on both sides.
-    std::vector<Event> range_time(std::int64_t from_ms, std::int64_t to_ms,
-                                  const Transaction& txn) const;
-};
-
-} // namespace mdbx_containers
-```
-
-Контрактные требования:
-
-- **Оба timestamp-поля обязательны.** При создании Event оба поля заполняются явно; `observed_at_ms == 0` допустим, но `occurred_at_ms == 0` имеет специальный смысл «unknown».
-- **`source_id` опционально.** Поле `std::optional<SourceId>`, отсутствие значения допустимо (событие без явного источника).
-- **`recent` упорядочивание.** По умолчанию `by_occurred == false` — последние N по `observed_at_ms` (что соответствует «свежести для пользователя»). При `by_occurred == true` — последние N по `occurred_at_ms` (для temporal queries).
-- **Inclusive bounds в `range_time`.** Оба конца диапазона включительно; семантика совпадает с `RangeIndexTable::range` при `exclusive_left == false` и `exclusive_right == false`.
-- **Payload-совместимость.** Расширение `Event` — только аддитивное; старые payloads без `source_id` десериализуются как `nullopt`.
-
-Use case: новостной RAG-pipeline вида `Article → Event → Entity`, где статья опубликована сегодня, но описывает событие, произошедшее вчера. Поле `source_id` ссылается на `ResourceId` исходной статьи, `occurred_at_ms` используется для temporal joins, `observed_at_ms` — для freshness ranking.
-
-### 12.4 Decay-механика в MemoryStore
-
-Требование: расширить `MemoryStore` (или эквивалентный domain-модуль для long-term facts) полями decay-механики. Цель — поддержать relevance-decay на основе давности и частоты использования.
-
-```cpp
-namespace mdbx_containers {
-
-struct Fact {
-    FactId id;
-    FactPayload payload;
-    EntityId entity_id;
-
-    /// @brief Last retrieval-time use of this fact.
-    std::int64_t last_used_at_ms;
-
-    /// @brief Number of times the fact was returned in retrieval.
-    std::uint64_t use_count;
-
-    /// @brief Fused decay-aware score. Read-only; recomputed by
-    ///        MemoryStore::candidates() and similar query methods.
-    double decay_score;
-};
-
-struct CandidatesOptions {
-    std::size_t limit = 32;
-    double decay_half_life_ms = 30LL * 24 * 3600 * 1000; ///< 30 days
-    double use_boost = 0.5;
-    bool use_observed_at_ms = false;
-};
-
-class MemoryStore {
-public:
-    /// @brief Update last_used_at_ms and increment use_count.
-    void mark_used(FactId id, std::int64_t now_ms, const Transaction& txn);
-
-    /// @brief Top facts for @c entity_id, ranked by decay_score.
-    std::vector<Fact> candidates(EntityId entity_id, std::int64_t now_ms,
-                                 const CandidatesOptions& options,
-                                 const Transaction& txn) const;
-};
-
-} // namespace mdbx_containers
-```
-
-Контрактные требования:
-
-- **Поля `last_used_at_ms` и `use_count` обязательны**, инициализируются при insert: `last_used_at_ms = created_at_ms`, `use_count = 0`.
-- **`decay_score` — вычисляемое поле.** Storage не обязан сохранять его в payload; `candidates()` возвращает объекты, у которых `decay_score` посчитан на момент вызова. Если payload содержит закэшированное значение, оно игнорируется (storage-of-truth — функция `candidates`).
-- **Формула decay (ориентировочная, уточняется в tests).** `decay_score = use_boost * log1p(use_count) - elapsed_ms / decay_half_life_ms`, где `elapsed_ms = (use_observed_at_ms ? observed_at_ms : created_at_ms) → now_ms`.
-- **`mark_used` идемпотентен по факту update-а.** При повторных вызовах в один и тот же `now_ms` итоговое `use_count` равно числу вызовов; дедупликация по `now_ms` не требуется.
-- **Атомарность.** `mark_used` и `candidates` работают в рамках переданной `Transaction`; параллельные `mark_used` разных фактов не конфликтуют.
-
-Use case: long-term facts в memory-агентах, где часто используемые факты «всплывают» выше, а забытые со временем опускаются вниз, не удаляясь физически.
+Usage-based decay and candidate scoring are memory-strategy semantics. They
+must not be implemented as `mdbx-containers::MemoryStore` behavior. Upstream
+requirements are limited to storing opaque usage counters/timestamps, updating
+them transactionally, and allowing deterministic reads of the indexes that
+`agent-memory-cpp` uses to compute decay-aware scores.
 
 ### 12.5 TaskQueue / JobStore для async jobs
 
-Требование: предоставить доменный модуль `TaskQueue` (он же `JobStore`) для persistent очереди задач с retry-семантикой. Цель — дать приложениям стандартный механизм для async-работы (embedding extraction, LLM enrichment, фоновая индексация), не изобретая свой job queue поверх `KeyValueTable`.
+Требование: предоставить generic `TaskQueue` (он же `JobStore`) для persistent
+очереди задач с retry-семантикой только после появления второго реального
+consumer-а. Payload, job type и retry policy остаются application-owned.
+Цель — не навязать `agent-memory-cpp` workflow, а избежать повторной ручной
+реализации одной и той же transactional queue поверх `KeyValueTable`.
 
 ```cpp
 namespace mdbx_containers {
@@ -1209,7 +1090,11 @@ public:
 - **Файл.** Реализация размещается в `include/mdbx_containers/TaskQueue.hpp`.
 - **C++11 baseline.** `std::optional` и structured bindings guarded через `MDBXC_HAS_CPP17`.
 
-Use case (опционально для `agent-memory-cpp`): async embedding extraction после добавления документа, async LLM enrichment (Contextual Retrieval), retry-able background jobs (re-parse документа, отправка telemetry). На первых итерациях допускается реализация на уровне приложения; модуль нужен, чтобы избежать дублирования при появлении второго сценария.
+Use case (опционально для `agent-memory-cpp`): retry-able background jobs,
+например re-parse документа или embedding extraction после добавления
+документа. На первых итерациях допускается реализация на уровне приложения;
+upstream module нужен только если появится повторное использование за пределами
+одного consumer-а.
 
 ### 12.6 Готовые наборы сигнатур для наших generic-примитивов
 
@@ -1218,22 +1103,21 @@ Use case (опционально для `agent-memory-cpp`): async embedding ext
 #### 12.6.1 `ReverseIndexTable`
 
 ```cpp
-/// @brief Outgoing references for @c node_id (used by GraphStore).
+/// @brief References keyed by the forward orientation.
 /// @return Vector of (inverted_key, primary) pairs where @c node_id
 ///         appears as the forward key.
 std::vector<std::pair<InvertedKey, PrimaryKey>>
-out_edges(const PrimaryKey& node_id, const Transaction& txn) const;
+references_from(const PrimaryKey& node_id, const Transaction& txn) const;
 
-/// @brief Incoming references for @c node_id (reverse direction).
+/// @brief References keyed by the reverse orientation.
 std::vector<std::pair<InvertedKey, PrimaryKey>>
-in_edges(const PrimaryKey& node_id, const Transaction& txn) const;
+references_to(const PrimaryKey& node_id, const Transaction& txn) const;
 
-/// @brief Neighbors of @c node_id reachable through edges of a
-///        given logical type, where the type is encoded into
-///        @c InvertedKey (e.g. as CompositeKey).
+/// @brief Related primary keys reachable through a logical relation type,
+///        where the type is encoded into @c InvertedKey.
 std::vector<PrimaryKey>
-neighbors(const PrimaryKey& node_id, const InvertedKey& edge_type,
-          const Transaction& txn) const;
+related(const PrimaryKey& node_id, const InvertedKey& relation_type,
+        const Transaction& txn) const;
 
 /// @brief Cardinality of postings for an inverted key.
 ///        Equivalent to find(inv, txn).size() but possibly cheaper.
@@ -1252,16 +1136,9 @@ std::size_t remove_all_for(const PrimaryKey& primary_ref,
 ```cpp
 /// @brief Last N entries in ascending key order. Backed by
 ///        @c range with @c from = first() and page size = N
-///        taken from the tail. Used by EventStore.recent().
+///        taken from the tail.
 std::vector<std::pair<SortableKey, Payload>>
 recent(std::size_t n, const Transaction& txn) const;
-
-/// @brief Filter entries by source. Implemented either via a
-///        secondary ReverseIndexTable on Payload::source_id,
-///        or via a payload-side field check, depending on
-///        the table configuration chosen by the caller.
-std::vector<std::pair<SortableKey, Payload>>
-by_source(const SourceId& source_id, const Transaction& txn) const;
 
 /// @brief Inclusive lower bound. Returns the first entry whose
 ///        key is >= @c key, or std::nullopt if no such entry exists.
@@ -1283,27 +1160,11 @@ upper_bound_inclusive(const SortableKey& key, const Transaction& txn) const;
 
 ### 12.7 Пример использования в наших планах
 
-Ниже — короткие сценарии, иллюстрирующие, как `agent-memory-cpp` будет использовать API, описанный в секциях 12.1–12.6. Сценарии не описывают полную реализацию, а показывают форму интеграции.
+Ниже — короткие сценарии, иллюстрирующие, как `agent-memory-cpp` будет
+использовать generic API, описанный в секциях 12.2–12.6. Сценарии не описывают
+полную реализацию и не добавляют domain stores в `mdbx-containers`.
 
-#### 12.7.1 `rrf_fuse` в `HybridRetrievalEngine`
-
-```cpp
-// src/agent_memory/retrieval/HybridRetrievalEngine.cpp (псевдокод)
-std::vector<mdbx_containers::ScoredId> HybridRetrievalEngine::fuse(
-    const std::vector<ScoredChunk>& bm25_hits,
-    const std::vector<ScoredChunk>& vector_hits,
-    std::size_t top_k) const {
-    std::vector<std::vector<mdbx_containers::ScoredId>> lists{
-        to_scored_ids(bm25_hits),
-        to_scored_ids(vector_hits)
-    };
-    return mdbx_containers::rrf_fuse(lists, top_k, /*k_constant=*/60);
-}
-```
-
-Заменяет локальный RRF в `agent-memory-cpp::detail::rrf_merge` единой реализацией из `mdbx-containers`.
-
-#### 12.7.2 `EventStore` для temporal queries
+#### 12.7.1 Temporal index via `RangeIndexTable`
 
 ```cpp
 // MdbxTemporalIndex.cpp
@@ -1311,32 +1172,35 @@ std::vector<Event> MdbxTemporalIndex::events_on(std::int64_t day_ms,
                                                 const Transaction& txn) const {
     const auto from = day_ms;
     const auto to   = day_ms + 24LL * 3600 * 1000 - 1;
-    return event_store_.range_time(from, to, txn);
+    return decode_events(occurred_at_index_.range(from, to, txn));
 }
 
 std::vector<Event> MdbxTemporalIndex::fresh(std::size_t n,
                                             const Transaction& txn) const {
-    return event_store_.recent(n, /*by_occurred=*/false, txn);
+    return decode_events(observed_at_index_.recent(n, txn));
 }
 ```
 
-Прямое использование API 12.3 без собственной сортировки и фильтрации в `agent-memory-cpp`.
+`occurred_at_ms`, `observed_at_ms`, `Event` и freshness policy остаются
+application payload/logic; `mdbx-containers` отвечает только за ordered range
+reads.
 
-#### 12.7.3 `mark_used` для QAPair-decay
+#### 12.7.2 Atomic relation write
 
 ```cpp
-// MdbxQAKnowledgeBase.cpp
-void MdbxQAKnowledgeBase::on_retrieval(QAPairId id,
-                                       std::int64_t now_ms,
-                                       const Transaction& txn) {
-    // QAPair рассматривается как разновидность Fact для целей decay.
-    memory_store_.mark_used(/*fact_id=*/to_fact_id(id), now_ms, txn);
+// MdbxGraphIndex.cpp
+void MdbxGraphIndex::add_edge(const GraphEdge& edge,
+                              const Transaction& txn) {
+    writer_.put(graph_edges_by_src_, edge.src_key(), edge.payload(), txn);
+    writer_.put(graph_edges_by_dst_, edge.dst_key(), edge.reverse_payload(), txn);
 }
 ```
 
-Демонстрирует интеграцию decay-механики (12.4) с QA-слоем `agent-memory-cpp` без расширения payload-формата QAPair.
+`EdgeKind`, expiration, contradiction/evidence tags and graph traversal policy
+belong to `agent-memory-cpp`; `MultiTableWriter` only guarantees that both
+physical orientations commit or roll back together.
 
-#### 12.7.4 `TaskQueue` для async embedding extraction
+#### 12.7.3 `TaskQueue` для async embedding extraction
 
 ```cpp
 // EmbeddingExtractionWorker.cpp
@@ -1357,190 +1221,86 @@ void EmbeddingExtractionWorker::tick(std::int64_t now_ms,
 
 Использует API 12.5; сценарий помечен как опциональный для `agent-memory-cpp` и активируется при появлении второго реального потребителя job-очереди.
 
-### 12.8 Addressable Compression и Progressive Disclosure
+### 12.8 Downstream addressable compression pattern (informational)
 
-Требование: зафиксировать generic storage-основу для компактных
-представлений, которые можно раскрыть до исходных доказательств. Поводом
-для требования стал обзор TencentDB Agent Memory: в нём short-term memory
-сжимает tool logs в Mermaid canvas с `node_id`, а long-term memory держит
-цепочку `Persona / Scenario -> Atom -> Conversation`. Для
-`agent-memory-cpp` это не копируется как жёсткая L0-L3 пирамида; вместо
-этого вводится семантика адресуемой деривации поверх `KnowledgeUnitId`,
-`ProjectionId` и `ArtifactId`.
+Этот раздел фиксирует вывод из обзора TencentDB Agent Memory, но не добавляет
+новые public API-типы в `mdbx-containers`. Tencent использует compact
+представления с drill-down идентификаторами; для `agent-memory-cpp` полезен
+инвариант:
 
-#### 12.8.1 `ArtifactRef`
-
-```cpp
-namespace mdbx_containers {
-
-using ArtifactId = std::uint64_t;
-
-enum class ArtifactKind : std::uint8_t {
-    SourceText,
-    ToolLog,
-    TracePayload,
-    ExternalFile,
-    RemoteObject,
-    Custom
-};
-
-struct ArtifactRef {
-    ArtifactId id;
-    ArtifactKind kind;
-    std::string uri;          ///< file path, content-addressed id, or opaque app URI
-    std::string media_type;   ///< e.g. text/markdown, application/json
-    std::uint64_t byte_size;
-    std::string content_hash; ///< optional empty string when unknown
-};
-
-class ArtifactRefTable {
-public:
-    void put(const ArtifactRef& ref, const Transaction& txn);
-    std::optional<ArtifactRef> find(ArtifactId id,
-                                    const Transaction& txn) const;
-    bool erase(ArtifactId id, const Transaction& txn);
-};
-
-} // namespace mdbx_containers
+```text
+compact projection -> evidence/source relation -> canonical SourceRef/ResourceId
 ```
 
-Контрактные требования:
+Владельцем `AddressableCompression`, `ProgressiveDisclosure`, evidence policy,
+contradiction policy, artifact descriptors и detail-level enum-ов является
+`agent-memory-cpp`. `mdbx-containers` должен предоставить только generic
+storage properties, не интерпретируя application payload:
 
-- **Opaque URI.** `mdbx-containers` не интерпретирует `uri`; проверка
-  существования файла, прав доступа, remote fetch и encryption остаются на
-  стороне приложения.
-- **Hash optional but stable.** Пустой `content_hash` допустим, но если hash
-  задан, он должен быть stable identity artifact-а и не должен включать
-  volatile filesystem metadata.
-- **No payload hoarding.** Большие raw payloads не пишутся внутрь secondary
-  indexes; DBI хранит только ссылку и компактную диагностическую metadata.
+- `KeyValueTable<K, OpaquePayload>` для application-owned descriptor-ов, если
+  canonical `SourceRef` / `ResourceId` контракта недостаточно.
+- `ReverseIndexTable<CompositeKey<ScopeId, FromId, Tag>, Payload>` и paired
+  reverse orientation для efficient outgoing/incoming traversal. Existing
+  `graph_edges_by_src` / `graph_edges_by_dst` уже покрывают этот pattern для
+  unit-to-unit relations.
+- Canonical projection identity остаётся composite key-ем
+  `(ScopeId, UnitId, ProjectionKind, revision)` из `unit_projections`; отдельный
+  `ProjectionId = uint64_t` не вводится в upstream TZ.
+- `Tag` и `Payload` opaque для `mdbx-containers`; semantic tags вроде
+  `DerivedFrom`, `Supports`, `Contradicts`, `SummaryOf`, `DetailOf`,
+  `DrillDownTo` определяются только downstream.
 
-#### 12.8.2 `DerivationIndex`
+#### 12.8.1 Optional generic relation helper
 
-```cpp
-namespace mdbx_containers {
-
-enum class DerivationKind : std::uint8_t {
-    DerivedFrom,
-    Supports,
-    Contradicts,
-    Supersedes,
-    DetailOf,
-    SummaryOf,
-    Custom
-};
-
-struct DerivationEdge {
-    std::uint64_t from_unit_id;
-    std::uint64_t to_unit_id;
-    DerivationKind kind;
-    double confidence;
-    std::string producer_id;
-    std::string producer_version;
-    bool losslessly_traceable;
-};
-
-class DerivationIndex {
-public:
-    void add(const DerivationEdge& edge, const Transaction& txn);
-    std::vector<DerivationEdge> outgoing(std::uint64_t from_unit_id,
-                                         DerivationKind kind,
-                                         const Transaction& txn) const;
-    std::vector<DerivationEdge> incoming(std::uint64_t to_unit_id,
-                                         DerivationKind kind,
-                                         const Transaction& txn) const;
-    std::size_t remove_all_for(std::uint64_t unit_id,
-                               const Transaction& txn);
-};
-
-} // namespace mdbx_containers
-```
-
-Контрактные требования:
-
-- **Direction is explicit.** `from_unit_id -> to_unit_id` означает
-  «верхний/производный объект ссылается на нижний/evidence объект» для
-  `DerivedFrom`, `Supports`, `DetailOf`, `SummaryOf`. Для
-  `Supersedes` направление означает `from` supersedes `to`.
-- **Stable traversal.** `outgoing()` и `incoming()` возвращают коллекции в
-  детерминированном порядке: сначала `DerivationKind`, затем `to_unit_id`
-  или `from_unit_id`.
-- **No truth upgrade.** Наличие `Supports` edge не превращает derived claim
-  в canonical fact. Эпистемический статус, user confirmation и contradiction
-  policy остаются application-level payload-ами.
-
-#### 12.8.3 `DrillDownIndex`
+Если после реализации двух независимых consumer-ов выяснится, что ручное
+ведение двух `ReverseIndexTable` orientations стабильно дублируется, можно
+вынести generic helper:
 
 ```cpp
-namespace mdbx_containers {
-
-using ProjectionId = std::uint64_t;
-
-enum class DrillDownKind : std::uint8_t {
-    Evidence,
-    Source,
-    Detail,
-    DerivedFrom,
-    Contradiction,
-    RawArtifact,
-    Custom
-};
-
-struct DrillDownRef {
-    ProjectionId projection_id;
-    std::uint64_t target_unit_id;
-    DrillDownKind kind;
-    std::uint8_t min_detail_level;
-};
-
-class DrillDownIndex {
+template <class Source, class Target, class Tag, class Payload>
+class BidirectionalRelationIndex {
 public:
-    void add(const DrillDownRef& ref, const Transaction& txn);
-    std::vector<DrillDownRef> refs_for(ProjectionId projection_id,
-                                      const Transaction& txn) const;
-    std::vector<std::uint64_t> targets_for(ProjectionId projection_id,
-                                           DrillDownKind kind,
-                                           const Transaction& txn) const;
-};
+    void add(const Source& source,
+             const Target& target,
+             const Tag& tag,
+             const Payload& payload,
+             const Transaction& txn);
 
-} // namespace mdbx_containers
+    std::vector<Payload> outgoing(const Source& source,
+                                  const Tag& tag,
+                                  const Transaction& txn) const;
+
+    std::vector<Payload> incoming(const Target& target,
+                                  const Tag& tag,
+                                  const Transaction& txn) const;
+
+    std::size_t remove_all_for_source(const Source& source,
+                                      const Transaction& txn);
+
+    std::size_t remove_all_for_target(const Target& target,
+                                      const Transaction& txn);
+};
 ```
 
-Контрактные требования:
+Acceptance для такого helper-а storage-only:
 
-- **Projection first.** Drill-down начинается от compact projection, а не
-  от произвольного text span. Привязка text span -> projection node
-  остаётся на стороне `agent-memory-cpp`.
-- **Bounded expansion.** API возвращает refs, но не выполняет рекурсивный
-  graph walk сам. Максимальная глубина раскрытия задаётся retrieval/context
-  layer-ом.
-- **Detail levels are comparable.** `min_detail_level` хранится как число,
-  чтобы application enum вида `SYMBOLIC/SUMMARY/STRUCTURED/EVIDENCE/RAW`
-  мог эволюционировать без изменения layout `mdbx-containers`.
+- обе orientations обновляются атомарно в одной транзакции;
+- traversal order детерминирован;
+- delete не оставляет dangling reverse entries;
+- key/value encoding bounded и documented;
+- payload/tag не интерпретируются upstream.
 
-#### 12.8.4 Benchmark implications
+#### 12.8.2 Informational downstream validation
 
-Новые primitives должны проверяться не только latency-тестами, но и
-retrieval/eval сценариями:
+`agent-memory-cpp` may evaluate traceability coverage, progressive-disclosure
+latency/read amplification, layer selection accuracy, token reduction,
+task-success delta, and explicit failure classes such as
+`EVIDENCE_MISSING` or `ARTIFACT_UNAVAILABLE`. These are downstream benchmark
+runner concerns and are not `mdbx-containers` acceptance gates.
 
-- **Traceability coverage:** доля returned compact hits, для которых найден
-  путь до evidence или raw artifact (`target >= 0.99` для fixture без
-  intentionally orphan records).
-- **Progressive disclosure cost:** latency и read amplification для
-  `SYMBOLIC -> EVIDENCE -> RAW` раскрытия при глубине 0/1/2/3.
-- **Layer selection accuracy:** на запросах типа profile/scenario/fact/raw
-  retriever должен выбирать ожидаемый abstraction level, а не всегда
-  проваливаться в raw chunks.
-- **Compression utility:** tokens before/after compact projection, pass-rate
-  или task-success delta, и доля запросов, где потребовался drill-down.
-- **Failure classification:** отличать `NO_MATCHES` от `EVIDENCE_MISSING`,
-  `ARTIFACT_UNAVAILABLE` и `PARTIAL_RESULTS`; пустой результат не должен
-  маскировать деградацию storage.
-
-Эти бенчмарки являются benchmark-runner задачей `agent-memory-cpp`, а не
-обязанностью `mdbx-containers`. На стороне `mdbx-containers` фиксируются
-только deterministic storage contracts, stable ordering и atomic multi-table
-write для primary unit + derivation/evidence/drilldown indexes.
+Upstream acceptance criteria stay limited to CRUD correctness, deterministic
+ordering, transactional consistency, bounded encoding, cleanup behavior for
+paired indexes, and report-only generic microbenchmarks.
 
 ## 13. Перекрёстные ссылки (потребители в agent-memory-cpp)
 
@@ -1551,7 +1311,8 @@ write для primary unit + derivation/evidence/drilldown indexes.
 - [`guides/lexical-search-roadmap.md`](lexical-search-roadmap.md) §"BM25 baseline" — потребитель `lexical_index_*` DBI (`inverted_token_to_unit`, `field_to_postings`); `MultiTableWriter` обеспечивает атомарность write primary + secondary indexes.
 - [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md) §"PromptCache" / §"AsyncIndexer" / §"WriteGate" — потребитель `context_cache_*` DBI (M2+ persistence для `IResponseCache`), `TaskQueue` (TZ §12.5) для `IAsyncIndexer`.
 - [`guides/compaction-roadmap.md`](compaction-roadmap.md) §"CompactionWorker" — потребитель `MultiTableWriter` (атомарный compaction), `usage_stats_index` (для `DecayJob`), `embedding_meta` (для `EmbeddingRecomputeJob`), `TaskQueue` (TZ §12.5) для job lifecycle.
-- [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md) — будущий потребитель `DerivationIndex`, `EvidenceIndex`, `DrillDownIndex` и `ArtifactRefTable` для `AbstractionComponent`, `SourceRef`, `ProfileClaim` и compact projections.
+- [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md) §3 — владелец canonical `SourceRef` / `ResourceId` provenance contract; future compact-projection traceability should reuse `graph_edges_by_src` / `graph_edges_by_dst` and application-owned payloads instead of adding domain-specific `mdbx_containers` APIs.
+- [`guides/experiments/2026-07-23-tencentdb-agent-memory-reference.md`](experiments/2026-07-23-tencentdb-agent-memory-reference.md) — TencentDB Agent Memory reference review that motivated the downstream addressable-compression pattern in §12.8.
 - [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §"Layer 1 (Storage Primitives)" — основной downstream-потребитель: все секции 5.5 DBIs становятся частью capability-aware MDBX-схемы компонентной архитектуры.
 
 ## Перекрёстные ссылки

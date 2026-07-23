@@ -9,6 +9,10 @@ reference for `agent-memory-cpp`. The review used the upstream GitHub
 repository snapshot cloned into `tmp/tencentdb-agent-memory` and public GitHub
 README / issue pages.
 
+`agent-memory-cpp` context: follow-up to commit
+`9b73202 docs(guides): add addressable compression reference` on branch
+`pr85-rerank-prepare-cost`.
+
 ### Question
 
 Can TencentDB Agent Memory provide useful comparison targets for this project,
@@ -19,6 +23,11 @@ and does its architecture imply additional storage requirements for
 
 - Source: `https://github.com/TencentCloud/TencentDB-Agent-Memory`
 - Local snapshot path: `tmp/tencentdb-agent-memory`
+- Upstream snapshot:
+  - commit: `45e6e80ae2e63b65fad0d89f5e13171229c8f295`
+  - commit date: `2026-07-19T23:15:09+08:00`
+  - subject: `Update README.md (#535)`
+- Inspection date: `2026-07-23`
 - Primary inspected files:
   - `README.md`
   - `package.json`
@@ -33,6 +42,32 @@ and does its architecture imply additional storage requirements for
   - `src/offload/types.ts`
   - `src/offload/storage.ts`
   - `src/offload/l3-helpers.ts`
+- Inspected test / benchmark-like files and directories:
+  - `vitest.config.ts`
+  - `vitest.e2e.config.ts`
+  - `hermes-plugin/memory/memory_tencentdb/tests/`
+  - `src/offload/benchmark-token-estimate.ts`
+  - `src/offload/*.test.ts`
+  - `src/utils/*.test.ts`
+- Reproduction-oriented inspection commands:
+
+```powershell
+git -C tmp/tencentdb-agent-memory rev-parse HEAD
+git -C tmp/tencentdb-agent-memory log -1 --format='%H%n%cI%n%s'
+rg -n "WideSearch|SWE-bench|AA-LCR|PersonaMem|benchmark|bench|evaluation|eval" `
+  tmp/tencentdb-agent-memory/README.md `
+  tmp/tencentdb-agent-memory/package.json `
+  tmp/tencentdb-agent-memory/src `
+  tmp/tencentdb-agent-memory/tests `
+  tmp/tencentdb-agent-memory/test `
+  tmp/tencentdb-agent-memory/hermes 2>$null
+Get-ChildItem -LiteralPath tmp/tencentdb-agent-memory -Recurse -Force -File |
+  Where-Object {
+    $_.FullName -notmatch '\\.git|node_modules|dist|build' -and
+    $_.FullName -match '(test|spec|bench|eval|hermes)'
+  }
+Get-Content -LiteralPath tmp/tencentdb-agent-memory/package.json
+```
 
 ### Expected Result
 
@@ -66,43 +101,58 @@ Public README benchmark claims:
 | Short-term | AA-LCR | 44.0% success | 47.5% success | 112.0M -> 77.3M tokens |
 | Long-term | PersonaMem | 48% accuracy | 76% accuracy | no token figure |
 
-No committed benchmark harness or reproducible eval dataset was found in the
-repo. Tests are mostly unit/recovery tests (`vitest`, plus Hermes Python
-recovery/shutdown tests). GitHub issue #106 explicitly asks the project to add
-reproducible memory evaluation benchmarks and suggests axes such as storage
-integrity, retrieval precision, clustering, forgetting directionality,
-multi-hop reasoning, and deep retrieval.
+No committed runner for the README WideSearch / SWE-bench / AA-LCR /
+PersonaMem table was found in snapshot `45e6e80`. The repository does contain
+`src/offload/benchmark-token-estimate.ts`, but it benchmarks a fast token
+estimator against `tiktoken cl100k_base`; it is not the long-horizon memory
+evaluation harness behind the README table. Other visible tests are mostly
+unit/recovery tests (`vitest`, plus Hermes Python recovery/shutdown tests).
+
+GitHub issue #106 is treated only as supporting external signal: it asks the
+project to add reproducible memory evaluation benchmarks and suggests axes such
+as storage integrity, retrieval precision, clustering, forgetting
+directionality, multi-hop reasoning, and deep retrieval. It is not an official
+proof that no internal Tencent benchmark harness exists.
 
 ### Interpretation
 
 TencentDB Agent Memory is a strong architecture reference, but not a direct
-library dependency or a currently reproducible benchmark baseline. Its most
-important lesson for `agent-memory-cpp` is not the fixed L0-L3 hierarchy; it is
-the invariant that compact memory must remain addressable:
+library dependency or a currently reproducible benchmark baseline for this
+repo. Its most important lesson for `agent-memory-cpp` is not the fixed L0-L3
+hierarchy; it is the downstream invariant that compact memory should remain
+addressable:
 
 ```text
-compact projection -> evidence unit -> raw artifact/source
+compact projection -> evidence/source relation -> canonical SourceRef/ResourceId
 ```
 
-This maps naturally to `agent-memory-cpp` through typed components and
-projection/evidence indexes rather than a fixed persona-oriented pyramid.
+This should map to `agent-memory-cpp` through typed components, canonical
+`SourceRef` / `ResourceId`, and application-owned relation tags over generic
+graph storage rather than through new domain-specific `mdbx-containers` API.
 
-### TZ Update
+### TZ Impact
 
-`guides/mdbx-containers-extension-tz.md` was extended with:
+The initial `9b73202` TZ update overfit the upstream storage layer by naming
+`AddressableCompression`, `ArtifactRefTable`, `DerivationIndex`, and
+`DrillDownIndex` in `mdbx-containers` terms. Follow-up correction:
 
-- `AddressableCompression` capability;
-- `artifact_refs`, `derivation_edges`, `evidence_edges`, `drilldown_refs`,
-  and `artifact_to_units` DBI entries;
-- P4 follow-up primitives for `ArtifactRefTable`, `DerivationIndex`, and
-  `DrillDownIndex`;
-- section 12.8 with storage contracts and benchmark implications.
+- keep `AddressableCompression` / `ProgressiveDisclosure` as
+  `agent-memory-cpp` capabilities, not upstream `mdbx-containers`
+  capabilities;
+- represent derivation, evidence, contradiction, summary/detail, and
+  drill-down links through existing generic `graph_edges_by_src` /
+  `graph_edges_by_dst` physical orientations;
+- keep artifact/source identity under canonical `SourceRef` / `ResourceId`
+  unless a later `agent-memory-cpp` roadmap adds an application-owned
+  descriptor;
+- leave only generic relation-helper guidance and storage-only acceptance
+  criteria in `guides/mdbx-containers-extension-tz.md`.
 
 ### Limitations
 
 - The public Tencent benchmark numbers were not independently reproduced.
-- The repo does not include the WideSearch/SWE-bench/AA-LCR/PersonaMem runner
-  setup used for the README table.
+- Snapshot `45e6e80` did not reveal the WideSearch/SWE-bench/AA-LCR/PersonaMem
+  runner setup used for the README table.
 - The local review did not run Tencent tests; it inspected source and docs.
 - Their benchmark claims are host/runtime-level, while `agent-memory-cpp` is a
   lower-level C++ storage/retrieval substrate.
@@ -114,4 +164,8 @@ projection/evidence indexes rather than a fixed persona-oriented pyramid.
   traceability coverage, drill-down latency/read amplification, layer selection
   accuracy, compression utility, and explicit failure classification.
 - When `KnowledgeUnit` work starts, ensure derived profile/scenario claims keep
-  evidence and contradiction links instead of being promoted into raw facts.
+  evidence and contradiction links over generic graph relations instead of
+  being promoted into raw facts.
+- If artifact descriptors become necessary, first reconcile them with
+  `SourceRef`, `ResourceId`, descriptor size limits, and external raw artifact
+  retention policy in `agent-memory-cpp`.
