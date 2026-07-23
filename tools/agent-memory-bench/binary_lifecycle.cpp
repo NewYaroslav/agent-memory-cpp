@@ -46,9 +46,11 @@ namespace {
         std::size_t query_count = 0;
         std::size_t embedding_dimensions = 0;
         std::size_t bit_count = 0;
-        std::size_t result_limit = 0;
+        std::size_t oracle_k = 0;
+        std::size_t returned_candidate_limit = 0;
         std::size_t mutation_count = 0;
         std::uint64_t seed = 0;
+        std::uint64_t query_noise_seed = 0;
         std::size_t multiprobe_table_count = 8;
         std::size_t multiprobe_bits_per_table = 8;
         std::size_t multiprobe_max_probe_radius = 1;
@@ -140,6 +142,32 @@ namespace {
         return static_cast<std::size_t>(value);
     }
 
+    [[nodiscard]] std::size_t optional_size(
+        const nlohmann::json& document,
+        std::string_view field,
+        std::size_t fallback
+    ) {
+        const auto* node = find_optional(document, field);
+        if(node == nullptr) {
+            return fallback;
+        }
+        const nlohmann::json wrapper = {{std::string{field}, *node}};
+        return checked_size(require_positive_integer(wrapper, field), field);
+    }
+
+    [[nodiscard]] std::uint64_t optional_u64(
+        const nlohmann::json& document,
+        std::string_view field,
+        std::uint64_t fallback
+    ) {
+        const auto* node = find_optional(document, field);
+        if(node == nullptr) {
+            return fallback;
+        }
+        const nlohmann::json wrapper = {{std::string{field}, *node}};
+        return require_positive_integer(wrapper, field);
+    }
+
     [[nodiscard]] std::size_t optional_positive_size(
         const nlohmann::json& document,
         std::string_view field,
@@ -188,15 +216,49 @@ namespace {
             require_positive_integer(document, "bit_count"),
             "bit_count"
         );
-        config.result_limit = checked_size(
-            require_positive_integer(document, "result_limit"),
-            "result_limit"
+        std::size_t legacy_result_limit = 0;
+        const bool has_legacy_result_limit =
+            find_optional(document, "result_limit") != nullptr;
+        if(has_legacy_result_limit) {
+            legacy_result_limit = checked_size(
+                require_positive_integer(document, "result_limit"),
+                "result_limit"
+            );
+        }
+        config.oracle_k = optional_size(document, "oracle_k", legacy_result_limit);
+        config.returned_candidate_limit = optional_size(
+            document,
+            "returned_candidate_limit",
+            legacy_result_limit
         );
+        if(has_legacy_result_limit
+           && find_optional(document, "returned_candidate_limit") != nullptr
+           && legacy_result_limit != config.returned_candidate_limit) {
+            throw std::runtime_error(
+                "config field 'result_limit' is a legacy alias and must match "
+                "'returned_candidate_limit' when both are present"
+            );
+        }
+        if(config.oracle_k == 0) {
+            throw std::runtime_error(
+                "config field 'oracle_k' is required unless result_limit is passed"
+            );
+        }
+        if(config.returned_candidate_limit == 0) {
+            throw std::runtime_error(
+                "config field 'returned_candidate_limit' is required unless result_limit is passed"
+            );
+        }
         config.mutation_count = checked_size(
             require_positive_integer(document, "mutation_count"),
             "mutation_count"
         );
         config.seed = require_positive_integer(document, "seed");
+        config.query_noise_seed = optional_u64(
+            document,
+            "query_noise_seed",
+            config.seed ^ std::uint64_t{0x9E3779B97F4A7C15ULL}
+        );
         config.multiprobe_table_count = optional_positive_size(
             document,
             "multiprobe_table_count",
@@ -222,8 +284,13 @@ namespace {
             "multiprobe_minimum_candidate_count",
             config.multiprobe_minimum_candidate_count
         );
-        if(config.result_limit > config.document_count) {
-            throw std::runtime_error("result_limit must not exceed document_count");
+        if(config.oracle_k > config.document_count) {
+            throw std::runtime_error("oracle_k must not exceed document_count");
+        }
+        if(config.returned_candidate_limit > config.document_count) {
+            throw std::runtime_error(
+                "returned_candidate_limit must not exceed document_count"
+            );
         }
         if(config.mutation_count > config.document_count) {
             throw std::runtime_error("mutation_count must not exceed document_count");
@@ -246,7 +313,8 @@ namespace {
     }
 
     [[nodiscard]] Dataset generate_dataset(const Config& config) {
-        std::mt19937_64 rng(config.seed);
+        std::mt19937_64 document_rng(config.seed);
+        std::mt19937_64 query_rng(config.query_noise_seed);
         std::normal_distribution<float> normal(0.0F, 1.0F);
         std::normal_distribution<float> query_noise(0.0F, 0.08F);
 
@@ -257,7 +325,7 @@ namespace {
             agent_memory::Embedding embedding;
             embedding.values.reserve(config.embedding_dimensions);
             for(std::size_t dim = 0; dim < config.embedding_dimensions; ++dim) {
-                embedding.values.push_back(normal(rng));
+                embedding.values.push_back(normal(document_rng));
             }
             normalize(embedding);
             dataset.documents.push_back(std::move(embedding));
@@ -267,7 +335,7 @@ namespace {
                 query % config.document_count
             ];
             for(auto& value : embedding.values) {
-                value += query_noise(rng);
+                value += query_noise(query_rng);
             }
             normalize(embedding);
             dataset.queries.push_back(std::move(embedding));
@@ -515,11 +583,11 @@ namespace {
 
         const auto vector_records = make_vector_records(dataset);
         const auto binary_records = make_binary_records(document_signatures, signature_info);
-        const auto vector_queries = make_vector_queries(dataset, config.result_limit);
+        const auto vector_queries = make_vector_queries(dataset, config.oracle_k);
         const auto binary_queries = make_binary_queries(
             query_signatures,
             signature_info,
-            config.result_limit
+            config.returned_candidate_limit
         );
 
         agent_memory::ExactVectorIndex exact({
@@ -644,9 +712,12 @@ namespace {
         report["query_count"] = config.query_count;
         report["embedding_dimensions"] = config.embedding_dimensions;
         report["bit_count"] = config.bit_count;
-        report["result_limit"] = config.result_limit;
+        report["oracle_k"] = config.oracle_k;
+        report["returned_candidate_limit"] = config.returned_candidate_limit;
+        report["result_limit"] = config.returned_candidate_limit;
         report["mutation_count"] = config.mutation_count;
         report["seed"] = config.seed;
+        report["query_noise_seed"] = config.query_noise_seed;
         report["timing_ms"] = {
             {"data_generation", data_generation_ms},
             {"binary_chunk_and_query_encoding", binary_encoding_ms}

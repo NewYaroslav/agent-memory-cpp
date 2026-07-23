@@ -88,9 +88,12 @@ require_json(document_count GET document_count)
 require_json(query_count GET query_count)
 require_json(embedding_dimensions GET embedding_dimensions)
 require_json(bit_count GET bit_count)
+require_json(oracle_k GET oracle_k)
+require_json(returned_candidate_limit GET returned_candidate_limit)
 require_json(result_limit GET result_limit)
 require_json(mutation_count GET mutation_count)
 require_json(seed GET seed)
+require_json(query_noise_seed GET query_noise_seed)
 
 if(NOT document_count EQUAL 256)
     message(FATAL_ERROR "document_count must stay 256")
@@ -104,14 +107,25 @@ endif()
 if(NOT bit_count EQUAL 128)
     message(FATAL_ERROR "bit_count must stay 128")
 endif()
-if(NOT result_limit EQUAL 10)
-    message(FATAL_ERROR "result_limit must stay 10")
+if(NOT oracle_k EQUAL 10)
+    message(FATAL_ERROR "oracle_k must stay 10")
+endif()
+if(NOT returned_candidate_limit EQUAL 16)
+    message(FATAL_ERROR "returned_candidate_limit must stay 16")
+endif()
+if(NOT result_limit EQUAL returned_candidate_limit)
+    message(FATAL_ERROR
+        "legacy result_limit must match returned_candidate_limit"
+    )
 endif()
 if(NOT mutation_count EQUAL 16)
     message(FATAL_ERROR "mutation_count must stay 16")
 endif()
 if(NOT seed EQUAL 42)
     message(FATAL_ERROR "seed must stay 42")
+endif()
+if(NOT query_noise_seed EQUAL 11400714819323198527)
+    message(FATAL_ERROR "query_noise_seed must stay derived from seed 42")
 endif()
 
 function(require_nonnegative_path label)
@@ -346,15 +360,24 @@ require_json(multiprobe_post_rebuild_mean_result_count
     GET multiprobe_binary post_rebuild_query mean_result_count)
 foreach(result_count_label
         exact_mean_result_count
+)
+    if(NOT ${result_count_label} EQUAL oracle_k)
+        message(FATAL_ERROR
+            "${result_count_label} must be ${oracle_k}, "
+            "got ${${result_count_label}}"
+        )
+    endif()
+endforeach()
+foreach(result_count_label
         flat_mean_result_count
         multiprobe_mean_result_count
         flat_post_upsert_mean_result_count
         flat_post_rebuild_mean_result_count
         multiprobe_post_upsert_mean_result_count
         multiprobe_post_rebuild_mean_result_count)
-    if(NOT ${result_count_label} EQUAL result_limit)
+    if(NOT ${result_count_label} EQUAL returned_candidate_limit)
         message(FATAL_ERROR
-            "${result_count_label} must be ${result_limit}, "
+            "${result_count_label} must be ${returned_candidate_limit}, "
             "got ${${result_count_label}}"
         )
     endif()
