@@ -155,6 +155,19 @@ namespace {
         return checked_size(require_positive_integer(wrapper, field), field);
     }
 
+    [[nodiscard]] std::uint64_t optional_u64(
+        const nlohmann::json& document,
+        std::string_view field,
+        std::uint64_t fallback
+    ) {
+        const auto* node = find_optional(document, field);
+        if(node == nullptr) {
+            return fallback;
+        }
+        const nlohmann::json wrapper = {{std::string{field}, *node}};
+        return require_positive_integer(wrapper, field);
+    }
+
     [[nodiscard]] std::size_t optional_positive_size(
         const nlohmann::json& document,
         std::string_view field,
@@ -204,7 +217,9 @@ namespace {
             "bit_count"
         );
         std::size_t legacy_result_limit = 0;
-        if(find_optional(document, "result_limit") != nullptr) {
+        const bool has_legacy_result_limit =
+            find_optional(document, "result_limit") != nullptr;
+        if(has_legacy_result_limit) {
             legacy_result_limit = checked_size(
                 require_positive_integer(document, "result_limit"),
                 "result_limit"
@@ -216,6 +231,14 @@ namespace {
             "returned_candidate_limit",
             legacy_result_limit
         );
+        if(has_legacy_result_limit
+           && find_optional(document, "returned_candidate_limit") != nullptr
+           && legacy_result_limit != config.returned_candidate_limit) {
+            throw std::runtime_error(
+                "config field 'result_limit' is a legacy alias and must match "
+                "'returned_candidate_limit' when both are present"
+            );
+        }
         if(config.oracle_k == 0) {
             throw std::runtime_error(
                 "config field 'oracle_k' is required unless result_limit is passed"
@@ -231,7 +254,7 @@ namespace {
             "mutation_count"
         );
         config.seed = require_positive_integer(document, "seed");
-        config.query_noise_seed = optional_size(
+        config.query_noise_seed = optional_u64(
             document,
             "query_noise_seed",
             config.seed ^ std::uint64_t{0x9E3779B97F4A7C15ULL}

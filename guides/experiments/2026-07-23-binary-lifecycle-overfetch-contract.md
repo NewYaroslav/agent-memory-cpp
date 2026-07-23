@@ -20,13 +20,22 @@ Setup:
 - `oracle_k`: 10;
 - `returned_candidate_limit`: 10.
 
+The CTest smoke fixture intentionally uses `oracle_k = 10` and
+`returned_candidate_limit = 16`. The manual scale runs above keep `10/10` to
+refresh the previous PR #82 numbers, while the smoke gate uses different values
+so CI catches accidental reuse of one limit for both exact oracle construction
+and binary candidate return.
+
 Contract change:
 
 - `oracle_k` controls the exact top-k set used as the quality target.
 - `returned_candidate_limit` controls how many binary Hamming results are
   returned and compared with that fixed exact set.
-- `result_limit` remains in the report as a legacy alias for
-  `returned_candidate_limit` while existing smoke tooling migrates.
+- `result_limit` is accepted only as a legacy input fallback for old configs.
+  New configs should use `oracle_k` and `returned_candidate_limit`.
+- `result_limit` remains in the report as a legacy output alias for
+  `returned_candidate_limit`; if a config passes both `result_limit` and
+  `returned_candidate_limit`, they must match.
 - `query_noise_seed` is recorded explicitly so 10k can remain a prefix of 100k
   while query noise stays identical across scale runs.
 

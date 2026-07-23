@@ -368,6 +368,15 @@ if(AGENT_MEMORY_BUILD_TESTS)
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-binary-lifecycle-smoke.cmake
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
+        add_test(
+            NAME agent_memory_benchmark_cli_binary_lifecycle_config_compat
+            COMMAND
+                ${CMAKE_COMMAND}
+                -DAGENT_MEMORY_BINARY_LIFECYCLE_BENCH_EXE=$<TARGET_FILE:agent-memory-binary-lifecycle-bench>
+                -DAGENT_MEMORY_BINARY_LIFECYCLE_COMPAT_WORKDIR=${CMAKE_CURRENT_BINARY_DIR}/binary-lifecycle-config-compat
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/agent-memory-bench/validate-binary-lifecycle-config-compat.cmake
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
     endif()
     add_subdirectory(tests)
 endif()
