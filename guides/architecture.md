@@ -342,8 +342,10 @@ Per
   маскировать галлюцинации/стохастичность модели.
 - **CompactionWorker** (async) — выполняет `ICompactionJob`-ы:
   Decay, Dedupe, ArchiveCold (M1); Merge, SummaryPromotion,
-  EmbeddingRecompute (M2). Хранит состояние jobs и handoff в
-  `compaction_jobs` / `compaction_handoffs` DBI.
+  EmbeddingRecompute (M2). Хранит состояние jobs в downstream `TaskQueue`
+  DBI (`compaction_jobs_by_id`, `compaction_jobs_runnable`,
+  `compaction_jobs_by_lease`, `compaction_jobs_by_status`) и handoff в
+  `compaction_handoffs`.
 - **AsyncIndexer** (background) — батчит inserts в lexical / vector /
   projection индексы. Default: 1000 units или 50 MB, whichever first.
 - **WriteGate** — применяет `WritePolicy` к входящим записям:

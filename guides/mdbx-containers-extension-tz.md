@@ -7,7 +7,9 @@
 Ключевые компоненты архитектуры, для которых задаются таблицы:
 
 - `KnowledgeUnitEnvelope` — lookup-critical hot path (DBI: `knowledge_units`).
-- `Components` — operational + per-kind payloads, дискриминированы по `ComponentKind` (DBI: `unit_components` через `TypeDiscriminatedTable`).
+- `Components` — operational components хранятся в `unit_components` через
+  `TypeDiscriminatedTable`; kind-specific payloads живут в capability-gated
+  per-kind DBIs.
 - `SearchProjections` — retrieval-specific text views, multi-version по `revision` (DBI: `unit_projections`).
 - Embeddings — multi-projection, multi-model (DBI: `embedding_meta`, `embedding_vectors`).
 - Secondary indexes — scope-aware (`scope_id` как префикс ключа), см. ADR-012 в `guides/memory-stacks-roadmap.md`.
@@ -25,7 +27,10 @@
    `unit_components` и per-kind payload DBIs. `TypeDiscriminatedTable` не
    является canonical storage для всего unit-а.
 2. **Fielded BM25F** — отдельные поля per source: `title`, `heading_path`, `body`, `code_blocks`, `tags`, `symbols`, `metadata_typed`, `qa_question`, `qa_answer`, `summary`. Поля должны быть доступны как inverted index с composite key `(token_id, field_id)`.
-3. **Typed graph storage** — `NodeKind`/`EdgeKind` enum, хранение outgoing/incoming edges через reverse index, bounded expansion.
+3. **Generic relation indexing** — caller-owned opaque ids/tags/payloads,
+   атомарное ведение явно названных outgoing/incoming orientations и
+   bounded/paginated storage reads. `NodeKind`, `EdgeKind` и
+   traversal/expansion policy остаются в `agent-memory-cpp`.
 4. **QA Knowledge Base** — `QAPair` с полями `valid`, `last_verified`, `priority`, `freq`, `supersedes`. Inverted index по `question` tokens.
 5. **Temporal index** — range queries по timestamp (`valid_from`, `valid_until`, `recorded_at`) с inclusive/exclusive bounds.
 6. **Metadata filters** — поддержка `(metadata_key, metadata_value) -> ResourceId` reverse index для pre-filter.
@@ -232,11 +237,16 @@ M0/M1/M2-профилями, но при любом opt-in adoption эти DBIs 
 ### Что расширяется и что добавляется
 
 - Расширения существующих классов — секция 4 (надстройки над `KeyValueTable`, `KeyMultiValueTable`, `KeyTable`, `ValueTable`, `SequenceTable`, `AnyValueTable`, `Connection`, `Config`).
-- Расширения существующих DBIs — секция 5.4 (infrastructure existing) и частично 5.1–5.3 (lexical / optimization / knowledge base — добавляют новые таблицы в дополнение к существующим).
+- DBI inventory — секции 5.1–5.4 фиксируют historical/profile-specific
+  tables from older roadmaps and existing adapters. Они не являются
+  требованиями на создание таблиц и не добавляются к canonical manifest без
+  явного `MemoryProfileSpec` delta.
 - Новые классы — секция 3 (ReverseIndexTable, RangeIndexTable, TypeDiscriminatedTable, CompositeKey, MultiTableWriter, пагинация, Connection extensions).
 - Новые таблицы — секция 5.5 (Memory-stack layer для компонентной архитектуры `Envelope + Components + Projections`).
 
-Иными словами, секции 3 и 5.5 — полностью новая поверхность; секции 4 и 5.1–5.4 — аддитивные расширения существующей инфраструктуры без поломки ABI.
+Иными словами, секции 3 и 5.5 — новая generic storage surface и canonical
+memory-stack manifest; секции 5.1–5.4 — inventory для reconciliation, а не
+параллельная physical schema.
 
 ## 2. Принципы
 
@@ -496,9 +506,15 @@ void Connection::multi_write(Op&& op);  // RAII: commit/rollback
 3. Projections в `unit_projections` (DBI: `KeyValueTable<(scope_id, UnitId, ProjectionKind, revision), SearchProjection>`).
 4. Embedding metadata + vectors (`embedding_meta`, `embedding_vectors`).
 5. Все scope-aware secondary indexes, относящиеся к данной write: `inverted_token_to_unit` (по каждой projection), `field_to_postings`, `temporal_event_index`/`temporal_unit_index`, `speaker_to_units`/`session_to_units`, `usage_stats_index`, `graph_edges_by_src`/`graph_edges_by_dst`, `metadata_filters`.
-6. `generation_index` для stale-filter, `compaction_jobs` enqueue (если требуется фоновая работа).
+6. Optional downstream side effects, если профиль их включает: runtime queue
+   writes или другие profile-specific indexes. Эти DBI не входят в canonical
+   §5.5 manifest и обязаны быть учтены как profile delta в §5.5.1.
 
-При исключении в любом шаге `MultiTableWriter` откатывает все 6 групп записей; частично записанный unit не наблюдаем. `commit()` бросает `MdbxException` на conflict; retry policy остаётся на стороне `MemoryStack::write_unit` (см. `WritePolicy` в `guides/memory-stacks-roadmap.md`, секция 6.2).
+При исключении в любом шаге `MultiTableWriter` откатывает все canonical groups
+и выбранные profile-delta writes; частично записанный unit не наблюдаем.
+`commit()` бросает `MdbxException` на conflict; retry policy остаётся на
+стороне `MemoryStack::write_unit` (см. `WritePolicy` в
+`guides/memory-stacks-roadmap.md`, секция 6.2).
 
 ### 3.8 Расширения `Connection` и `Config`
 
@@ -747,11 +763,14 @@ physical manifest §5.5. Legacy/profile-specific inventory из §5.1-§5.4 не
 
 | Bucket | Steady DBIs | Migration peak | Sync status | Notes |
 |---|---:|---:|---|---|
-| Canonical memory-stack DBIs from §5.5 | 22 | 22 | mixed | Count every row in the §5.5 summary table exactly once. |
+| Canonical memory-stack DBIs from §5.5 | up to 22 profile-selected | 22 full inventory | mixed | Count every row in the §5.5 summary table exactly once when full canonical inventory is enabled. |
 | Existing document/resource adapter DBIs from §5.4 | 0 by default, +4 if legacy adapter enabled | +4 | KV supported | Adapter-local; not part of canonical memory-stack layout. |
+| Runtime queue profile delta | 0 by default, +4 per persistent queue | +4 | mixed | `*_jobs_by_id`, `*_jobs_runnable`, `*_jobs_by_lease`, `*_jobs_by_status`; owned by `runtime-services-roadmap.md`. |
+| Compaction handoff profile delta | 0 by default, +1 if compaction enabled | +1 | KV supported | `compaction_handoffs`; operational handoff, not queue ordering. |
+| MDBX-backed resource body delta | 0 by default, +1 simple KV or +2 chunked | +2 | KV supported | `resource_bodies` or `resource_body_manifest` + `resource_body_chunks`; see §12.9. |
 | Optional sync system DBIs from §1.5.10 | 0 by default, +5 opt-in | +5 | opt-in only | Not used by M0/M1/M2 while §11.7 is DEFER. |
 | Migration / dual-write reserve | 0 | +8 | application-owned | Reserved for transitional tables during profile migrations. |
-| Planned canonical peak under current assumptions | 22 default | 39 with legacy adapter + sync + reserve | within ceiling | Leaves at least 25 DBI slots of headroom under `max_dbs = 64`. |
+| Planned expanded peak under current assumptions | profile-selected | 46 with full canonical inventory + legacy adapter + one runtime queue + compaction handoff + chunked resource bodies + sync + reserve | within ceiling | Leaves at least 18 DBI slots of headroom under `max_dbs = 64`. |
 
 Any future addition must update this table with capability, default-open
 status, underlying MDBX table type, number of physical DBI, paired reverse
@@ -832,7 +851,7 @@ budget автоматически; они считаются только при
 
 **P1 (блокер для BM25F + temporal):**
 - `RangeIndexTable` с exclusive bounds и pagination
-- `CompositeKey<P1, P2>` struct + trait
+- `CompositeKey<Parts...>` struct + traits, with acceptance for 2..5 parts
 - Расширения `KeyValueTable`: `update_many`, `add_many`, `erase_many`
 
 **P2 (расширения):**
@@ -995,8 +1014,12 @@ Opt-in sync metrics применяются только в сборках с `MD
 
 ## 11. Открытые вопросы и риски
 
-1. **ABI break risk для trivially copyable composite key.** Если `P1` или `P2` содержит padding, byte layout может быть нестабильным
- между компиляторами. Решение: документировать требование `static_assert(std::is_trivially_copyable<P1>::value)`, использовать `__attribute__((packed))` или фиксированный `to_bytes`/`from_bytes` контракт.
+1. **ABI break risk для trivially copyable composite key.** Если любой
+`CompositeKey<Parts...>` part содержит padding, byte layout может быть
+нестабильным между компиляторами. Решение: документировать требование
+`static_assert(std::is_trivially_copyable<Part>::value)` для каждого part,
+фиксировать byte order / padding policy и добавить golden-byte tests для 2-, 3-,
+4- и 5-part keys.
 
 2. **DUPSORT performance на больших posting lists (>10K entries per token).** MDBX DUPSORT оптимизирован для sorted duplicates, но insertion sort O(N) при unordered insert. Решение: enforced sort order при insert, или переход на segmented postings (см. `guides/lexical-search-roadmap.md` секция "Posting Segments").
 
@@ -1006,7 +1029,11 @@ Opt-in sync metrics применяются только в сборках с `MD
 
 5. **Schema versioning остаётся на стороне приложения.** `TypeDiscriminatedTable` не навязывает payload version. Контракт: payload prefix `agent_memory.knowledge_unit.v1` etc. валидируется на уровне `agent-memory-cpp`, не в mdbx-containers.
 
-6. **`max_dbs` увеличение.** Текущее значение 16 недостаточно для всех таблиц секции 5. План: 64 (16 существующих + 48 новых). Verify, что MDBX env flags поддерживают это без `MDBX_NOTLS` reconfiguration.
+6. **`max_dbs` ceiling.** `Config::max_dbs = 64` является capacity ceiling для
+одного MDBX env. Единственный authoritative accounting — §5.5.1; каждое новое
+physical DBI или profile delta обязано обновить этот checkpoint. Verify, что
+MDBX env flags поддерживают выбранный profile manifest без `MDBX_NOTLS`
+reconfiguration.
 
 7. **Sync subsystem adoption** (см. §1.5 и §5.6). Принимать ли upstream `sync` v0.1, отложить adoption полностью, или форкать custom решение?
 
@@ -1102,16 +1129,31 @@ jobs_by_id:
   KeyValueTable<JobId, OpaqueJobRecord>
 
 jobs_runnable:
-  ReverseIndexTable<CompositeKey<StatusTag, RunAfterMs, JobId>, JobId>
+  RangeIndexTable<QueueOrderKey, JobId>
+
+jobs_by_lease:
+  RangeIndexTable<LeaseUntilKey, JobId>
+
+jobs_by_status:
+  ReverseIndexTable<JobStatus, JobId>
 ```
+
+`QueueOrderKey` is application-defined but must encode at least
+`run_after_ms`, `priority_rank`, `enqueue_sequence` and `job_id` so bounded
+reads can preserve delayed scheduling, priority and FIFO tie-breaks. The full
+`JobRecord`, lifecycle transitions, leases, cancellation and retry policy are
+defined downstream in `guides/runtime-services-roadmap.md` §4.6.
 
 Atomic claim pattern:
 
-1. в write transaction найти первый runnable key;
+1. в write transaction прочитать first runnable key через bounded
+   `RangeIndexTable` read (`limit = 1`, no full scan);
 2. перечитать `jobs_by_id[JobId]`;
-3. application-level predicate проверяет, что job всё ещё runnable;
+3. application-level predicate проверяет, что job всё ещё runnable and not
+   cancelled;
 4. обновить primary opaque record;
-5. удалить старую runnable index entry и, если нужно, добавить новую;
+5. удалить старые runnable/status/lease index entries и, если нужно, добавить
+   новые;
 6. commit/rollback выполняет обычный `MultiTableWriter`.
 
 Possible upstream `PersistentQueue` рассматривается только отдельным proposal
@@ -1204,20 +1246,24 @@ physical orientations commit or roll back together.
 
 ```cpp
 // RuntimeQueueStorage.cpp (adapter-local pseudo-code)
-void RuntimeQueueStorage::move_job_index(const JobIndexKey& old_key,
-                                         const JobIndexKey& new_key,
+void RuntimeQueueStorage::move_job_index(const JobIndexKeys& old_keys,
+                                         const JobIndexKeys& new_keys,
                                          JobId id,
                                          const OpaqueJobRecord& record,
                                          const Transaction& txn) {
     writer_.put(jobs_by_id_, id, record, txn);
-    writer_.remove(jobs_runnable_, old_key, id, txn);
-    writer_.put(jobs_runnable_, new_key, id, txn);
+    writer_.remove(jobs_runnable_, old_keys.queue_order, id, txn);
+    writer_.remove(jobs_by_status_, old_keys.status, id, txn);
+    writer_.remove(jobs_by_lease_, old_keys.lease_until, id, txn);
+    writer_.put(jobs_runnable_, new_keys.queue_order, id, txn);
+    writer_.put(jobs_by_status_, new_keys.status, id, txn);
+    writer_.put(jobs_by_lease_, new_keys.lease_until, id, txn);
 }
 ```
 
 `RuntimeQueueStorage` является adapter-local `agent-memory-cpp` abstraction.
-`mdbx-containers` предоставляет только `KeyValueTable`, `ReverseIndexTable` и
-atomic transaction mechanics из §12.5.
+`mdbx-containers` предоставляет только `KeyValueTable`, `RangeIndexTable`,
+`ReverseIndexTable` и atomic transaction mechanics из §12.5.
 
 ### 12.8 Downstream addressable compression pattern (informational)
 
@@ -1237,10 +1283,9 @@ storage properties, не интерпретируя application payload:
 
 - `KeyValueTable<K, OpaquePayload>` для application-owned descriptor-ов, если
   canonical `SourceRef` / `ResourceId` контракта недостаточно.
-- `ReverseIndexTable<CompositeKey<ScopeId, FromId, Tag>, Payload>` и paired
-  reverse orientation для efficient outgoing/incoming traversal. Existing
-  `graph_edges_by_src` / `graph_edges_by_dst` уже покрывают этот pattern для
-  unit-to-unit relations.
+- Paired relation indexes for efficient outgoing/incoming traversal. Existing
+  `graph_edges_by_src` / `graph_edges_by_dst` already cover this pattern for
+  unit-to-unit relations when their values include the opposite endpoint.
 - Canonical projection identity остаётся composite key-ем
   `(ScopeId, UnitId, ProjectionKind, revision)` из `unit_projections`; отдельный
   `ProjectionId = uint64_t` не вводится в upstream TZ.
@@ -1254,7 +1299,30 @@ storage properties, не интерпретируя application payload:
 ведение двух `ReverseIndexTable` orientations стабильно дублируется, можно
 вынести generic helper:
 
+Physical layout uses exactly two DBI, either newly created by the helper or
+caller-provided handles already counted in the profile manifest:
+
+```text
+outgoing:
+  ReverseIndexTable<CompositeKey<ScopeId, Source, Tag>,
+                    RelationValue<Target, Payload>>
+
+incoming:
+  ReverseIndexTable<CompositeKey<ScopeId, Target, Tag>,
+                    RelationValue<Source, Payload>>
+```
+
+If the helper wraps existing `graph_edges_by_src` / `graph_edges_by_dst`, DBI
+delta is `+0`. If it creates a new relation pair, profile delta is `+2` and
+§5.5.1 must be updated.
+
 ```cpp
+template <class Endpoint, class Payload>
+struct RelationValue {
+    Endpoint endpoint;
+    Payload payload;
+};
+
 template <class Source, class Target, class Tag, class Payload>
 struct OutgoingRelation {
     Target target;
@@ -1272,6 +1340,9 @@ struct IncomingRelation {
 template <class Source, class Target, class Tag, class Payload>
 class BidirectionalRelationIndex {
 public:
+    BidirectionalRelationIndex(ReverseIndexHandle outgoing,
+                               ReverseIndexHandle incoming);
+
     void add(const Source& source,
              const Target& target,
              const Tag& tag,
@@ -1299,9 +1370,11 @@ public:
 Acceptance для такого helper-а storage-only:
 
 - обе orientations обновляются атомарно в одной транзакции;
-- traversal order детерминирован;
+- traversal order детерминирован by `(scope, endpoint, tag, opposite endpoint)`;
 - delete не оставляет dangling reverse entries;
 - key/value encoding bounded и documented;
+- no-tag traversal uses paginated prefix/range reads; unbounded materialization
+  is not an acceptable implementation strategy;
 - `std::optional<Tag>` заменяется на project-local optional compatibility type
   в C++11 build-ах;
 - payload/tag не интерпретируются upstream.
@@ -1330,8 +1403,9 @@ Downstream decision для `agent-memory-cpp`:
 - raw documents/tool logs могут храниться в MDBX через primary
   `ResourceBodyStore`;
 - `ResourceBodyStore` владеет `ResourceId`, `SourceRef`, codec/version prefix
-  вроде `agent_memory.resource_body.v1`, max encoded descriptor size,
-  compression/checksum/encryption policy и cleanup;
+  вроде `agent_memory.resource_body.v1`, separate descriptor/body limits,
+  maximum encoded value or chunk size, compression/checksum/encryption policy
+  и cleanup;
 - reverse indexes хранят только ids, compact postings или compact relation
   payloads, но не body bytes.
 

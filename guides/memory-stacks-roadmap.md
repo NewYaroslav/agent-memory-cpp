@@ -978,8 +978,17 @@ usage_stats_index                       // если UsageStats
 ### 12.4. Compaction / runtime
 
 ```
-compaction_jobs                         // если Compaction
+compaction_jobs_by_id                   // если Compaction
   key = JobId → JobState
+
+compaction_jobs_runnable                // если Compaction
+  key = (run_after_ms, priority_rank, enqueue_sequence, job_id) → JobId
+
+compaction_jobs_by_lease                // если Compaction
+  key = (lease_until_ms, job_id) → JobId
+
+compaction_jobs_by_status               // если Compaction
+  key = job_status → DUPSORT JobId
 
 compaction_handoffs                     // если Compaction
   key = SessionId → HandoffRecord
@@ -1004,7 +1013,7 @@ schema_info
 
 ### 12.6. DBI budget
 
-Целевой максимум — 64 DBI на один MemoryStack (расширение `max_dbs` 16→64 в `mdbx-containers`). При M1-профилях типичный usage — 18-22 DBI. При FullResearch — до 30 DBI. Headroom есть.
+Целевой максимум — 64 DBI на один MemoryStack (расширение `max_dbs` 16→64 в `mdbx-containers`). При M1-профилях типичный usage — 18-25 DBI в зависимости от compaction/runtime queues. При FullResearch — до 34 DBI. Headroom есть.
 
 ### 12.7. Mode-aware DBI creation (DenseIndexConfig → DBI set)
 

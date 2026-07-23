@@ -394,22 +394,61 @@ Worker thread батчит до batch_size или max_bytes, потом flushes 
 
 `TaskQueue` / `JobStore` является downstream runtime abstraction
 `agent-memory-cpp`, а не public API `mdbx-containers`. Он владеет job lifecycle:
-`Pending`, `Running`, `Done`, `Failed`, `Dead`, retry/backoff policy,
-worker id, attempts, stale-worker recovery и cancellation.
+`Pending`, `Running`, `Done`, `Failed`, `Dead`, `Cancelled`,
+retry/backoff policy, worker leases, attempts, stale-worker recovery,
+priority/FIFO ordering и cancellation.
 
 Persistent MDBX implementation uses generic storage primitives only:
 
 ```text
 jobs_by_id:
-  KeyValueTable<JobId, OpaqueJobRecord>
+  KeyValueTable<JobId, JobRecord>
 
 jobs_runnable:
-  ReverseIndexTable<CompositeKey<StatusTag, RunAfterMs, JobId>, JobId>
+  RangeIndexTable<QueueOrderKey, JobId>
+
+jobs_by_lease:
+  RangeIndexTable<LeaseUntilKey, JobId>
+
+jobs_by_status:
+  ReverseIndexTable<JobStatus, JobId>
 ```
 
-`claim_next` выполняется как atomic compare/claim в одной write transaction:
-прочитать первый runnable index key, перечитать primary job record, проверить
-application predicate, обновить primary record и runnable index, затем commit.
+`JobRecord` хранит как минимум `job_id`, `kind`, codec/versioned payload bytes,
+`status`, `priority`, monotonic `enqueue_sequence`, `created_at_ms`,
+`run_after_ms`, `attempts`, `max_attempts`, `lease_owner`, `lease_until_ms`,
+`cancel_requested`, optional `started_at_ms`, `completed_at_ms` и `last_error`.
+
+`QueueOrderKey = (run_after_ms, priority_rank, enqueue_sequence, job_id)`, где
+меньший ключ выбирается раньше; `priority_rank` нормализуется так, чтобы higher
+logical priority сортировался раньше. `enqueue_sequence` обеспечивает FIFO для
+одинаковых `run_after_ms` и priority.
+
+`claim_next(now, worker_id, lease_duration)` выполняется как atomic
+compare/claim в одной write transaction: bounded read первого runnable key
+(`limit = 1`, `run_after_ms <= now`), перечитать primary job record, проверить
+application predicate (`Pending`, not cancelled, attempts < max), перевести job
+в `Running`, записать lease, обновить primary record and runnable/status/lease
+indexes, затем commit. Реализация не делает unbounded scan очереди.
+
+State transitions:
+
+- `enqueue` создает `Pending` record и runnable/status index entries.
+- `claim_next` переводит `Pending -> Running`, снимает runnable entry и ставит
+  lease/status entries.
+- `renew_lease` обновляет `lease_until_ms` и `jobs_by_lease`.
+- `complete` переводит `Running -> Done`, удаляет lease entry и обновляет
+  status.
+- `fail_retry` переводит `Running -> Pending`, увеличивает attempts,
+  применяет backoff в `run_after_ms` и возвращает runnable entry.
+- `fail_dead` переводит `Running -> Dead`, когда retry budget исчерпан.
+- `request_cancel` переводит `Pending -> Cancelled`; для `Running` ставит
+  `cancel_requested`, после чего worker завершает cooperative cancel либо
+  lease recovery переводит record в terminal/cancellable state.
+- `recover_expired_leases(now)` bounded-scan-ит `jobs_by_lease` по
+  `lease_until_ms <= now` и возвращает idempotent jobs в `Pending` или помечает
+  non-idempotent jobs как `Failed`/`Dead` по policy.
+
 `mdbx-containers` отвечает только за generic tables and transaction
 atomicity; runtime semantics остаются здесь.
 

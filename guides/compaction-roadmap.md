@@ -29,7 +29,7 @@ evidence are part of the semantic contract. See
 
 ### 2.1. Architecture
 
-`CompactionWorker` — фоновый компонент `MemoryStack`, обрабатывающий compaction jobs. Один worker thread per MemoryStack (per ADR-013, см. также Open Issue 17.6 в `memory-stacks-roadmap.md`). Использует downstream `TaskQueue`/`JobStore` из `runtime-services-roadmap.md` §4.6 для persistent очереди; MDBX persistence строится на storage recipe `mdbx-containers-extension-tz.md` §12.5 и DBI `compaction_jobs` + `compaction_handoffs` из `memory-stacks-roadmap.md` секции 12.4 для operational state.
+`CompactionWorker` — фоновый компонент `MemoryStack`, обрабатывающий compaction jobs. Один worker thread per MemoryStack (per ADR-013, см. также Open Issue 17.6 в `memory-stacks-roadmap.md`). Использует downstream `TaskQueue`/`JobStore` из `runtime-services-roadmap.md` §4.6 для persistent очереди; MDBX persistence строится на storage recipe `mdbx-containers-extension-tz.md` §12.5: `compaction_jobs_by_id`, `compaction_jobs_runnable`, `compaction_jobs_by_lease`, `compaction_jobs_by_status` плюс `compaction_handoffs` для operational handoff state.
 
 ```cpp
 class CompactionWorker {
@@ -68,7 +68,10 @@ Worker создаётся через `MemoryStack::compaction()` (см. `memory-
 Решение: один worker thread per MemoryStack (per Open Issue 17.6 в `memory-stacks-roadmap.md`).
 
 - Write operations (on-write cheap jobs) и compaction jobs используют одну MDBX транзакцию через `MultiTableWriter` (`mdbx-containers-extension-tz.md` секция 3.7).
-- Compaction jobs ждут в persistent queue `compaction_jobs` и обрабатываются последовательно (FIFO с учётом priority).
+- Compaction jobs ждут в persistent queue с DBI
+  `compaction_jobs_by_id`, `compaction_jobs_runnable`,
+  `compaction_jobs_by_lease` и `compaction_jobs_by_status`; worker
+  обрабатывает их последовательно (FIFO с учётом priority).
 - Нет параллельного compaction внутри одного stack — избежание lock contention на secondary indexes.
 - Worker thread использует per-thread transaction model из `mdbx-containers` (per-thread → один worker thread владеет одной активной транзакцией).
 - On-write cheap operations (mark dirty, enqueue DecayJob) выполняются в вызывающем потоке через `MultiTableWriter`, не блокируют worker.
@@ -168,7 +171,7 @@ struct JobOutcome {
 
 ### 3.3. JobState (storage representation)
 
-Сериализуемая запись для DBI `compaction_jobs` (key = `JobId`, сериализация msgpack/flat binary):
+Сериализуемая запись для DBI `compaction_jobs_by_id` (key = `JobId`, сериализация msgpack/flat binary). Secondary queue indexes следуют контракту `runtime-services-roadmap.md` §4.6:
 
 ```cpp
 struct JobState {
@@ -176,16 +179,20 @@ struct JobState {
     ICompactionJob::Kind kind;
     std::string name;
     std::vector<uint8_t> params_blob;          // сериализованные params
-    JobStatus status = JobStatus::Pending;     // Pending, Running, Done, Failed, Dead
+    JobStatus status = JobStatus::Pending;     // Pending, Running, Done, Failed, Dead, Cancelled
+    int priority = 0;
+    uint64_t enqueue_sequence = 0;
     int64_t created_at_ms = 0;
     int64_t started_at_ms = 0;
     int64_t completed_at_ms = 0;
     int64_t run_after_ms = 0;                  // для delayed jobs
+    int64_t lease_until_ms = 0;
     uint32_t attempts = 0;
     uint32_t max_attempts = 3;
+    bool cancel_requested = false;
     std::string last_error;
     JobOutcome outcome;
-    std::optional<std::string> worker_id;      // set while Running
+    std::optional<std::string> worker_id;      // lease owner while Running
     std::optional<HandoffState> handoff_state; // checkpoint для resume
 };
 ```
@@ -393,7 +400,9 @@ class EmbeddingRecomputeJob : public ICompactionJob {
 };
 ```
 
-См. также `mdbx-containers-extension-tz.md` секция 12.4 (Decay-механика в MemoryStore) для контекста по embedding meta полям.
+См. также `mdbx-containers-extension-tz.md` §5.5 (`embedding_meta`,
+`embedding_vectors`) для storage layout embedding meta полей и
+`policies-roadmap.md` для downstream decay policy.
 
 ### 4.7. CompactionHandoffJob (meta-job)
 
@@ -739,7 +748,7 @@ if (handoff && handoff->status == HandoffStatus::InProgress) {
 | Шаг | Что | Зависимости |
 |---|---|---|
 | 14.0 | `ICompactionJob` interface + `CompactionWorker` skeleton + `JobState` сериализация | Шаги 1-2 (envelope + DBI) |
-| 14.1 | `compaction_jobs` DBI + downstream `TaskQueue` integration (`runtime-services-roadmap.md` §4.6; storage recipe `mdbx-containers-extension-tz.md` §12.5) + `DecayJob`/`DedupeJob`/`ArchiveColdJob` (M1 minimum) | 14.0, шаги 5, 10 (components + DecayPolicy) |
+| 14.1 | compaction queue DBIs (`compaction_jobs_by_id`, `compaction_jobs_runnable`, `compaction_jobs_by_lease`, `compaction_jobs_by_status`) + downstream `TaskQueue` integration (`runtime-services-roadmap.md` §4.6; storage recipe `mdbx-containers-extension-tz.md` §12.5) + `DecayJob`/`DedupeJob`/`ArchiveColdJob` (M1 minimum) | 14.0, шаги 5, 10 (components + DecayPolicy) |
 | 14.2 | `CompactionHandoff` structure + crash recovery + `CompactionHandoffJob` meta-job | 14.1 |
 | 14.3 | `MergeJob` для episode compaction | `ConversationEpisodePayload` (см. `knowledge-units-roadmap.md` 5.5.4) |
 | 14.4 | `SummaryPromotionJob` (с `ITextAdapter` интерфейсом) + `EmbeddingRecomputeJob` | `CompiledArticlePayload`, `DenseVectors` capability |

@@ -18,7 +18,8 @@ agent-memory-cpp реализует ДОМЕННЫЕ КОНТРАКТЫ (Knowled
 
 - `ReverseIndexTable` — secondary index через DUPSORT
 - `RangeIndexTable` — range queries + pagination
-- `TypeDiscriminatedTable<EnumTag, ValueVariant>` — type-tag polymorphic
+- `TypeDiscriminatedTable<EnumTag, Key, ValueTypes...>` — type-tag
+  polymorphic values behind caller-owned keys
 - `CompositeKey<Parts...>` + helpers — typed composite keys
 - `MultiTableWriter` / `Connection::multi_write` — atomic multi-table writes
 - `KeyValueTable` extensions (batch, diagnostics, paginated_range)
