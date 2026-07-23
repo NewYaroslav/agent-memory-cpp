@@ -7,7 +7,7 @@
 ## 1. Purpose
 
 - Что описывает: PromptCache split (`IPromptPrefixCache` provider-side + `IResponseCache` local opt-in), AnthropicCacheControlAdapter, AsyncIndexer (batch вставки в lexical/vector индексы), WriteGate (применяет WritePolicy). Все сервисы ортогональны profile (доступны через интерфейсы, не зависят от конкретного MemoryStack).
-- Cross-references: memory-stacks-roadmap.md (ADR-013, секции 7, 12.4), knowledge-base-roadmap.md (RetrievalTrace), policies-roadmap.md (WritePolicy), compaction-roadmap.md (job submission).
+- Cross-references: memory-stacks-roadmap.md (ADR-013, секции 7, 11, 16), knowledge-base-roadmap.md (RetrievalTrace), policies-roadmap.md (WritePolicy), compaction-roadmap.md (job submission), mdbx-containers-extension-tz.md (§12.5 storage recipe, §5.5.1 DBI budget).
 
 ## 2. Layer Architecture Review
 
@@ -418,24 +418,26 @@ jobs_by_status:
 ```
 
 `JobRecord` хранит как минимум `job_id`, `kind`, codec/versioned payload bytes,
-`status`, `priority`, monotonic `enqueue_sequence`, `created_at_ms`,
+`status`, `priority`, `created_at_ms`,
 `run_after_ms`, `attempts`, `max_attempts`, `lease_owner`, `lease_until_ms`,
 `cancel_requested`, optional `started_at_ms`, `completed_at_ms` и `last_error`.
 
 `ScheduleKey = (run_after_ms, job_id)` используется только для delayed
-promotion. `ReadyOrderKey = (priority_rank, enqueue_sequence, job_id)`, где
-меньший ключ выбирается раньше; `priority_rank` нормализуется так, чтобы higher
-logical priority сортировался раньше. `enqueue_sequence` обеспечивает FIFO для
-одинаковой priority.
+promotion. `ReadyOrderKey = (priority_rank, job_id)`, где меньший ключ
+выбирается раньше; `priority_rank` нормализуется так, чтобы higher logical
+priority сортировался раньше. `LeaseUntilKey = (lease_until_ms, job_id)`.
+`JobId` является durable monotonic sequence внутри queue и тем самым
+обеспечивает FIFO для одинаковой priority без отдельной sequence/meta DBI.
 
 `claim_next(now, worker_id, lease_duration)` выполняется как atomic
 compare/claim в write transactions:
 
 1. `promote_due(now)` переносит все `jobs_scheduled` entries с
    `run_after_ms <= now` в `jobs_ready`. Implementation may process bounded
-   pages, but it must not claim from ready until the due prefix for `now` is
-   drained; otherwise high-priority due jobs could be hidden behind older
-   low-priority jobs.
+   pages, but it must repeatedly read the first due page (`offset = 0`) or use
+   cursor pagination after each mutation, and it must not claim from ready until
+   the due prefix for `now` is drained; otherwise high-priority due jobs could
+   be hidden behind older low-priority jobs.
 2. bounded read первого ready key (`limit = 1`), перечитать primary job record,
    проверить application predicate (`Pending`, not cancelled, attempts <
    max), перевести job в `Running`, записать lease, обновить primary record and
@@ -710,7 +712,9 @@ returning a shallow executable plan.
 1. Stop accepting new requests.
 2. AsyncIndexer.flush() — finish pending batches.
 3. CompactionWorker.stop() — finish current job, then exit.
-4. `IResponseCache` — опционально persist to DBI (`response_cache`).
+4. `IResponseCache` — опционально persist to DBI (`response_cache`), только
+   если выбран `enable_response_cache=true`; physical storage costs +1 opt-in
+   profile delta in `mdbx-containers-extension-tz.md` §5.5.1.
 5. `IPromptPrefixCache` — persistence не требуется (ключи детерминированно вычисляются).
 6. Освобождение handles.
 
@@ -833,7 +837,7 @@ Per memory-stacks-roadmap.md секция 16, конкретизация:
 | 11.2 | AsyncIndexer (background thread + batch processing) |
 | 12.5 | `IPromptPrefixCache` (in-memory LRU key dedup) + `AnthropicCacheControlAdapter` |
 | 12.6 | `IResponseCache` stub (default OFF, no-op implementation для safe by default) |
-| M2.x | `IResponseCache` full implementation + MDBX persistence (`response_cache` DBI) |
+| M2.x | `IResponseCache` full implementation + MDBX persistence (`response_cache` DBI, +1 opt-in profile delta in `mdbx-containers-extension-tz.md` §5.5.1) |
 | M2.x | `IMemoryAwareContextPlanner` + urgency/recall/risk-aware context policy |
 
 ## 10. Open Issues
@@ -847,7 +851,8 @@ Per memory-stacks-roadmap.md секция 16, конкретизация:
 
 ## 11. References
 
-- `guides/memory-stacks-roadmap.md` — секции 7, 11, 12.4, 16.
+- `guides/memory-stacks-roadmap.md` — секции 7, 11, 16; ADR-013.
+- `guides/mdbx-containers-extension-tz.md` — §12.5 runtime queue storage recipe and §5.5.1 DBI budget.
 - `guides/knowledge-base-roadmap.md` — RetrievalTrace интеграция.
 - `guides/policies-roadmap.md` — WritePolicy.
 - `guides/compaction-roadmap.md` — CompactionWorker.

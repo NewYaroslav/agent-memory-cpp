@@ -30,7 +30,7 @@ agent-memory-cpp реализует ДОМЕННЫЕ КОНТРАКТЫ (Knowled
 
 - `BidirectionalRelationIndex<Scope, Source, Target, Tag, Payload>` — только
   после двух независимых consumers; scope/tag/payload opaque, traversal
-  page-based.
+  page-based with DUPSORT-aware cursor `(encoded_key, encoded_value)`.
 - `LargeValueStore<BlobId>` / `ChunkedBlobStore<BlobId>` — только если нужны
   partial reads, chunk-level checksums/compression, bounded chunks, orphan
   cleanup и повторное использование за пределами `agent-memory-cpp`.
@@ -131,4 +131,5 @@ agent-memory-cpp реализует ДОМЕННЫЕ КОНТРАКТЫ (Knowled
 - `guides/lexical-search-roadmap.md` — BM25F fielded storage
 - `guides/optimization-roadmap.md` — compression, binary signature index, bucket index
 - `guides/architecture.md` — общая архитектура проекта
-- `guides/memory-stacks-roadmap.md` — центральный манифест архитектуры (CapabilitySet, MemoryProfileSpec, MemoryStack, MDBX layout, Maturity Levels M0/M1/M2).
+- `guides/memory-stacks-roadmap.md` — центральный манифест архитектуры (CapabilitySet, MemoryProfileSpec, MemoryStack, validation, Maturity Levels M0/M1/M2).
+- `guides/mdbx-containers-extension-tz.md` — canonical physical MDBX manifest and DBI budget.

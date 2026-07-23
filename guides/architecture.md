@@ -231,10 +231,11 @@ agent framework bridges stay in `adapters/` and `examples/`. They do
 not enter the core contract.
 
 The canonical, currently normative specification of the data model,
-profiles, stacks, capability matrix, validation rules, and MDBX
-layout lives in
-[`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md). See
-also the short cross-reference in "Knowledge Base Direction
+profiles, stacks, capability matrix, validation rules, and maturity lives in
+[`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md). The sole
+canonical physical MDBX manifest and DBI budget live in
+[`guides/mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md)
+§5.5/§5.5.1. See also the short cross-reference in "Knowledge Base Direction
 (cross-reference)" below.
 
 ## Planned Embedding Direction

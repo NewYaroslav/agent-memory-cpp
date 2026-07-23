@@ -1,6 +1,6 @@
 # compaction-roadmap.md
 
-Спецификация CompactionWorker, job types, scheduling и CompactionHandoff для подсистемы памяти `agent-memory-cpp`. Документ конкретизирует ADR-009 (Compaction strategy) из `guides/memory-stacks-roadmap.md` секции 12.4 и описывает runtime-сервис, который ортогонален MemoryStack (per ADR-013).
+Спецификация CompactionWorker, job types, scheduling и CompactionHandoff для подсистемы памяти `agent-memory-cpp`. Документ конкретизирует ADR-009 (Compaction strategy) из `guides/memory-stacks-roadmap.md` и описывает runtime-сервис, который ортогонален MemoryStack (per ADR-013). Persistent queue contract живёт в `runtime-services-roadmap.md` §4.6, physical queue DBI recipe — в `mdbx-containers-extension-tz.md` §12.5/§5.5.1.
 
 > C++17 compliance: кодовые сниппеты используют `const std::vector&` вместо `std::span` и явные сеттеры/positional constructor calls вместо designated initializers. Decay formula — canonical (см. `policies-roadmap.md` §2.3). Reading list по RAG / summary-tree / community-summary papers: `guides/research-reading-map.md`.
 
@@ -14,7 +14,7 @@
 - `CompactionHandoff` — структурированная запись для crash recovery и operational handoff.
 - Scheduling policy: hybrid on-write + on-schedule; threading model; crash recovery; admin operations (CLI + programmatic).
 
-Cross-references: `guides/memory-stacks-roadmap.md` (ADR-009, ADR-013, секция 8, 12.4, 16 шаг 14), `guides/knowledge-units-roadmap.md` (CompactionMetaComponent, Lifecycle FSM, episode compaction 5.5.4), `guides/knowledge-base-roadmap.md` (DecayAwareRetriever, eval pipeline CompactionHandoff test 9.6), `guides/policies-roadmap.md` future (DecayPolicy, WritePolicy), `guides/runtime-services-roadmap.md` (persistent runtime queue), `guides/mdbx-containers-extension-tz.md` (generic storage recipe 12.5, MultiTableWriter 3.7).
+Cross-references: `guides/memory-stacks-roadmap.md` (ADR-009, ADR-013, секция 8, 16 шаг 14), `guides/knowledge-units-roadmap.md` (CompactionMetaComponent, Lifecycle FSM, episode compaction 5.5.4), `guides/knowledge-base-roadmap.md` (DecayAwareRetriever, eval pipeline CompactionHandoff test 9.6), `guides/policies-roadmap.md` future (DecayPolicy, WritePolicy), `guides/runtime-services-roadmap.md` (§4.6 persistent runtime queue), `guides/mdbx-containers-extension-tz.md` (generic storage recipe 12.5, DBI budget 5.5.1, MultiTableWriter 3.7).
 
 Non-goals: подробная спецификация embedding model адаптеров, LLM-based summary generation (использует внешний `ITextAdapter`), distributed compaction (multi-process).
 
@@ -185,7 +185,7 @@ struct JobState {
     std::vector<uint8_t> params_blob;          // сериализованные params
     JobStatus status = JobStatus::Pending;     // Pending, Running, Done, Failed, Dead, Cancelled
     int priority = 0;
-    uint64_t enqueue_sequence = 0;
+    // FIFO ordering uses monotonic JobId per runtime-services-roadmap.md §4.6.
     int64_t created_at_ms = 0;
     int64_t started_at_ms = 0;
     int64_t completed_at_ms = 0;

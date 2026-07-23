@@ -2,7 +2,7 @@
 
 > Все C++ сниппеты в этом документе — illustrative C++17 (не designated initializers, не std::span, не std::strong_ordering). Компилируемые примеры — отдельная задача `examples/` при старте реализации.
 
-Центральная спецификация архитектуры памяти `agent-memory-cpp`. Определяет модель данных (envelope + components + projections), декларативную спецификацию профилей, runtime-стек, capability matrix, валидационные правила и MDBX layout. Документ supersede'ит компонент-агностичные части `knowledge-base-roadmap.md` и `knowledge-units-roadmap.md` для разделов, относящихся к profiles/stacks.
+Центральная спецификация архитектуры памяти `agent-memory-cpp`. Определяет модель данных (envelope + components + projections), декларативную спецификацию профилей, runtime-стек, capability matrix, валидационные правила и maturity levels. Единственный canonical physical MDBX manifest и DBI budget живут в `guides/mdbx-containers-extension-tz.md` §5.5/§5.5.1. Документ supersede'ит компонент-агностичные части `knowledge-base-roadmap.md` и `knowledge-units-roadmap.md` для разделов, относящихся к profiles/stacks.
 
 > Research background for the M2+ retrieval-hook contracts
 > (`IQueryTransformer`, `IRetrievalEvaluator`) and for dense-retrieval
@@ -79,7 +79,9 @@ Layer C: SearchProjections (retrieval-specific text views)
   QAQuestion, QAAnswer, Summary, CodeSymbols
 ```
 
-Каждый слой имеет собственный MDBX layout и обновляется независимо (но атомарно через MultiTableWriter при coordinated writes).
+Каждый слой имеет собственные logical stores и обновляется независимо (но
+атомарно через MultiTableWriter при coordinated writes). Physical MDBX DBI
+names and key shapes закреплены в `mdbx-containers-extension-tz.md` §5.5.
 
 ### 3.2. Обоснование
 
@@ -998,7 +1000,9 @@ profile-delta row to TZ §5.5.1.
 - ChunkPayload (minimal) для BasicRagStack с M0. Остальные per-kind payloads (FactPayload, ConversationEpisodePayload, CompiledArticlePayload) — M1.
 - BasicRagStack, QAKnowledgeBaseStack.
 - Чтение через ILexicalIndex, запись через простой write API.
-- scope_id во всех DBI keys (multi-tenancy с самого начала).
+- `scope_id` обязателен во всех secondary/range keys, которые обслуживают
+  tenant/project/agent-scoped lookup или range query. Primary lookup by globally
+  unique `UnitId` является явным исключением.
 
 Не включено (M1+): Components, расширенные QAPayload (variants/frequency/bi-temporal) и остальные per-kind payloads (FactPayload, ConversationEpisodePayload, CompiledArticlePayload), дополнительные SearchProjections (QAQuestion/QAAnswer/Summary), DecayPolicy/WritePolicy, Compaction, PromptPrefixCache + ResponseCache, full SourceRef DBI (в M0 — только inline summary).
 
@@ -1140,8 +1144,10 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 ### Шаг 1: Envelope + базовые DBI
 
 - Создать `KnowledgeUnitEnvelope` struct (lean hot-path envelope, ~16 полей: id, kind, scope_id, primary_text, display_text, lifecycle_state, sources, timestamps, revision, lineage fields, priority_weight).
-- MDBX DBI: `knowledge_units`, `content_key_to_unit_id`,
-  `knowledge_units_by_kind`, `schema_info`.
+- MDBX DBI: default-open physical set from
+  `mdbx-containers-extension-tz.md` §5.5, including identity DBI
+  `knowledge_units`, `content_key_to_unit_id`, `knowledge_units_by_kind` and
+  `schema_info`.
 - Сериализация envelope через flat binary (msgpack или custom).
 - `MemoryStack::open()` для пустой spec (только envelope + lexical).
 - Lifecycle FSM с 4 durable states (Active, Superseded, Deprecated, Erased). SoftSuppressed/cooldown — runtime state в UsageStatsComponent, не durable lifecycle.

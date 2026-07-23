@@ -13,11 +13,21 @@
 
 Документ фиксирует **спектр внешних memory-архитектур** для LLM-агентов и сопоставляет их с ролями, которые `agent-memory-cpp` готов принять на себя. Цель — дать набор решений «когда что выбирать», а не канонизировать один источник истины. Сравнения построены на цитатах из первичных конспектов в `ai-agent-playbook`.
 
-Этот roadmap — компас для выбора архитектуры. Реализационные слои (envelope/components/projections, MDBX layout, decay-aware scoring) живут в [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) (in-house стеки для `agent-memory-cpp`). Этот документ смотрит наружу: какие внешние архитектуры конкурируют или дополняют наш подход.
+Этот roadmap — компас для выбора архитектуры. Реализационные слои
+(envelope/components/projections, profiles, decay-aware scoring) живут в
+[`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) (in-house стеки для
+`agent-memory-cpp`); единственный canonical physical MDBX manifest and DBI
+budget живут в [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md)
+§5.5/§5.5.1. Этот документ смотрит наружу: какие внешние архитектуры
+конкурируют или дополняют наш подход.
 
 Related roadmaps:
 
-- [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — внутренний манифест: ADR'ы, `MemoryProfileSpec`, `MemoryStack`, capability matrix, MDBX layout, M0/M1/M2 maturity.
+- [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — внутренний манифест:
+  ADR'ы, `MemoryProfileSpec`, `MemoryStack`, capability matrix, validation,
+  M0/M1/M2 maturity.
+- [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5/§5.5.1
+  — sole canonical physical MDBX manifest and DBI budget.
 - [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) — retrieval flow, decay-aware scoring, evaluation pipeline.
 - [`lexical-search-roadmap.md`](lexical-search-roadmap.md) — BM25/BM25F первая линия, в которой наш стек пересекается с BM25-семейством из playbook.
 - [`optimization-roadmap.md`](optimization-roadmap.md) — vector/binary/ANN optimization поверх retrieval primitives.

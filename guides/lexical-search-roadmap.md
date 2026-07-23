@@ -210,10 +210,10 @@ Token strings should be normalized before they receive ids:
 
 ```text
 lexical_token_by_text:
-    normalized_token -> token_id
+    (scope_id, normalized_token) -> token_id
 
 lexical_token_by_id:
-    token_id -> normalized_token
+    (scope_id, token_id) -> normalized_token
 ```
 
 The reverse dictionary is not required for scoring, but it is useful for
@@ -442,11 +442,11 @@ field_to_postings:
     value = PostingStats { tf, positions_count, generation, resource_id }
 
 lexical_token_by_text:
-    key   = normalized token
+    key   = (scope_id, normalized token)
     value = token_id
 
 lexical_token_by_id:
-    key   = token_id
+    key   = (scope_id, token_id)
     value = normalized token
 
 lexical_chunk_stats:

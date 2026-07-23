@@ -484,7 +484,9 @@ When a new raw resource arrives:
      - Schema validation
      - LifecycleState = Active
      - CompactionMetaComponent.dirty_decay = true
-     - knowledge_units_by_kind update
+     - content_key_to_unit_id update
+     - scope-aware knowledge_units_by_kind update
+     - source_refs update if FullSourceRefs profile is enabled
      - If dirty threshold reached → enqueue DecayJob
 6. MultiTableWriter commits atomically.
 ```

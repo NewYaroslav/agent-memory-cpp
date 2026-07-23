@@ -724,4 +724,5 @@ Baseline — 768-dim float32 embedding (3,072 bytes per vector).
 - [`retrieval-techniques-roadmap.md`](retrieval-techniques-roadmap.md) — typology of retrieval techniques; binary embeddings filter candidates, retrieval still ranks.
 - [`memory-routing-roadmap.md`](memory-routing-roadmap.md) — pre-retrieval routing sits "до" binary embedding filter; both layers are cheap pre-filters in series.
 - [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) — `HybridRetrievalEngine` (existing), `IQueryTransformer` (planned), `IRetrievalEvaluator` (planned) — binary embeddings integrate as candidate filter inside retrieval.
-- [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — `MemoryProfileSpec`, `DenseIndexConfig`, `DenseIndexMode`, MDBX layout, capability flags, embedding migration workflow (`EmbeddingRecomputeJob`).
+- [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — `MemoryProfileSpec`, `DenseIndexConfig`, `DenseIndexMode`, capability flags, embedding migration workflow (`EmbeddingRecomputeJob`).
+- [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) — canonical physical MDBX manifest and DBI budget.

@@ -151,7 +151,9 @@ struct SourceRef {
 - В envelope остаётся `vector<SourceRefSummary>` (≤3).
 - Полные `SourceRef` с `excerpt_text` хранятся в отдельной `source_refs` DBI (key = `KnowledgeUnitId` → `vector<SourceRef>`).
 - Reverse lookup по `resource_id` строится через `metadata_filters` (DBI) — см. canonical physical manifest `mdbx-containers-extension-tz.md` §5.5.
-- При необходимости быстрого reverse lookup добавляется отдельный DBI `source_refs_by_resource` (опционально, не в M1 budget).
+- При необходимости быстрого reverse lookup добавляется отдельный DBI
+  `source_refs_by_resource` (опциональный +1 profile delta; см.
+  `mdbx-containers-extension-tz.md` §5.5.1).
 
 Пример создания envelope с inline summary (M0):
 
@@ -754,7 +756,7 @@ enum class DerivedRecordKind : uint32_t {
 | Component / Payload | DBI имя | Open when |
 |---|---|---|
 | KnowledgeUnitEnvelope | `knowledge_units` | always |
-| KnowledgeUnit by kind | `knowledge_units_by_kind` | always (DUPSORT) |
+| KnowledgeUnit by kind | `knowledge_units_by_kind` | always (scope-aware DUPSORT) |
 | UsageStatsComponent | `unit_components` (tag=UsageStats) | UsageStats=true |
 | SpeakerComponent | `unit_components` (tag=Speaker) | SpeakerAttribution=true |
 | TemporalComponent | `unit_components` (tag=Temporal) | TemporalValidity=true |
@@ -765,6 +767,7 @@ enum class DerivedRecordKind : uint32_t {
 | ChunkPayload | `chunk_payloads` | Chunk kind (default, всегда) |
 | ConversationEpisodePayload | `conversation_episode_payloads` | ConversationMemory=true |
 | CompiledArticlePayload | `compiled_article_payloads` | CompiledArticles=true |
+| Full SourceRef vector | `source_refs` | FullSourceRefs=true (M1) |
 | SearchProjections | `unit_projections` | indexed retrieval (always для BasicRag+) |
 
 Operational components живут в единой `unit_components` DBI через `TypeDiscriminatedTable` (из `mdbx-containers-extension-tz.md`). Per-kind payloads — отдельные таблицы для изоляции schema и быстрого scan по kind.
@@ -773,7 +776,12 @@ Operational components живут в единой `unit_components` DBI чере
 
 При `MemoryStack::open(spec)`:
 
-1. Всегда создаются core DBI: `knowledge_units`, `knowledge_units_by_kind`, `schema_info`.
+1. Core/default DBI берутся из canonical manifest
+   `mdbx-containers-extension-tz.md` §5.5. Для knowledge-unit identity path это
+   включает `knowledge_units`, `content_key_to_unit_id`,
+   `knowledge_units_by_kind`, `unit_components`, `unit_projections`,
+   `metadata_filters` и `schema_info`; capability DBI вроде `source_refs`
+   открываются по профилю.
 2. По capability флагам создаются дополнительные DBI (см. таблицу 8.1).
 3. При drift detected (см. `memory-stacks-roadmap.md` секция 14): error или auto-migrate (per ADR-003, ADR-004).
 
