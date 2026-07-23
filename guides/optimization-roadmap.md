@@ -311,6 +311,39 @@ AGENT_MEMORY_HAS_ZSTD
 - Add tests that verify round-trip content, uncompressed hash, codec metadata,
   and missing-dictionary failures.
 
+### Raw Resource Body Compression
+
+Raw resources (`.md`, `.txt`, extracted `.pdf`, transcripts, logs) are a
+separate compression domain from embeddings, postings and generated summaries.
+The roadmap target is to support both:
+
+- MDBX-backed `ResourceBodyStore`, where body chunks live in primary blob/body
+  tables and are referenced by `ResourceId` / `SourceRef`;
+- file-pack storage, where the original folder layout can be preserved and
+  files are replaced or mirrored by compressed container artifacts that require
+  an application viewer/exporter.
+
+Resource-body compression contract:
+
+- compression unit is a bounded body chunk, not the entire corpus;
+- each body or chunk records `codec`, `codec_level`, `dictionary_id`,
+  `uncompressed_size`, `uncompressed_hash`, content type and source revision;
+- chunk boundaries should align with ingestion/chunking offsets when feasible
+  so citation drill-down does not decompress unrelated text;
+- reverse indexes, posting lists and relation indexes store ids/ranges only,
+  never inline body bytes;
+- raw body storage is optional profile delta and must be accounted for in
+  `mdbx-containers-extension-tz.md` §5.5.1 when MDBX-backed.
+
+Benchmarks before enabling compression by default:
+
+- compression ratio by source type (`md`, `txt`, extracted `pdf`, transcript,
+  logs);
+- random chunk read latency;
+- full resource restore/export latency;
+- write amplification during replace/revision updates;
+- dictionary training benefit vs operational complexity.
+
 ## Vector Encoding Tasks
 
 ### Canonical Float Storage

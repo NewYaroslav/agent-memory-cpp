@@ -1402,12 +1402,20 @@ Downstream decision для `agent-memory-cpp`:
 
 - raw documents/tool logs могут храниться в MDBX через primary
   `ResourceBodyStore`;
+- raw documents/tool logs также могут храниться во внешнем file-pack backend-е,
+  если приложению важно сохранить структуру папок и человеко-ориентированный
+  export/viewer workflow;
 - `ResourceBodyStore` владеет `ResourceId`, `SourceRef`, codec/version prefix
   вроде `agent_memory.resource_body.v1`, separate descriptor/body limits,
   maximum encoded value or chunk size, compression/checksum/encryption policy
   и cleanup;
 - reverse indexes хранят только ids, compact postings или compact relation
   payloads, но не body bytes.
+
+Document importer / card normalizer не входит в `mdbx-containers` scope.
+`agent-memory-cpp` сам решает, превращать ли raw `.md` / `.txt` / extracted
+`.pdf` в generic `Note`/`Chunk` unit, curated `Fact`/`QAPair`/`Summary`, или
+оставить только `ResourceBody` + `SearchProjection`.
 
 `KeyValueTable<ResourceId, bytes>` достаточно, если body immutable, читается
 целиком и profile задаёт небольшой maximum encoded value size. Candidate

@@ -19,6 +19,8 @@
 - Как MDBX environment раскладывается по DBI в зависимости от профиля.
 - Какие уровни зрелости (M0/M1/M2) определяют ship-it критерии.
 - Какие cross-cutting runtime-сервисы ортогональны профилям.
+- Как raw resources (`.md`, `.txt`, extracted `.pdf`, transcripts, logs) живут
+  рядом с normalized/card-like knowledge units.
 
 Non-goals документа:
 
@@ -49,6 +51,7 @@ Non-goals документа:
 | ADR-013 | Runtime services | PromptPrefixCache + optional ResponseCache, CompactionWorker, WriteGate, AsyncIndexer — отдельный слой |
 | ADR-014 | CLI | Отдельный target `agent-memory-cli`, не core library |
 | ADR-015 | Maturity Levels | M0 (MVP) / M1 (Production) / M2 (Advanced) с ship-it критериями |
+| ADR-016 | Raw resources vs normalized units | Raw ResourceBody first-class; card-like KnowledgeUnits are curated derivatives, not mandatory input format |
 
 См. также [`code-intelligence-roadmap.md`](code-intelligence-roadmap.md) для Bounded BFS + schema introspection (Pattern 5) borrowed from `codebase-memory-mcp` — это extension candidate для `GraphStore` (расширяет capability flag `GraphRelations` поверх substrate из ADR-006 GraphStorage; storage substrate и capability flag — отдельные сущности, не синонимы).
 
@@ -89,6 +92,54 @@ Layer C: SearchProjections (retrieval-specific text views)
 - Монолитный KnowledgeUnit с 50 optional полями. Отклонён: нарушает инварианты, раздувает I/O.
 - Полностью отдельные storage типы для каждого use-case. Отклонён: дублирование кода, невозможность RRF fusion, нет единого API.
 - JSON-value envelope с произвольными полями. Отклонён: теряем строгие типы C++, schema validation, индексы по typed fields.
+
+## 3A. ADR-016: Raw Resources vs Normalized Units
+
+### 3A.1. Решение
+
+Raw resources являются first-class input/storage layer, а card-like
+`KnowledgeUnit` — normalized/curated layer поверх них. Импорт `.md`, `.txt`,
+extracted `.pdf`, transcript, log или playbook не требует предварительной
+ручной конвертации в карточку. Если вход не содержит curated schema, importer
+создаёт минимальный generic document unit и связывает его с raw body через
+`ResourceId`/`SourceRef`.
+
+```text
+RawResource / ResourceBody
+  original bytes or extracted text, revisions, codec, content hash
+
+KnowledgeUnitEnvelope + Components
+  normalized semantic unit: Fact, QAPair, Note, Chunk, Summary, ...
+
+SearchProjection
+  retrieval-facing text derived from raw body or normalized payload
+```
+
+Card-like units полезны для curated knowledge: trust, tags, outdated flags,
+lifecycle, facts, QA, summaries, decisions and graph relations. Они не являются
+единственным допустимым ingestion format.
+
+### 3A.2. Обоснование
+
+Агенты часто начинают с сырой базы знаний: Obsidian vault, playbooks, markdown
+notes, `.txt` logs, PDF extracts. Требование сначала привести всё к curated
+card schema делает early RAG слишком хрупким. При этом нормализованные units
+нужны для фильтров, trust policy, lifecycle, compaction, graph relations and
+evaluation. Поэтому система поддерживает оба уровня:
+
+- raw resources обеспечивают faithful citation, export, re-chunking and
+  drill-down;
+- normalized units дают controlled semantics and policy hooks;
+- compaction/summarization может позже вывести curated facts/cards/summaries
+  из raw document units.
+
+### 3A.3. Storage boundary
+
+Raw body bytes не хранятся в envelope, `unit_components`,
+`unit_projections` или reverse indexes. Они живут в `ResourceBodyStore`
+(MDBX-backed или file-pack backend), а search indexes хранят ids, compact
+postings, projections and source ranges. См. `mdbx-containers-extension-tz.md`
+§12.9 and `optimization-roadmap.md` §"Raw Resource Body Compression".
 
 ## 4. ADR-002: MemoryStack vs MemoryProfileSpec
 

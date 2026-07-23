@@ -13,6 +13,9 @@
 - `KnowledgeUnitKind` (canonical enum) и kind → payload mapping (какой kind использует какой payload).
 - Per-kind правила генерации `primary_text` и `SearchProjection`.
 - `SourceRef` contract и migration mapping.
+- Generic raw document import: как `.md`, `.txt`, extracted `.pdf`,
+  transcripts and logs становятся searchable units без предварительной
+  curated-card конвертации.
 - `KnowledgeUnitId` monotonic-uint64 scheme (opaque, никогда не reused; content-addressing через отдельный `KnowledgeUnitKey`).
 - Lifecycle FSM (4 durable states: Active / Superseded / Deprecated / Erased) и anti-loop подсвинок через `UsageStatsComponent.cooldown_until_ms`.
 - Manifest integration через `DerivedRecordKind`.
@@ -66,7 +69,7 @@ enum class KnowledgeUnitKind : uint16_t {
 | Summary | (no specific payload) | Embedded в primary_text | компрессированное представление |
 | CompiledArticle | CompiledArticlePayload | — | Karpathy-style wiki articles |
 | ConversationEpisode | ConversationEpisodePayload | — | multi-utterance bundle |
-| Note | (no specific payload) | Embedded в primary_text | generic free-form |
+| Note | (no specific payload) | Embedded в primary_text, `ResourceBodyStore` source | generic free-form / raw document entrypoint |
 | Task | (reserved) | — | для future handoff structure |
 | Decision | (reserved) | — | для future handoff structure |
 | Custom | metadata_typed["payload"] | — | escape hatch через JSON-like value |
@@ -76,6 +79,31 @@ enum class KnowledgeUnitKind : uint16_t {
 ### 2.2. Reserved kinds
 
 `Task` (handoff records) и `Decision` (decision points в agent reasoning) зарезервированы для follow-up. Контракты будут определены, когда соответствующие use-cases материализуются (M2+).
+
+### 2.3. Generic raw document units
+
+Raw files do not have to arrive as curated cards. For `.md`, `.txt`,
+extracted `.pdf`, transcript and log imports, the importer creates a minimal
+generic unit when no stronger domain mapping is available:
+
+- `kind = KnowledgeUnitKind::Note` for one document-level unit, or
+  `kind = KnowledgeUnitKind::Chunk` when the importer materializes each chunk
+  as a separate retrieval unit;
+- `ResourceId` is derived from stable URI/path plus content hash or from an
+  application-provided identity;
+- `title` comes from metadata, H1, first meaningful heading, or filename;
+- `trust_level` defaults to profile policy (`C`/`D`) unless supplied by source
+  metadata;
+- tags come from frontmatter/sidecar metadata when available;
+- `SourceRef` points back to the raw resource and byte/text range;
+- `SearchProjection::Original` is generated from extracted text immediately;
+- curated Facts/QAPairs/Summaries may be derived later by compaction or
+  application normalizers.
+
+This is intentionally different from a curated card. A generic raw document
+unit is searchable and citeable, but carries weaker semantics. It should not be
+forced to pretend to be `Fact`, `QAPair`, `CompiledArticle` or any other
+curated kind until an explicit normalizer/extractor produces those units.
 
 ## 3. SourceRef (canonical contract)
 
