@@ -166,7 +166,21 @@ PR #85 adds `timing_ms.rerank_prepare_ms` to separate steady-state query timing
 from the one-time preparation needed by the exact candidate reranker. In the
 current benchmark this preparation computes document inverse norms used by the
 cosine reranker. It is excluded from per-query `exact_rerank_mean_ms` and
-end-to-end query latency.
+end-to-end query latency. The timer starts after `VectorSimilarityComputer`
+construction, so it measures document inverse norm preparation rather than full
+reranker object initialization.
+
+Provenance:
+
+- git head: `1d10c39993564058c9eb55fbceb3d1417262bee6`;
+- environment: local Windows run; CPU and compiler details were not pinned for
+  this directional snapshot;
+- exact similarity backend in the selected local snapshots: `avx2`;
+- flat Hamming backend in the selected local snapshots: `hardware_popcount`;
+- multi-probe Hamming backend: not reported as a separate JSON field in this
+  benchmark version;
+- selected 100k rerun output:
+  `tmp\build-pr81-mingw\binary-lifecycle-100k-pr85-rerun.json`.
 
 Additional commands:
 
@@ -190,13 +204,15 @@ The first 100k PR #85 local run produced a flat binary query timing outlier
 around `79.9 ms/query`, while an immediate rerun returned to the expected
 `~7.9 ms/query` range. The table above therefore uses the rerun for 100k. The
 new field should be interpreted as a directional preparation-cost sample, not a
-statistically stable measurement.
+statistically stable measurement. The discarded first 100k run reported
+`rerank_prepare_ms = 28.774`.
 
 Interpretation update:
 
 - Preparing cosine rerank norms costs roughly `2.8 ms` at 10k and `28.4 ms` at
   100k in this local run.
-- This is small compared with one exact full-scan query at 100k, but it is not
-  free and should be accounted for in cold-start/lifecycle analysis.
+- At 100k, norm preparation costs about 69% of one exact full-scan query and
+  dominates the latency of a first binary or multi-probe query. It is a
+  material cold-start cost, although it is amortized across subsequent queries.
 - Steady-state query rows remain the right place to compare binary search plus
   exact rerank latency once document norms are already available.
