@@ -159,6 +159,11 @@ require_nonnegative_path(
     timing_ms
     binary_chunk_and_query_encoding
 )
+require_nonnegative_path(
+    "timing_ms.rerank_prepare_ms"
+    timing_ms
+    rerank_prepare_ms
+)
 require_nonnegative_path("exact_vector.build_ms" exact_vector build_ms)
 require_nonnegative_path("exact_vector.query_total_ms" exact_vector query_total_ms)
 require_nonnegative_path("exact_vector.query_mean_ms" exact_vector query_mean_ms)

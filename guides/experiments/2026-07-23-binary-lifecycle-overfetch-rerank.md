@@ -159,3 +159,44 @@ Next checks:
 - Run bit-count grids such as 128/256/512/1024 at fixed overfetch limits.
 - Repeat with real/precomputed embedding fixtures once the synthetic contract is
   stable.
+
+## 2026-07-23 / PR #85 rerank preparation timing
+
+PR #85 adds `timing_ms.rerank_prepare_ms` to separate steady-state query timing
+from the one-time preparation needed by the exact candidate reranker. In the
+current benchmark this preparation computes document inverse norms used by the
+cosine reranker. It is excluded from per-query `exact_rerank_mean_ms` and
+end-to-end query latency.
+
+Additional commands:
+
+```powershell
+tmp\build-pr81-mingw\tools\agent-memory-bench\agent-memory-binary-lifecycle-bench.exe `
+  tools\agent-memory-bench\binary-lifecycle-10k.manual.json `
+  tmp\build-pr81-mingw\binary-lifecycle-10k-pr85.json
+tmp\build-pr81-mingw\tools\agent-memory-bench\agent-memory-binary-lifecycle-bench.exe `
+  tools\agent-memory-bench\binary-lifecycle-100k.manual.json `
+  tmp\build-pr81-mingw\binary-lifecycle-100k-pr85-rerun.json
+```
+
+Preparation snapshot:
+
+| Scale | Rerank prepare ms | Exact query mean ms | Flat binary mean ms | Multi-probe mean ms |
+|---:|---:|---:|---:|---:|
+| 10k | 2.810 | 3.768 | 0.828 | 0.456 |
+| 100k | 28.439 | 41.462 | 7.937 | 0.606 |
+
+The first 100k PR #85 local run produced a flat binary query timing outlier
+around `79.9 ms/query`, while an immediate rerun returned to the expected
+`~7.9 ms/query` range. The table above therefore uses the rerun for 100k. The
+new field should be interpreted as a directional preparation-cost sample, not a
+statistically stable measurement.
+
+Interpretation update:
+
+- Preparing cosine rerank norms costs roughly `2.8 ms` at 10k and `28.4 ms` at
+  100k in this local run.
+- This is small compared with one exact full-scan query at 100k, but it is not
+  free and should be accounted for in cold-start/lifecycle analysis.
+- Steady-state query rows remain the right place to compare binary search plus
+  exact rerank latency once document norms are already available.
