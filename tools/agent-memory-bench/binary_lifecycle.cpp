@@ -4,11 +4,13 @@
 #include <agent_memory/index/FlatBinarySignatureIndex.hpp>
 #include <agent_memory/index/MultiProbeHammingIndex.hpp>
 #include <agent_memory/index/RandomHyperplaneBinaryEncoder.hpp>
+#include <agent_memory/index/VectorSimilarityComputer.hpp>
 #include <agent_memory/index/VectorIndex.hpp>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -22,7 +24,9 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #if defined(_WIN32)
@@ -48,6 +52,7 @@ namespace {
         std::size_t bit_count = 0;
         std::size_t oracle_k = 0;
         std::size_t returned_candidate_limit = 0;
+        std::vector<std::size_t> rerank_candidate_limits;
         std::size_t mutation_count = 0;
         std::uint64_t seed = 0;
         std::uint64_t query_noise_seed = 0;
@@ -181,6 +186,38 @@ namespace {
         return checked_size(require_positive_integer(wrapper, field), field);
     }
 
+    [[nodiscard]] std::vector<std::size_t> optional_size_list(
+        const nlohmann::json& document,
+        std::string_view field
+    ) {
+        const auto* node = find_optional(document, field);
+        if(node == nullptr) {
+            return {};
+        }
+        const std::string name{field};
+        if(!node->is_array()) {
+            throw std::runtime_error("config field '" + name + "' must be an array");
+        }
+        std::vector<std::size_t> values;
+        values.reserve(node->size());
+        for(std::size_t index = 0; index < node->size(); ++index) {
+            const nlohmann::json wrapper = {
+                {name, (*node)[index]}
+            };
+            values.push_back(checked_size(
+                require_positive_integer(wrapper, field),
+                field
+            ));
+        }
+        std::sort(values.begin(), values.end());
+        if(std::adjacent_find(values.begin(), values.end()) != values.end()) {
+            throw std::runtime_error(
+                "config field '" + name + "' must not contain duplicates"
+            );
+        }
+        return values;
+    }
+
     [[nodiscard]] Config load_config(const fs::path& path) {
         std::ifstream input(path, std::ios::binary);
         if(!input) {
@@ -249,6 +286,10 @@ namespace {
                 "config field 'returned_candidate_limit' is required unless result_limit is passed"
             );
         }
+        config.rerank_candidate_limits = optional_size_list(
+            document,
+            "rerank_candidate_limits"
+        );
         config.mutation_count = checked_size(
             require_positive_integer(document, "mutation_count"),
             "mutation_count"
@@ -291,6 +332,18 @@ namespace {
             throw std::runtime_error(
                 "returned_candidate_limit must not exceed document_count"
             );
+        }
+        for(const auto candidate_limit : config.rerank_candidate_limits) {
+            if(candidate_limit < config.oracle_k) {
+                throw std::runtime_error(
+                    "rerank_candidate_limits entries must be at least oracle_k"
+                );
+            }
+            if(candidate_limit > config.document_count) {
+                throw std::runtime_error(
+                    "rerank_candidate_limits entries must not exceed document_count"
+                );
+            }
         }
         if(config.mutation_count > config.document_count) {
             throw std::runtime_error("mutation_count must not exceed document_count");
@@ -399,6 +452,13 @@ namespace {
     struct ExactQueryMeasurement final {
         nlohmann::json query;
         std::vector<std::unordered_set<std::string>> exact_sets;
+        std::vector<std::vector<std::string>> exact_ids;
+    };
+
+    struct BinaryCandidateMeasurement final {
+        nlohmann::json query;
+        std::vector<std::vector<agent_memory::BinarySignatureSearchResult>>
+            query_results;
     };
 
     [[nodiscard]] std::vector<agent_memory::VectorSearchQuery>
@@ -451,13 +511,19 @@ namespace {
 
         std::vector<std::unordered_set<std::string>> sets;
         sets.reserve(query_results.size());
+        std::vector<std::vector<std::string>> ids;
+        ids.reserve(query_results.size());
         for(const auto& results : query_results) {
             result_count += results.size();
             std::unordered_set<std::string> set;
+            std::vector<std::string> ordered_ids;
+            ordered_ids.reserve(results.size());
             for(const auto& result : results) {
                 set.insert(result.chunk_id.value());
+                ordered_ids.push_back(result.chunk_id.value());
             }
             sets.push_back(std::move(set));
+            ids.push_back(std::move(ordered_ids));
         }
 
         return {
@@ -467,7 +533,38 @@ namespace {
                 {"mean_result_count", static_cast<double>(result_count) /
                                           static_cast<double>(queries.size())}
             },
-            std::move(sets)
+            std::move(sets),
+            std::move(ids)
+        };
+    }
+
+    template <class SearchFn>
+    [[nodiscard]] BinaryCandidateMeasurement collect_binary_candidates(
+        const std::vector<agent_memory::BinarySignatureSearchQuery>& queries,
+        SearchFn&& search_fn
+    ) {
+        std::vector<std::vector<agent_memory::BinarySignatureSearchResult>>
+            query_results;
+        query_results.reserve(queries.size());
+        std::size_t result_count = 0;
+        const auto start = Clock::now();
+        for(const auto& query : queries) {
+            query_results.push_back(search_fn(query));
+        }
+        const auto total_ms = elapsed_ms(start, Clock::now());
+
+        for(const auto& results : query_results) {
+            result_count += results.size();
+        }
+
+        return {
+            {
+                {"total_ms", total_ms},
+                {"mean_ms", total_ms / static_cast<double>(queries.size())},
+                {"mean_result_count", static_cast<double>(result_count) /
+                                          static_cast<double>(queries.size())}
+            },
+            std::move(query_results)
         };
     }
 
@@ -477,14 +574,11 @@ namespace {
         const std::vector<std::unordered_set<std::string>>& exact_sets,
         SearchFn&& search_fn
     ) {
-        std::vector<std::vector<agent_memory::BinarySignatureSearchResult>>
-            query_results;
-        query_results.reserve(queries.size());
-        const auto start = Clock::now();
-        for(const auto& query : queries) {
-            query_results.push_back(search_fn(query));
-        }
-        const auto total_ms = elapsed_ms(start, Clock::now());
+        const auto candidate_measurement = collect_binary_candidates(
+            queries,
+            std::forward<SearchFn>(search_fn)
+        );
+        const auto& query_results = candidate_measurement.query_results;
 
         double coverage_sum = 0.0;
         std::size_t result_count = 0;
@@ -501,13 +595,200 @@ namespace {
                             static_cast<double>(exact_sets[query].size());
         }
         return {
-            {"total_ms", total_ms},
-            {"mean_ms", total_ms / static_cast<double>(queries.size())},
+            {"total_ms", candidate_measurement.query.at("total_ms")},
+            {"mean_ms", candidate_measurement.query.at("mean_ms")},
             {"mean_result_count", static_cast<double>(result_count) /
                                       static_cast<double>(queries.size())},
             {"exact_top_k_candidate_coverage",
              coverage_sum / static_cast<double>(queries.size())}
         };
+    }
+
+    [[nodiscard]] std::size_t parse_chunk_index(const agent_memory::ChunkId& chunk_id) {
+        constexpr std::string_view prefix = "chunk:";
+        const auto text = chunk_id.value();
+        if(text.size() <= prefix.size()
+           || text.compare(0, prefix.size(), prefix) != 0) {
+            throw std::runtime_error(
+                "binary lifecycle candidate chunk id is not a synthetic chunk id"
+            );
+        }
+        std::size_t value = 0;
+        const char* first = text.data() + static_cast<std::ptrdiff_t>(prefix.size());
+        const char* last = text.data() + static_cast<std::ptrdiff_t>(text.size());
+        const auto result = std::from_chars(first, last, value);
+        if(result.ec != std::errc{} || result.ptr != last) {
+            throw std::runtime_error(
+                "binary lifecycle candidate chunk id has an invalid numeric suffix"
+            );
+        }
+        return value;
+    }
+
+    struct ScoredCandidate final {
+        std::size_t index = 0;
+        agent_memory::ChunkId chunk_id;
+        float score = 0.0F;
+    };
+
+    [[nodiscard]] std::vector<float> make_document_inverse_norms(
+        const std::vector<agent_memory::Embedding>& documents,
+        const agent_memory::VectorSimilarityComputer& similarity
+    ) {
+        std::vector<float> inverse_norms;
+        inverse_norms.reserve(documents.size());
+        for(const auto& document : documents) {
+            const auto squared_norm = similarity.squared_norm(document);
+            inverse_norms.push_back(
+                squared_norm > 0.0F ? 1.0F / std::sqrt(squared_norm) : 0.0F
+            );
+        }
+        return inverse_norms;
+    }
+
+    [[nodiscard]] std::vector<std::string> rerank_candidates_exact(
+        const agent_memory::Embedding& query,
+        const std::vector<agent_memory::Embedding>& documents,
+        const std::vector<float>& document_inverse_norms,
+        const std::vector<agent_memory::BinarySignatureSearchResult>& candidates,
+        std::size_t oracle_k,
+        const agent_memory::VectorSimilarityComputer& similarity
+    ) {
+        std::vector<ScoredCandidate> scored;
+        scored.reserve(candidates.size());
+        const auto query_squared_norm = similarity.squared_norm(query);
+        const auto query_inverse_norm =
+            query_squared_norm > 0.0F ? 1.0F / std::sqrt(query_squared_norm) : 0.0F;
+        for(const auto& candidate : candidates) {
+            const auto index = parse_chunk_index(candidate.chunk_id);
+            if(index >= documents.size()) {
+                throw std::runtime_error(
+                    "binary lifecycle candidate chunk id exceeds document_count"
+                );
+            }
+            float score = 0.0F;
+            if(query_inverse_norm != 0.0F && document_inverse_norms[index] != 0.0F) {
+                score = similarity.dot_product(query, documents[index])
+                        * query_inverse_norm * document_inverse_norms[index];
+            }
+            scored.push_back({
+                index,
+                candidate.chunk_id,
+                score
+            });
+        }
+
+        const auto compare = [](const ScoredCandidate& lhs, const ScoredCandidate& rhs) {
+            if(lhs.score == rhs.score) {
+                return lhs.chunk_id < rhs.chunk_id;
+            }
+            return lhs.score > rhs.score;
+        };
+        if(scored.size() > oracle_k) {
+            std::partial_sort(
+                scored.begin(),
+                scored.begin() + static_cast<std::ptrdiff_t>(oracle_k),
+                scored.end(),
+                compare
+            );
+            scored.resize(oracle_k);
+        } else {
+            std::sort(scored.begin(), scored.end(), compare);
+        }
+
+        std::vector<std::string> ids;
+        ids.reserve(scored.size());
+        for(const auto& item : scored) {
+            ids.push_back(item.chunk_id.value());
+        }
+        return ids;
+    }
+
+    [[nodiscard]] double recall_against_exact(
+        const std::vector<std::string>& actual,
+        const std::unordered_set<std::string>& exact_set
+    ) {
+        if(exact_set.empty()) {
+            return 0.0;
+        }
+        std::size_t hits = 0;
+        for(const auto& id : actual) {
+            if(exact_set.find(id) != exact_set.end()) {
+                ++hits;
+            }
+        }
+        return static_cast<double>(hits) / static_cast<double>(exact_set.size());
+    }
+
+    [[nodiscard]] nlohmann::json measure_exact_rerank(
+        const Dataset& dataset,
+        const std::vector<float>& document_inverse_norms,
+        const std::vector<std::vector<agent_memory::BinarySignatureSearchResult>>&
+            query_results,
+        const std::vector<std::unordered_set<std::string>>& exact_sets,
+        const std::vector<std::vector<std::string>>& exact_ids,
+        std::size_t oracle_k,
+        const agent_memory::VectorSimilarityComputer& similarity
+    ) {
+        std::vector<std::vector<std::string>> reranked_ids;
+        reranked_ids.reserve(query_results.size());
+        const auto start = Clock::now();
+        for(std::size_t query_index = 0; query_index < query_results.size();
+            ++query_index) {
+            reranked_ids.push_back(rerank_candidates_exact(
+                dataset.queries[query_index],
+                dataset.documents,
+                document_inverse_norms,
+                query_results[query_index],
+                oracle_k,
+                similarity
+            ));
+        }
+        const auto total_ms = elapsed_ms(start, Clock::now());
+
+        double recall_sum = 0.0;
+        std::size_t top1_hits = 0;
+        for(std::size_t query_index = 0; query_index < reranked_ids.size();
+            ++query_index) {
+            recall_sum += recall_against_exact(
+                reranked_ids[query_index],
+                exact_sets[query_index]
+            );
+            if(!reranked_ids[query_index].empty()
+               && !exact_ids[query_index].empty()
+               && reranked_ids[query_index].front() == exact_ids[query_index].front()) {
+                ++top1_hits;
+            }
+        }
+
+        return {
+            {"total_ms", total_ms},
+            {"mean_ms", total_ms / static_cast<double>(query_results.size())},
+            {"reranked_recall_at_k_vs_exact",
+             recall_sum / static_cast<double>(query_results.size())},
+            {"reranked_top1_agreement",
+             static_cast<double>(top1_hits) /
+                 static_cast<double>(query_results.size())}
+        };
+    }
+
+    [[nodiscard]] double candidate_coverage(
+        const std::vector<std::vector<agent_memory::BinarySignatureSearchResult>>&
+            query_results,
+        const std::vector<std::unordered_set<std::string>>& exact_sets
+    ) {
+        double coverage_sum = 0.0;
+        for(std::size_t query = 0; query < query_results.size(); ++query) {
+            std::size_t hits = 0;
+            for(const auto& result : query_results[query]) {
+                if(exact_sets[query].find(result.chunk_id.value()) != exact_sets[query].end()) {
+                    ++hits;
+                }
+            }
+            coverage_sum += static_cast<double>(hits) /
+                            static_cast<double>(exact_sets[query].size());
+        }
+        return coverage_sum / static_cast<double>(query_results.size());
     }
 
     struct MultiProbeDiagnostics final {
@@ -528,6 +809,123 @@ namespace {
             diagnostics.posting_sum += static_cast<double>(result.visited_posting_count);
         }
         return diagnostics;
+    }
+
+    template <class SearchFn>
+    [[nodiscard]] nlohmann::json measure_rerank_grid(
+        const Dataset& dataset,
+        const std::vector<float>& document_inverse_norms,
+        const std::vector<agent_memory::BinarySignature>& query_signatures,
+        const agent_memory::BinarySignatureInfo& signature_info,
+        const std::vector<std::size_t>& candidate_limits,
+        const std::vector<std::unordered_set<std::string>>& exact_sets,
+        const std::vector<std::vector<std::string>>& exact_ids,
+        std::size_t oracle_k,
+        const agent_memory::VectorSimilarityComputer& similarity,
+        SearchFn&& search_fn
+    ) {
+        nlohmann::json rows = nlohmann::json::array();
+        for(const auto candidate_limit : candidate_limits) {
+            const auto binary_queries = make_binary_queries(
+                query_signatures,
+                signature_info,
+                candidate_limit
+            );
+            const auto candidates = collect_binary_candidates(
+                binary_queries,
+                search_fn
+            );
+            const auto rerank = measure_exact_rerank(
+                dataset,
+                document_inverse_norms,
+                candidates.query_results,
+                exact_sets,
+                exact_ids,
+                oracle_k,
+                similarity
+            );
+            const auto binary_total_ms =
+                candidates.query.at("total_ms").template get<double>();
+            const auto binary_mean_ms =
+                candidates.query.at("mean_ms").template get<double>();
+            const auto binary_mean_result_count =
+                candidates.query.at("mean_result_count").template get<double>();
+            const auto coverage = candidate_coverage(
+                candidates.query_results,
+                exact_sets
+            );
+            const auto rerank_total_ms =
+                rerank.at("total_ms").template get<double>();
+            const auto rerank_mean_ms =
+                rerank.at("mean_ms").template get<double>();
+            const auto reranked_recall =
+                rerank.at("reranked_recall_at_k_vs_exact").template get<double>();
+            const auto reranked_top1 =
+                rerank.at("reranked_top1_agreement").template get<double>();
+            rows.push_back(nlohmann::json{
+                {"candidate_limit", candidate_limit},
+                {"binary_search_total_ms", binary_total_ms},
+                {"binary_search_mean_ms", binary_mean_ms},
+                {"binary_mean_result_count", binary_mean_result_count},
+                {"exact_top_k_candidate_coverage", coverage},
+                {"exact_rerank_total_ms", rerank_total_ms},
+                {"exact_rerank_mean_ms", rerank_mean_ms},
+                {"reranked_recall_at_k_vs_exact", reranked_recall},
+                {"reranked_top1_agreement", reranked_top1},
+                {"end_to_end_total_ms", binary_total_ms + rerank_total_ms},
+                {"end_to_end_mean_ms",
+                 (binary_total_ms + rerank_total_ms) /
+                     static_cast<double>(dataset.queries.size())}
+            });
+        }
+        return rows;
+    }
+
+    [[nodiscard]] nlohmann::json measure_multiprobe_rerank_grid(
+        const Dataset& dataset,
+        const std::vector<float>& document_inverse_norms,
+        const std::vector<agent_memory::BinarySignature>& query_signatures,
+        const agent_memory::BinarySignatureInfo& signature_info,
+        const std::vector<std::size_t>& candidate_limits,
+        const std::vector<std::unordered_set<std::string>>& exact_sets,
+        const std::vector<std::vector<std::string>>& exact_ids,
+        std::size_t oracle_k,
+        const agent_memory::VectorSimilarityComputer& similarity,
+        const agent_memory::MultiProbeHammingIndex& index
+    ) {
+        auto rows = measure_rerank_grid(
+            dataset,
+            document_inverse_norms,
+            query_signatures,
+            signature_info,
+            candidate_limits,
+            exact_sets,
+            exact_ids,
+            oracle_k,
+            similarity,
+            [&](const agent_memory::BinarySignatureSearchQuery& query) {
+                return index.search(query);
+            }
+        );
+        for(std::size_t row = 0; row < candidate_limits.size(); ++row) {
+            const auto binary_queries = make_binary_queries(
+                query_signatures,
+                signature_info,
+                candidate_limits[row]
+            );
+            const auto diagnostics = collect_multiprobe_diagnostics(
+                binary_queries,
+                index
+            );
+            const auto query_count = static_cast<double>(binary_queries.size());
+            rows[row]["mean_candidate_count"] =
+                diagnostics.candidate_sum / query_count;
+            rows[row]["mean_probed_bucket_count"] =
+                diagnostics.bucket_sum / query_count;
+            rows[row]["mean_visited_posting_count"] =
+                diagnostics.posting_sum / query_count;
+        }
+        return rows;
     }
 
     template <class Index, class Records>
@@ -589,6 +987,11 @@ namespace {
             signature_info,
             config.returned_candidate_limit
         );
+        agent_memory::VectorSimilarityComputer rerank_similarity;
+        const auto document_inverse_norms = make_document_inverse_norms(
+            dataset.documents,
+            rerank_similarity
+        );
 
         agent_memory::ExactVectorIndex exact({
             config.embedding_dimensions,
@@ -602,6 +1005,7 @@ namespace {
             vector_queries
         );
         const auto& exact_sets = exact_measurement.exact_sets;
+        const auto& exact_ids = exact_measurement.exact_ids;
 
         agent_memory::FlatBinarySignatureIndex flat({signature_info});
         const auto flat_build_ms = build_index(flat, binary_records);
@@ -637,6 +1041,32 @@ namespace {
         );
         const auto multiprobe_diagnostics = collect_multiprobe_diagnostics(
             binary_queries,
+            multiprobe
+        );
+        const auto flat_rerank = measure_rerank_grid(
+            dataset,
+            document_inverse_norms,
+            query_signatures,
+            signature_info,
+            config.rerank_candidate_limits,
+            exact_sets,
+            exact_ids,
+            config.oracle_k,
+            rerank_similarity,
+            [&](const agent_memory::BinarySignatureSearchQuery& query) {
+                return flat.search(query);
+            }
+        );
+        const auto multiprobe_rerank = measure_multiprobe_rerank_grid(
+            dataset,
+            document_inverse_norms,
+            query_signatures,
+            signature_info,
+            config.rerank_candidate_limits,
+            exact_sets,
+            exact_ids,
+            config.oracle_k,
+            rerank_similarity,
             multiprobe
         );
 
@@ -715,6 +1145,7 @@ namespace {
         report["oracle_k"] = config.oracle_k;
         report["returned_candidate_limit"] = config.returned_candidate_limit;
         report["result_limit"] = config.returned_candidate_limit;
+        report["rerank_candidate_limits"] = config.rerank_candidate_limits;
         report["mutation_count"] = config.mutation_count;
         report["seed"] = config.seed;
         report["query_noise_seed"] = config.query_noise_seed;
@@ -745,6 +1176,7 @@ namespace {
             {"rebuild_ms", flat_rebuild_ms},
             {"size_after_clear", flat_size_after_clear},
             {"size_after_rebuild", flat_size_after_rebuild},
+            {"rerank", flat_rerank},
             {"hamming_backend",
              std::string(agent_memory::hamming_distance_backend_name(
                  *flat.hamming_backend()
@@ -767,6 +1199,7 @@ namespace {
              multiprobe_diagnostics.bucket_sum / query_count},
             {"mean_visited_posting_count",
              multiprobe_diagnostics.posting_sum / query_count},
+            {"rerank", multiprobe_rerank},
             {"options",
              {
                  {"table_count", config.multiprobe_table_count},
