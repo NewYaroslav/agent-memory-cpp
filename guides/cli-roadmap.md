@@ -15,7 +15,7 @@
 
 Cross-references:
 
-- `guides/memory-stacks-roadmap.md` — MemoryStack API (секция 7), MDBX Layout (секция 12), Maturity Levels (секция 13), Profile Migration (секция 14).
+- `guides/memory-stacks-roadmap.md` — MemoryStack API (секция 7), physical manifest ownership (секция 12), Maturity Levels (секция 13), Profile Migration (секция 14).
 - `guides/compaction-roadmap.md` — Admin Operations (секция 9).
 - `guides/runtime-services-roadmap.md` (future) — Observability / CLI integration (секция 8).
 - `guides/knowledge-base-roadmap.md` — Eval pipeline (golden dataset, Recall@K, HybridLiftTarget).
@@ -939,7 +939,7 @@ Per `memory-stacks-roadmap.md` секция 16:
 
 Internal documents:
 
-- `guides/memory-stacks-roadmap.md` — секция 7 (MemoryStack API), 12 (MDBX Layout), 13 (Maturity Levels), 14 (Profile Migration Strategy), 16 (Implementation Order, шаг 16); ADR-014 (CLI как отдельный target).
+- `guides/memory-stacks-roadmap.md` — секция 7 (MemoryStack API), 12 (physical manifest ownership), 13 (Maturity Levels), 14 (Profile Migration Strategy), 16 (Implementation Order, шаг 16); ADR-014 (CLI как отдельный target).
 - `guides/compaction-roadmap.md` — секция 9 (Admin Operations через CLI).
 - `guides/knowledge-base-roadmap.md` — eval pipeline (golden dataset, metrics, HybridLiftTarget).
 - `guides/runtime-services-roadmap.md` (future) — секция 8 (Observability / CLI integration для PromptCache, AsyncIndexer).

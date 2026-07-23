@@ -28,8 +28,9 @@ agent-memory-cpp реализует ДОМЕННЫЕ КОНТРАКТЫ (Knowled
 
 ### Candidate generic primitives (не текущие требования)
 
-- `BidirectionalRelationIndex<Source, Target, Tag, Payload>` — только после
-  двух независимых consumers; tag/payload opaque.
+- `BidirectionalRelationIndex<Scope, Source, Target, Tag, Payload>` — только
+  после двух независимых consumers; scope/tag/payload opaque, traversal
+  page-based.
 - `LargeValueStore<BlobId>` / `ChunkedBlobStore<BlobId>` — только если нужны
   partial reads, chunk-level checksums/compression, bounded chunks, orphan
   cleanup и повторное использование за пределами `agent-memory-cpp`.

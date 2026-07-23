@@ -938,167 +938,47 @@ Cross-cutting Runtime Services (runtime/) — orthogonal
 - Layer 2 не зависит от Layer 3 (можно использовать напрямую).
 - Runtime services могут вызываться из любого layer, но сами не зависят от конкретного MemoryStack.
 
-## 12. MDBX Storage Layout
+## 12. MDBX Storage Layout Ownership
 
-Один MDBX environment, набор DBI в зависимости от профиля.
+Этот документ является canonical source для data model, profiles,
+capabilities and `MemoryStack::open(spec)` validation. Единственный canonical
+physical MDBX manifest живёт в
+[`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5, а
+authoritative DBI budget checkpoint — в §5.5.1 того же TZ.
 
-### 12.1. Всегда открываются (core DBI)
+Следствия:
 
-```
-unit_id_to_envelope
-  key = KnowledgeUnitId → KnowledgeUnitEnvelope (msgpack/flat binary)
-  // KnowledgeUnitId — монотонный opaque uint64_t, никогда не reused.
+- новые physical DBI names добавляются сначала в TZ §5.5/§5.5.1;
+- этот roadmap может ссылаться на capabilities and logical stores, но не
+  дублирует key/value layout таблиц;
+- `content_key_to_unit_id` является частью canonical manifest TZ §5.5 и
+  используется для `KnowledgeUnitKey -> KnowledgeUnitId` dedupe/migration
+  lookup;
+- runtime queues, compaction handoffs, resource bodies, persistent caches and
+  mode-specific dense indexes учитываются как explicit profile deltas в TZ
+  §5.5.1 or in the owning roadmap before implementation;
+- если разделы расходятся, physical manifest из TZ побеждает, а этот документ
+  должен быть обновлён как stale reference.
 
-content_key_to_unit_id
-  key = KnowledgeUnitKey → KnowledgeUnitId
-  // KnowledgeUnitKey = (KnowledgeUnitKind, ScopeId, ContentHash);
-  // secondary index для dedupe / supersedence / migration.
+### 12.1. Capability-to-Storage Mapping
 
-knowledge_units_by_kind
-  key = (kind, UnitId) → empty
-  [DUPSORT secondary index]
-```
+`MemoryProfileSpec` выбирает logical capabilities: QAPairs, TemporalFact,
+ConversationMemory, CompiledArticles, ChunkedContent, DenseVectors,
+LexicalBm25F, GraphRelations, TemporalValidity, SpeakerAttribution,
+UsageStats, Compaction, PromptPrefixCache and opt-in ResponseCache. Concrete
+DBI names and table types for these capabilities are enumerated in TZ §5.5.
 
-### 12.2. Открываются по capability
+### 12.2. Runtime and Mode-Specific Deltas
 
-```
-unit_components                         // если любой компонент включён
-  key = (ComponentKind tag, UnitId) → ValueVariant<UsageStats | Speaker | Temporal | EmbeddingMeta | CompactionMeta>
-  [TypeDiscriminatedTable из mdbx-containers]
+Compaction uses downstream `TaskQueue`/`JobStore` from
+`runtime-services-roadmap.md` §4.6. Its MDBX recipe is
+`mdbx-containers-extension-tz.md` §12.5 and currently costs +5 queue DBI per
+persistent queue plus +1 `compaction_handoffs` DBI when compaction is enabled.
 
-qa_payloads                             // если QAPayload включён
-  key = UnitId → QAPayload
-
-fact_payloads                           // если FactPayload включён
-  key = UnitId → FactPayload
-
-conversation_episode_payloads           // если ConversationEpisode включён
-  key = UnitId → ConversationEpisodePayload
-
-compiled_article_payloads               // если CompiledArticle включён
-  key = UnitId → CompiledArticlePayload
-
-chunk_payloads                          // всегда для Chunk kind
-  key = UnitId → ChunkPayload
-
-unit_projections                        // всегда для indexed retrieval
-  key = (scope_id, UnitId, ProjectionKind, revision) → SearchProjection
-
-embedding_meta                          // если EmbeddingMetaComponent или EmbeddingMigration
-  key = (scope_id, UnitId, ProjectionKind, model_id, version) → EmbeddingMeta
-
-embedding_vectors                       // если DenseVectors
-  key = (scope_id, model_id, ProjectionKind, UnitId) → vector_blob
-```
-
-### 12.3. Secondary indexes (по capability)
-
-```
-inverted_token_to_unit                  // если LexicalBm25F
-  key = (scope_id, token_id, projection_kind, field_id) → DUPSORT unit_id
-
-field_to_postings                       // если LexicalBm25F
-  key = (scope_id, projection_kind, field_id, token_id, unit_id) → PostingStats
-
-metadata_filters                        // всегда (lightweight metadata)
-  key = (scope_id, metadata_key, metadata_value, unit_id) → empty
-  [ReverseIndexTable]
-
-graph_edges_by_src                      // если GraphRelations
-  key = (scope_id, from_unit_id, edge_kind, to_unit_id) → GraphEdgePayload
-
-graph_edges_by_dst                      // если GraphRelations
-  key = (scope_id, to_unit_id, edge_kind, from_unit_id) → GraphEdgePayload
-
-temporal_event_index                    // если TemporalValidity
-  key = (scope_id, valid_from_ms, valid_until_ms, unit_id) → empty
-
-temporal_unit_index                     // если TemporalValidity
-  key = (scope_id, observed_at_ms, unit_id) → empty
-
-speaker_to_units                        // если SpeakerAttribution
-  key = (scope_id, speaker_id, unit_id) → empty
-
-session_to_units                        // если SpeakerAttribution
-  key = (scope_id, session_id, unit_id) → empty
-
-usage_stats_index                       // если UsageStats
-  key = (scope_id, unit_id) → UsageStatsComponent (копия для быстрого ranking)
-```
-
-### 12.4. Compaction / runtime
-
-```
-compaction_jobs_by_id                   // если Compaction
-  key = JobId → JobState
-
-compaction_jobs_runnable                // если Compaction
-  key = (run_after_ms, priority_rank, enqueue_sequence, job_id) → JobId
-
-compaction_jobs_by_lease                // если Compaction
-  key = (lease_until_ms, job_id) → JobId
-
-compaction_jobs_by_status               // если Compaction
-  key = job_status → DUPSORT JobId
-
-compaction_handoffs                     // если Compaction
-  key = SessionId → HandoffRecord
-
-// УДАЛЕНО: generation_index (replaced by per-posting unit_revision check).
-// Stale-filter через LexicalPosting.unit_revision < envelope.revision
-// (см. §17.11 Stale-filter pattern).
-
-prompt_prefix_cache_meta                // если PromptPrefixCache включён
-  key = (scope_id, provider_id, model_id, prefix_hash) → PromptPrefixCacheMetadata
-
-response_cache                          // если opt-in ResponseCache capability включена (default OFF)
-  key = ResponseCacheKey → CachedResponse
-```
-
-### 12.5. Schema metadata
-
-```
-schema_info
-  key = "schema" → SchemaInfo{envelope_version, component_versions[NUM_KINDS], profile_signature}
-```
-
-### 12.6. DBI budget
-
-Целевой максимум — 64 DBI на один MemoryStack (расширение `max_dbs` 16→64 в `mdbx-containers`). При M1-профилях типичный usage — 18-25 DBI в зависимости от compaction/runtime queues. При FullResearch — до 34 DBI. Headroom есть.
-
-### 12.7. Mode-aware DBI creation (DenseIndexConfig → DBI set)
-
-Выбор `DenseIndexConfig.mode` напрямую определяет набор обязательных DB dense-индексов. Capability-aware логика в `MemoryStack::open(spec)`:
-
-```
-Exact mode (DenseIndexConfig.mode == Exact):
-  embedding_vectors DBI — обязательна.
-
-BinaryCandidateFilter (BinaryCandidateFilter):
-  embedding_vectors DBI + binary_bucket_index DBI.
-
-BinaryOnly (BinaryOnly):
-  только binary_bucket_index DBI (embedding_vectors НЕ открывается).
-
-ApproximateVector Safe (ApproximateVector + store_float_fallback == true):
-  embedding_vectors + binary_bucket_index + decoder (в registry, не DBI).
-
-ApproximateVector Compact (ApproximateVector + store_float_fallback == false):
-  binary_bucket_index + decoder (embedding_vectors НЕ открывается).
-
-Hnsw mode (DenseIndexMode::Hnsw):
-  - embedding_vectors DBI (для float storage и rerank если mode hybrid).
-  - hnsw_graph_index DBI (M-level proximity graph adjacency list).
-  - graph_node_storage DBI (vector IDs + levels + neighbors).
-
-Storage estimate (1M units × 768-dim float32):
-  embedding_vectors: ~3 GB.
-  hnsw_graph_index: ~600 MB (avg M=32 edges per node × 8 bytes).
-  graph_node_storage: ~80 MB (1M units × 16-byte neighbor level header).
-  Total: ~3.7 GB (без учёта PR-curve overhead).
-```
-
-Таким образом выбор `mode` сужает или расширяет dense-набор DBI. `MemoryStack::open()` валидирует согласованность между `enable_dense_vectors` capability и `dense_index_config.mode` (например, `mode == BinaryOnly` с `enable_dense_vectors == false` допустим, но log-warn: float index будет lazy-built при первом Exact-mode retrieval).
+PromptPrefixCache, opt-in ResponseCache, raw `ResourceBodyStore`, HNSW,
+binary bucket indexes and other mode-specific dense indexes are not part of
+the baseline physical manifest unless their owning roadmap adds an explicit
+profile-delta row to TZ §5.5.1.
 
 ## 13. Maturity Levels
 
@@ -1205,7 +1085,9 @@ new_spec.decay_policy = MemoryProfiles::DefaultAgentDecay();
 
 Это additive: новая DBI создаётся, существующие данные не трогаются. `profile_signature` обновляется.
 
-Content-key index (`content_key_to_unit_id`) — additive, можно добавить в M0 или позже.
+Content-key index (`content_key_to_unit_id`) входит в canonical physical
+manifest; legacy DBs without it require additive profile-signature migration
+before enabling content-addressed dedupe.
 
 ### 14.2. Major migration (новая БД)
 
@@ -1258,7 +1140,8 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 ### Шаг 1: Envelope + базовые DBI
 
 - Создать `KnowledgeUnitEnvelope` struct (lean hot-path envelope, ~16 полей: id, kind, scope_id, primary_text, display_text, lifecycle_state, sources, timestamps, revision, lineage fields, priority_weight).
-- MDBX DBI: `knowledge_units`, `knowledge_units_by_kind`, `schema_info`.
+- MDBX DBI: `knowledge_units`, `content_key_to_unit_id`,
+  `knowledge_units_by_kind`, `schema_info`.
 - Сериализация envelope через flat binary (msgpack или custom).
 - `MemoryStack::open()` для пустой spec (только envelope + lexical).
 - Lifecycle FSM с 4 durable states (Active, Superseded, Deprecated, Erased). SoftSuppressed/cooldown — runtime state в UsageStatsComponent, не durable lifecycle.
@@ -1412,7 +1295,8 @@ double apply_filters(
 
 - ICompactionJob interface.
 - Job types: DecayJob, DedupeJob, ArchiveColdJob.
-- TaskQueue из mdbx-containers TZ.
+- Downstream `TaskQueue`/`JobStore` из `runtime-services-roadmap.md` §4.6;
+  MDBX storage recipe — `mdbx-containers-extension-tz.md` §12.5.
 - CompactionHandoff structure.
 - Async worker thread.
 

@@ -198,7 +198,7 @@ Cross-cutting contracts:
 > reused). Separate `KnowledgeUnitKey` struct for content-addressing
 > (dedupe, migration, supersedence).
 
-Detailed contracts, MDBX layouts, per-kind field blocks, the QA
+Detailed contracts, data-model shape, per-kind field blocks, the QA
 knowledge base, the temporal index, the typed graph, the typed
 metadata, and the cross-encoder / HyDE / corrective RAG adapter
 slots are all tracked in
@@ -343,7 +343,8 @@ Per
 - **CompactionWorker** (async) — выполняет `ICompactionJob`-ы:
   Decay, Dedupe, ArchiveCold (M1); Merge, SummaryPromotion,
   EmbeddingRecompute (M2). Хранит состояние jobs в downstream `TaskQueue`
-  DBI (`compaction_jobs_by_id`, `compaction_jobs_runnable`,
+  DBI (`compaction_jobs_by_id`, `compaction_jobs_scheduled`,
+  `compaction_jobs_ready`,
   `compaction_jobs_by_lease`, `compaction_jobs_by_status`) и handoff в
   `compaction_handoffs`.
 - **AsyncIndexer** (background) — батчит inserts в lexical / vector /
@@ -517,7 +518,7 @@ CMake flags (planned):
 - [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) —
   центральный манифест: ADR'ы, Envelope/Components/Projections,
   `MemoryProfileSpec`, `MemoryStack`, default profiles, capability matrix,
-  validation rules, MDBX layout, Maturity Levels (M0/M1/M2), Profile
+  validation rules, Maturity Levels (M0/M1/M2), Profile
   Migration.
 - [`guides/knowledge-base-roadmap.md`](knowledge-base-roadmap.md) —
   retrieval flow, ContextBuilder, evaluation pipeline, cross-stack contracts.
@@ -529,7 +530,8 @@ CMake flags (planned):
 - [`guides/optimization-roadmap.md`](optimization-roadmap.md) —
   vector/binary storage, scope-aware secondary indexes, compression.
 - [`guides/mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) —
-  TypeDiscriminatedTable, MultiTableWriter, ReverseIndexTable.
+  canonical physical MDBX manifest, DBI budget, TypeDiscriminatedTable,
+  MultiTableWriter, ReverseIndexTable.
 - [`guides/policies-roadmap.md`](policies-roadmap.md) (future) —
   детальная спецификация DecayPolicy / WritePolicy / SpeakerScopePolicy
   с диапазонами и defaults.

@@ -579,7 +579,8 @@ projects don't share each other's prompts (see open issue 17.7 in
 Job queues and audit logs are DIFFERENT substrates:
 
 - **compaction queue DBIs**: per-job state and ordering
-  (`compaction_jobs_by_id`, `compaction_jobs_runnable`,
+  (`compaction_jobs_by_id`, `compaction_jobs_scheduled`,
+  `compaction_jobs_ready`,
   `compaction_jobs_by_lease`, `compaction_jobs_by_status`). MAY be deleted
   after retention window. Mutable.
 - **compaction_handoffs DBI**: technical completion records (which worker, when, what version). Mutable.

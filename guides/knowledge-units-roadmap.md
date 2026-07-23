@@ -24,7 +24,7 @@
 
 Cross-references:
 
-- `guides/memory-stacks-roadmap.md` — ADR-001 (envelope + components), `MemoryProfileSpec`, `MemoryStack`, MDBX layout, maturity levels.
+- `guides/memory-stacks-roadmap.md` — ADR-001 (envelope + components), `MemoryProfileSpec`, `MemoryStack`, physical manifest ownership, maturity levels.
 - `guides/knowledge-base-roadmap.md` — envelope shape, retrieval flow, decay-aware scoring, evaluation pipeline.
 - `guides/lexical-search-roadmap.md` — BM25F по `SearchProjection`s, field-weighted indexing.
 - `guides/optimization-roadmap.md` — vector/binary storage, multi-projection embeddings.
@@ -150,7 +150,7 @@ struct SourceRef {
 **M1 (добавление `source_refs` DBI):**
 - В envelope остаётся `vector<SourceRefSummary>` (≤3).
 - Полные `SourceRef` с `excerpt_text` хранятся в отдельной `source_refs` DBI (key = `KnowledgeUnitId` → `vector<SourceRef>`).
-- Reverse lookup по `resource_id` строится через `metadata_filters` (DBI) — см. `memory-stacks-roadmap.md` секция 12.3.
+- Reverse lookup по `resource_id` строится через `metadata_filters` (DBI) — см. canonical physical manifest `mdbx-containers-extension-tz.md` §5.5.
 - При необходимости быстрого reverse lookup добавляется отдельный DBI `source_refs_by_resource` (опционально, не в M1 budget).
 
 Пример создания envelope с inline summary (M0):
@@ -253,7 +253,7 @@ Storage использует **два** DBI для разделения identity
 
 | DBI | Key | Value | Назначение |
 |---|---|---|---|
-| `unit_id_to_envelope` | `KnowledgeUnitId` | `KnowledgeUnitEnvelope` | primary storage; O(1) lookup по id |
+| `knowledge_units` | `KnowledgeUnitId` | `KnowledgeUnitEnvelope` | primary storage; O(1) lookup по id |
 | `content_key_to_unit_id` | `KnowledgeUnitKey` | `KnowledgeUnitId` | dedupe/migration; O(1) "есть ли уже unit с таким content?" |
 
 Идемпотентный upsert через `content_key_to_unit_id`:
@@ -276,7 +276,7 @@ if (existing) {
 auto new_id = KnowledgeUnitId::allocate();
 unit.id = new_id;
 MultiTableWriter writer;
-writer.put(unit_id_to_envelope, new_id, unit);
+writer.put(knowledge_units, new_id, unit);
 writer.put(content_key_to_unit_id, key, new_id);
 writer.commit();
 ```
@@ -289,7 +289,7 @@ writer.commit();
 2. Для каждого envelope:
    - Извлечь `(kind, scope, content_hash)` из старого ID.
    - Аллоцировать новый monotonic `KnowledgeUnitId`.
-   - Перезаписать envelope с новым id в `unit_id_to_envelope`.
+   - Перезаписать envelope с новым id в `knowledge_units`.
    - Записать `KnowledgeUnitKey → KnowledgeUnitId` в `content_key_to_unit_id`.
 3. Обновить все cross-reference (`anchor_unit_id`, `superseded_by`, `derived_from`) — старые ID заменяются на новые через lookup-таблицу.
 4. Перестроить `inverted_token_to_unit`, `field_to_postings`, secondary indexes.
@@ -845,7 +845,7 @@ Migration strategy:
 
 1. Построить lookup-таблицу `old_id → new_id` через чтение всех envelope и вычисление `KnowledgeUnitKey` (kind, scope, content_hash из старого ID).
 2. Аллоцировать новый monotonic `KnowledgeUnitId` для каждого уникального key.
-3. Перезаписать envelope с новым id в `unit_id_to_envelope`.
+3. Перезаписать envelope с новым id в `knowledge_units`.
 4. Записать `KnowledgeUnitKey → KnowledgeUnitId` в `content_key_to_unit_id`.
 5. Обновить все cross-reference (`anchor_unit_id`, `superseded_by`, `derived_from`) через lookup-таблицу.
 6. Перестроить `inverted_token_to_unit`, `field_to_postings`, secondary indexes.
@@ -886,7 +886,7 @@ Round-trip test обязателен: `basic_rag` → `agent_ltm` → `basic_rag
 
 Внутренние документы:
 
-- `guides/memory-stacks-roadmap.md` — ADR-001 (envelope + components), ADR-003 (profile/scope), ADR-004 (KnowledgeUnit миграция), ADR-005 (search text), ADR-008 (decay/anti-loop), ADR-011 (lifecycle FSM). `MemoryProfileSpec`, `MemoryStack`, MDBX layout, maturity levels.
+- `guides/memory-stacks-roadmap.md` — ADR-001 (envelope + components), ADR-003 (profile/scope), ADR-004 (KnowledgeUnit миграция), ADR-005 (search text), ADR-008 (decay/anti-loop), ADR-011 (lifecycle FSM). `MemoryProfileSpec`, `MemoryStack`, physical manifest ownership, maturity levels.
 - `guides/knowledge-base-roadmap.md` — `KnowledgeUnitEnvelope` contract, retrieval flow, `IComponentStore`/`IProjectionStore`, `SearchProjection` generation rules, `DecayAwareRetriever`, evaluation pipeline.
 - `guides/lexical-search-roadmap.md` — BM25F по projections, field-weighted indexing, postings structure.
 - `guides/optimization-roadmap.md` — vector storage per `(model_id, projection_kind)`, binary signature indexes, scope-aware secondary indexes.
