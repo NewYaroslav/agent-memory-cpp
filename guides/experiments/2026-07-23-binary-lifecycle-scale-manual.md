@@ -6,6 +6,11 @@ Question: once the PR #81 smoke gate has fixed the lifecycle report contract,
 where do the current exact vector, flat binary, and multi-probe binary paths
 start to separate by scale?
 
+Follow-up: PR #83 separates `oracle_k` from `returned_candidate_limit` and adds
+an independent `query_noise_seed`. See
+[`2026-07-23-binary-lifecycle-overfetch-contract.md`](2026-07-23-binary-lifecycle-overfetch-contract.md)
+for refreshed results using that contract.
+
 Setup:
 
 - command: `agent-memory-binary-lifecycle-bench`
