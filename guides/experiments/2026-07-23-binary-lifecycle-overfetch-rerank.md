@@ -29,6 +29,10 @@ Setup:
 - rerank candidate limits: `10`, `32`, `64`, `128`, `256`, `512`;
 - independent query noise seed inherited from PR #83.
 
+Queries are noisy copies of corpus documents that remain in the corpus. This
+makes top-1 agreement a self-retrieval-like signal and easier than arbitrary
+nearest-neighbour queries.
+
 Contract change:
 
 - The report now contains `rerank_candidate_limits`.
@@ -56,68 +60,70 @@ Commands:
 cmake --build tmp\build-pr81-mingw --target agent-memory-binary-lifecycle-bench --parallel 1
 tmp\build-pr81-mingw\tools\agent-memory-bench\agent-memory-binary-lifecycle-bench.exe `
   tools\agent-memory-bench\binary-lifecycle-10k.manual.json `
-  tmp\build-pr81-mingw\binary-lifecycle-10k-pr84.json
+  tmp\build-pr81-mingw\binary-lifecycle-10k-pr84-fix.json
 tmp\build-pr81-mingw\tools\agent-memory-bench\agent-memory-binary-lifecycle-bench.exe `
   tools\agent-memory-bench\binary-lifecycle-100k.manual.json `
-  tmp\build-pr81-mingw\binary-lifecycle-100k-pr84.json
+  tmp\build-pr81-mingw\binary-lifecycle-100k-pr84-fix.json
 ```
 
 Baseline snapshot:
 
 | Scale | Exact query mean ms | Flat binary mean ms | Multi-probe mean ms | Flat returned top-10 overlap | Multi-probe returned top-10 overlap |
 |---:|---:|---:|---:|---:|---:|
-| 10k | 3.126 | 0.748 | 0.393 | 0.219 | 0.218 |
-| 100k | 40.237 | 7.744 | 0.589 | 0.166 | 0.139 |
+| 10k | 3.162 | 0.792 | 0.419 | 0.219 | 0.218 |
+| 100k | 39.641 | 7.847 | 0.599 | 0.166 | 0.139 |
 
 Build/lifecycle snapshot:
 
 | Scale | Exact build ms | Flat build ms | Multi-probe build ms | Process peak RSS bytes |
 |---:|---:|---:|---:|---:|
-| 10k | 34.649 | 53.665 | 92.834 | 42,885,120 |
-| 100k | 361.916 | 613.267 | 980.388 | 245,776,384 |
+| 10k | 31.964 | 59.844 | 92.261 | 42,946,560 |
+| 100k | 366.192 | 648.689 | 995.115 | 245,682,176 |
 
 Flat binary overfetch + exact rerank:
 
 | Scale | Candidates | Coverage@10 | Reranked top-1 agreement | Binary search mean ms | Exact rerank mean ms | End-to-end mean ms |
 |---:|---:|---:|---:|---:|---:|---:|
-| 10k | 10 | 0.219 | 1.000 | 0.776 | 0.013 | 0.789 |
-| 10k | 32 | 0.341 | 1.000 | 0.764 | 0.030 | 0.794 |
-| 10k | 64 | 0.444 | 1.000 | 0.806 | 0.066 | 0.872 |
-| 10k | 128 | 0.564 | 1.000 | 0.873 | 0.085 | 0.958 |
-| 10k | 256 | 0.697 | 1.000 | 0.995 | 0.152 | 1.147 |
-| 10k | 512 | 0.820 | 1.000 | 1.247 | 0.295 | 1.541 |
-| 100k | 10 | 0.166 | 1.000 | 7.781 | 0.015 | 7.795 |
-| 100k | 32 | 0.244 | 1.000 | 7.818 | 0.034 | 7.852 |
-| 100k | 64 | 0.303 | 1.000 | 7.597 | 0.058 | 7.654 |
-| 100k | 128 | 0.386 | 1.000 | 7.496 | 0.100 | 7.596 |
-| 100k | 256 | 0.488 | 1.000 | 7.641 | 0.188 | 7.828 |
-| 100k | 512 | 0.600 | 1.000 | 8.447 | 0.362 | 8.809 |
+| 10k | 10 | 0.219 | 1.000 | 0.783 | 0.015 | 0.798 |
+| 10k | 32 | 0.341 | 1.000 | 0.809 | 0.047 | 0.856 |
+| 10k | 64 | 0.444 | 1.000 | 0.862 | 0.082 | 0.943 |
+| 10k | 128 | 0.564 | 1.000 | 0.938 | 0.132 | 1.070 |
+| 10k | 256 | 0.697 | 1.000 | 1.032 | 0.233 | 1.265 |
+| 10k | 512 | 0.820 | 1.000 | 1.293 | 0.434 | 1.727 |
+| 100k | 10 | 0.166 | 1.000 | 7.871 | 0.017 | 7.888 |
+| 100k | 32 | 0.244 | 1.000 | 7.846 | 0.053 | 7.899 |
+| 100k | 64 | 0.303 | 1.000 | 7.863 | 0.091 | 7.954 |
+| 100k | 128 | 0.386 | 1.000 | 7.914 | 0.156 | 8.070 |
+| 100k | 256 | 0.488 | 1.000 | 8.226 | 0.280 | 8.506 |
+| 100k | 512 | 0.600 | 1.000 | 8.454 | 0.525 | 8.979 |
 
 Multi-probe overfetch + exact rerank:
 
 | Scale | Candidates | Coverage@10 | Reranked top-1 agreement | Binary search mean ms | Exact rerank mean ms | End-to-end mean ms | Mean bucket candidates | Mean probed buckets |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 10k | 10 | 0.218 | 1.000 | 0.412 | 0.014 | 0.425 | 2,604.4 | 72.0 |
-| 10k | 32 | 0.336 | 1.000 | 0.440 | 0.028 | 0.468 | 2,604.4 | 72.0 |
-| 10k | 64 | 0.425 | 1.000 | 0.507 | 0.051 | 0.558 | 2,604.4 | 72.0 |
-| 10k | 128 | 0.524 | 1.000 | 0.674 | 0.083 | 0.757 | 2,604.4 | 72.0 |
-| 10k | 256 | 0.623 | 1.000 | 0.869 | 0.158 | 1.028 | 2,604.4 | 72.0 |
-| 10k | 512 | 0.695 | 1.000 | 1.311 | 0.298 | 1.610 | 2,604.4 | 72.0 |
-| 100k | 10 | 0.139 | 0.844 | 0.564 | 0.015 | 0.579 | 3,578.6 | 8.0 |
-| 100k | 32 | 0.185 | 0.844 | 0.625 | 0.033 | 0.659 | 3,645.8 | 8.2 |
-| 100k | 64 | 0.290 | 0.984 | 3.862 | 0.072 | 3.933 | 22,525.0 | 62.8 |
-| 100k | 128 | 0.378 | 1.000 | 4.944 | 0.108 | 5.052 | 26,038.3 | 72.0 |
-| 100k | 256 | 0.479 | 1.000 | 4.995 | 0.191 | 5.186 | 26,038.3 | 72.0 |
-| 100k | 512 | 0.568 | 1.000 | 5.668 | 0.371 | 6.039 | 26,038.3 | 72.0 |
+| 10k | 10 | 0.218 | 1.000 | 0.410 | 0.015 | 0.425 | 2,604.4 | 72.0 |
+| 10k | 32 | 0.336 | 1.000 | 0.456 | 0.049 | 0.505 | 2,604.4 | 72.0 |
+| 10k | 64 | 0.425 | 1.000 | 0.523 | 0.080 | 0.603 | 2,604.4 | 72.0 |
+| 10k | 128 | 0.524 | 1.000 | 0.676 | 0.130 | 0.807 | 2,604.4 | 72.0 |
+| 10k | 256 | 0.623 | 1.000 | 0.957 | 0.236 | 1.193 | 2,604.4 | 72.0 |
+| 10k | 512 | 0.695 | 1.000 | 1.402 | 0.439 | 1.841 | 2,604.4 | 72.0 |
+| 100k | 10 | 0.139 | 0.844 | 0.586 | 0.016 | 0.602 | 3,578.6 | 8.0 |
+| 100k | 32 | 0.185 | 0.844 | 0.750 | 0.056 | 0.806 | 3,645.8 | 8.2 |
+| 100k | 64 | 0.290 | 0.984 | 4.063 | 0.096 | 4.158 | 22,525.0 | 62.8 |
+| 100k | 128 | 0.378 | 1.000 | 4.367 | 0.154 | 4.521 | 26,038.3 | 72.0 |
+| 100k | 256 | 0.479 | 1.000 | 5.046 | 0.281 | 5.327 | 26,038.3 | 72.0 |
+| 100k | 512 | 0.568 | 1.000 | 5.956 | 0.526 | 6.483 | 26,038.3 | 72.0 |
 
 Interpretation:
 
 - Exact rerank does what it should: `reranked_recall_at_k_vs_exact` equals
-  candidate coverage because the reranker uses the same exact float scorer as
-  the oracle.
+  candidate coverage because the reranker reproduces the oracle cosine scorer
+  and `ChunkId` tie-break over the returned binary candidates.
 - Top-1 is much easier than top-10 on this fixture. Flat keeps top-1 agreement
   at `1.000` even when top-10 coverage is low; multi-probe reaches `1.000` at
-  100k once overfetch reaches 128 candidates.
+  100k once overfetch reaches 128 candidates. Because the queries are noisy
+  copies of corpus documents, this should not be generalized to arbitrary
+  nearest-neighbour queries.
 - At 10k, multi-probe already probes the full radius-1 budget for all tested
   candidate limits, so overfetch mostly changes final Hamming truncation and
   rerank cost.
@@ -130,10 +136,10 @@ Interpretation:
 - 128-bit random-hyperplane signatures are still not enough for high top-10
   recall on this synthetic fixture. Overfetch helps, but even 512 candidates
   reaches only `0.600` flat and `0.568` multi-probe coverage at 100k.
-- Multi-probe can still be a useful latency filter at 100k. For example,
-  128 candidates gives `0.378` coverage with about `5.052 ms/query`, versus
-  exact full scan at about `40.237 ms/query`. That is a candidate-filter result,
-  not a final retrieval-quality win.
+- Multi-probe shows a promising latency-oriented candidate-filter path at 100k.
+  For example, 128 candidates gives `0.378` coverage with about
+  `4.521 ms/query`, versus exact full scan at about `39.641 ms/query`. That is
+  a candidate-filter result, not a final retrieval-quality win.
 
 Caveats:
 

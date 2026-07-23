@@ -627,18 +627,38 @@ namespace {
 
     struct ScoredCandidate final {
         std::size_t index = 0;
+        agent_memory::ChunkId chunk_id;
         float score = 0.0F;
     };
+
+    [[nodiscard]] std::vector<float> make_document_inverse_norms(
+        const std::vector<agent_memory::Embedding>& documents,
+        const agent_memory::VectorSimilarityComputer& similarity
+    ) {
+        std::vector<float> inverse_norms;
+        inverse_norms.reserve(documents.size());
+        for(const auto& document : documents) {
+            const auto squared_norm = similarity.squared_norm(document);
+            inverse_norms.push_back(
+                squared_norm > 0.0F ? 1.0F / std::sqrt(squared_norm) : 0.0F
+            );
+        }
+        return inverse_norms;
+    }
 
     [[nodiscard]] std::vector<std::string> rerank_candidates_exact(
         const agent_memory::Embedding& query,
         const std::vector<agent_memory::Embedding>& documents,
+        const std::vector<float>& document_inverse_norms,
         const std::vector<agent_memory::BinarySignatureSearchResult>& candidates,
         std::size_t oracle_k,
         const agent_memory::VectorSimilarityComputer& similarity
     ) {
         std::vector<ScoredCandidate> scored;
         scored.reserve(candidates.size());
+        const auto query_squared_norm = similarity.squared_norm(query);
+        const auto query_inverse_norm =
+            query_squared_norm > 0.0F ? 1.0F / std::sqrt(query_squared_norm) : 0.0F;
         for(const auto& candidate : candidates) {
             const auto index = parse_chunk_index(candidate.chunk_id);
             if(index >= documents.size()) {
@@ -646,15 +666,21 @@ namespace {
                     "binary lifecycle candidate chunk id exceeds document_count"
                 );
             }
+            float score = 0.0F;
+            if(query_inverse_norm != 0.0F && document_inverse_norms[index] != 0.0F) {
+                score = similarity.dot_product(query, documents[index])
+                        * query_inverse_norm * document_inverse_norms[index];
+            }
             scored.push_back({
                 index,
-                similarity.dot_product(query, documents[index])
+                candidate.chunk_id,
+                score
             });
         }
 
         const auto compare = [](const ScoredCandidate& lhs, const ScoredCandidate& rhs) {
             if(lhs.score == rhs.score) {
-                return lhs.index < rhs.index;
+                return lhs.chunk_id < rhs.chunk_id;
             }
             return lhs.score > rhs.score;
         };
@@ -673,7 +699,7 @@ namespace {
         std::vector<std::string> ids;
         ids.reserve(scored.size());
         for(const auto& item : scored) {
-            ids.push_back("chunk:" + std::to_string(item.index));
+            ids.push_back(item.chunk_id.value());
         }
         return ids;
     }
@@ -696,13 +722,14 @@ namespace {
 
     [[nodiscard]] nlohmann::json measure_exact_rerank(
         const Dataset& dataset,
+        const std::vector<float>& document_inverse_norms,
         const std::vector<std::vector<agent_memory::BinarySignatureSearchResult>>&
             query_results,
         const std::vector<std::unordered_set<std::string>>& exact_sets,
         const std::vector<std::vector<std::string>>& exact_ids,
-        std::size_t oracle_k
+        std::size_t oracle_k,
+        const agent_memory::VectorSimilarityComputer& similarity
     ) {
-        agent_memory::VectorSimilarityComputer similarity;
         std::vector<std::vector<std::string>> reranked_ids;
         reranked_ids.reserve(query_results.size());
         const auto start = Clock::now();
@@ -711,6 +738,7 @@ namespace {
             reranked_ids.push_back(rerank_candidates_exact(
                 dataset.queries[query_index],
                 dataset.documents,
+                document_inverse_norms,
                 query_results[query_index],
                 oracle_k,
                 similarity
@@ -786,12 +814,14 @@ namespace {
     template <class SearchFn>
     [[nodiscard]] nlohmann::json measure_rerank_grid(
         const Dataset& dataset,
+        const std::vector<float>& document_inverse_norms,
         const std::vector<agent_memory::BinarySignature>& query_signatures,
         const agent_memory::BinarySignatureInfo& signature_info,
         const std::vector<std::size_t>& candidate_limits,
         const std::vector<std::unordered_set<std::string>>& exact_sets,
         const std::vector<std::vector<std::string>>& exact_ids,
         std::size_t oracle_k,
+        const agent_memory::VectorSimilarityComputer& similarity,
         SearchFn&& search_fn
     ) {
         nlohmann::json rows = nlohmann::json::array();
@@ -807,10 +837,12 @@ namespace {
             );
             const auto rerank = measure_exact_rerank(
                 dataset,
+                document_inverse_norms,
                 candidates.query_results,
                 exact_sets,
                 exact_ids,
-                oracle_k
+                oracle_k,
+                similarity
             );
             const auto binary_total_ms =
                 candidates.query.at("total_ms").template get<double>();
@@ -851,22 +883,26 @@ namespace {
 
     [[nodiscard]] nlohmann::json measure_multiprobe_rerank_grid(
         const Dataset& dataset,
+        const std::vector<float>& document_inverse_norms,
         const std::vector<agent_memory::BinarySignature>& query_signatures,
         const agent_memory::BinarySignatureInfo& signature_info,
         const std::vector<std::size_t>& candidate_limits,
         const std::vector<std::unordered_set<std::string>>& exact_sets,
         const std::vector<std::vector<std::string>>& exact_ids,
         std::size_t oracle_k,
+        const agent_memory::VectorSimilarityComputer& similarity,
         const agent_memory::MultiProbeHammingIndex& index
     ) {
         auto rows = measure_rerank_grid(
             dataset,
+            document_inverse_norms,
             query_signatures,
             signature_info,
             candidate_limits,
             exact_sets,
             exact_ids,
             oracle_k,
+            similarity,
             [&](const agent_memory::BinarySignatureSearchQuery& query) {
                 return index.search(query);
             }
@@ -951,6 +987,11 @@ namespace {
             signature_info,
             config.returned_candidate_limit
         );
+        agent_memory::VectorSimilarityComputer rerank_similarity;
+        const auto document_inverse_norms = make_document_inverse_norms(
+            dataset.documents,
+            rerank_similarity
+        );
 
         agent_memory::ExactVectorIndex exact({
             config.embedding_dimensions,
@@ -1004,24 +1045,28 @@ namespace {
         );
         const auto flat_rerank = measure_rerank_grid(
             dataset,
+            document_inverse_norms,
             query_signatures,
             signature_info,
             config.rerank_candidate_limits,
             exact_sets,
             exact_ids,
             config.oracle_k,
+            rerank_similarity,
             [&](const agent_memory::BinarySignatureSearchQuery& query) {
                 return flat.search(query);
             }
         );
         const auto multiprobe_rerank = measure_multiprobe_rerank_grid(
             dataset,
+            document_inverse_norms,
             query_signatures,
             signature_info,
             config.rerank_candidate_limits,
             exact_sets,
             exact_ids,
             config.oracle_k,
+            rerank_similarity,
             multiprobe
         );
 
