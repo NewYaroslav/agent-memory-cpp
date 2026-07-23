@@ -28,6 +28,10 @@
 6. **Metadata filters** — поддержка `(metadata_key, metadata_value) -> ResourceId` reverse index для pre-filter.
 7. **ContextBuilder** — multi-table write в одной транзакции (primary + secondary indexes атомарно).
 8. **Retrieval composition** — multi-retriever + RRF + cross-encoder rerank slot.
+9. **Addressable Compression / Progressive Disclosure** — хранение
+   compact projections, derivation links и drill-down refs, чтобы верхние
+   слои памяти могли оставаться маленькими, но детерминированно
+   раскрывались до raw evidence.
 
 ### Non-goals
 
@@ -606,6 +610,7 @@ fact_payloads                         KeyValueTable<UnitId, FactPayload>        
 conversation_episode_payloads         KeyValueTable<UnitId, ConversationEpisodePayload> // capability ConversationMemory
 compiled_article_payloads             KeyValueTable<UnitId, CompiledArticlePayload>     // capability CompiledArticles
 chunk_payloads                        KeyValueTable<UnitId, ChunkPayload>                // для kind == Chunk
+artifact_refs                         KeyValueTable<ArtifactId, ArtifactRefPayload>      // raw/offloaded payload refs
 
 // Layer C — search projections (multi-version)
 unit_projections                      KeyValueTable<CompositeKey<ScopeId, UnitId, ProjectionKind, uint64_revision>,
@@ -631,6 +636,10 @@ temporal_unit_index                   RangeIndexTable<uint64_timestamp, UnitId> 
 speaker_to_units                      ReverseIndexTable<CompositeKey<ScopeId, SpeakerId>, UnitId>
 session_to_units                      ReverseIndexTable<CompositeKey<ScopeId, SessionId>, UnitId>
 usage_stats_index                     ReverseIndexTable<CompositeKey<ScopeId, UnitId>, UsageStatsComponent>
+derivation_edges                      ReverseIndexTable<CompositeKey<ScopeId, FromUnitId, DerivationKind>, DerivationEdgePayload>
+evidence_edges                        ReverseIndexTable<CompositeKey<ScopeId, ClaimUnitId, EvidenceKind>, EvidenceRefPayload>
+drilldown_refs                        ReverseIndexTable<CompositeKey<ScopeId, ProjectionId, DrillDownKind>, UnitId>
+artifact_to_units                     ReverseIndexTable<CompositeKey<ScopeId, ArtifactId>, UnitId>
 
 // Schema metadata
 schema_info                           KeyValueTable<string, SchemaInfo>                  // envelope_version, component_versions[], profile_signature
@@ -650,6 +659,7 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 | `conversation_episode_payloads` | по capability `ConversationMemory` | `agent_memory.episode.v1` | TBD | Per-kind payload для `ConversationEpisode` units |
 | `compiled_article_payloads` | по capability `CompiledArticles` | `agent_memory.compiled_article.v1` | TBD | Per-kind payload для `CompiledArticle` units |
 | `chunk_payloads` | по capability `ChunkedContent` | `agent_memory.chunk.v1` | TBD | Per-kind payload для `Chunk` units |
+| `artifact_refs` | по capability `AddressableCompression` | `agent_memory.artifact_ref.v1` | TBD | Ссылки на offloaded/raw payloads (tool logs, source files, trace blobs) |
 | `unit_projections` | да (Layer C projections) | `agent_memory.projection.v1` | TBD | Multi-version `(scope, unit, ProjectionKind, revision)` projections |
 | `embedding_meta` | по capability `DenseVectors` | `agent_memory.embedding_meta.v1` | TBD | Версионированная мета (model_id, version, dim, encoder_id) |
 | `embedding_vectors` | по capability `DenseVectors` | `agent_memory.embedding_vector.v1` | TBD | Vector blob по `(scope, model_id, ProjectionKind, unit_id)` |
@@ -663,6 +673,10 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 | `speaker_to_units` | по capability `SpeakerAttribution` | `agent_memory.speaker.v1` | TBD | Reverse index `(scope, speaker_id) -> UnitId` |
 | `session_to_units` | по capability `SpeakerAttribution` | `agent_memory.session.v1` | TBD | Reverse index `(scope, session_id) -> UnitId` |
 | `usage_stats_index` | по capability `UsageTracking` | `agent_memory.usage_stats.v1` | TBD | Reverse index `(scope, unit_id) -> UsageStatsComponent` |
+| `derivation_edges` | по capability `AddressableCompression` | `agent_memory.derivation_edge.v1` | TBD | Reverse index для `derived_from`, `supports`, `contradicts`, `supersedes` |
+| `evidence_edges` | по capability `AddressableCompression` | `agent_memory.evidence_edge.v1` | TBD | Claim/profile/scenario -> source evidence refs |
+| `drilldown_refs` | по capability `AddressableCompression` | `agent_memory.drilldown_ref.v1` | TBD | Projection/node -> UnitId refs для lazy detail expansion |
+| `artifact_to_units` | по capability `AddressableCompression` | `agent_memory.artifact_ref.v1` | TBD | Artifact/raw payload -> derived UnitId refs |
 | `schema_info` | да (schema metadata) | `agent_memory.schema.v1` | TBD | Envelope_version, component_versions[], profile_signature |
 
 Владелец каждой DBI будет зафиксирован в соответствующем PR; на этапе TZ — TBD. Версия payload соответствует общему контракту `agent_memory.<concept>.v1`, см. `guides/memory-stacks-roadmap.md`, секция 12 и ADR-001.
@@ -673,6 +687,11 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 - `embedding_meta` хранит версионированную мета-информацию (model_id + version), чтобы CompactionWorker мог удалять versions старше N дней при отсутствии ссылок (см. roadmap, open issue 17.3).
 - `embedding_vectors` упорядочен по `(scope_id, model_id, ProjectionKind, UnitId)` для cluster-friendly чтения при exact scan; для ANN-расширений порядок может быть пересмотрен в `guides/optimization-roadmap.md`.
 - Все secondary indexes начинаются с `ScopeId` (ADR-012); profile validation в `MemoryStack::open()` проверяет обязательность `scope_id` для каждого write (см. roadmap, секция 10).
+- `derivation_edges`, `evidence_edges`, `drilldown_refs` и `artifact_to_units`
+  вводят storage-основу для Progressive Disclosure / Addressable Compression:
+  compact projection или synthesized unit не считается полноценно
+  сохранённым, если у него нет детерминированного пути к raw source,
+  evidence unit или external artifact ref.
 
 Все таблицы используют префикс payload versioning (`agent_memory.knowledge_unit.v1`, `agent_memory.qa.v1`, и т.п.), `Config::max_dbs` увеличивается с 16 до 64.
 
@@ -759,6 +778,11 @@ schema_info                           KeyValueTable<string, SchemaInfo>         
 - `KeyValueTable::merge`, `snapshot`, `reindex`
 - `SequenceTable::reserve`, `append_if_absent`
 - `AnyValueTable::bulk_set_of_type<T>`
+
+**P4 (после появления первого consumer-а compact projections):**
+- `ArtifactRefTable` или thin wrapper над `KeyValueTable<ArtifactId, ArtifactRefPayload>`
+- `DerivationIndex` / `EvidenceIndex` helper поверх `ReverseIndexTable`
+- `DrillDownIndex` helper поверх `ReverseIndexTable`
 
 ## 7. Backward compatibility
 
@@ -1333,6 +1357,191 @@ void EmbeddingExtractionWorker::tick(std::int64_t now_ms,
 
 Использует API 12.5; сценарий помечен как опциональный для `agent-memory-cpp` и активируется при появлении второго реального потребителя job-очереди.
 
+### 12.8 Addressable Compression и Progressive Disclosure
+
+Требование: зафиксировать generic storage-основу для компактных
+представлений, которые можно раскрыть до исходных доказательств. Поводом
+для требования стал обзор TencentDB Agent Memory: в нём short-term memory
+сжимает tool logs в Mermaid canvas с `node_id`, а long-term memory держит
+цепочку `Persona / Scenario -> Atom -> Conversation`. Для
+`agent-memory-cpp` это не копируется как жёсткая L0-L3 пирамида; вместо
+этого вводится семантика адресуемой деривации поверх `KnowledgeUnitId`,
+`ProjectionId` и `ArtifactId`.
+
+#### 12.8.1 `ArtifactRef`
+
+```cpp
+namespace mdbx_containers {
+
+using ArtifactId = std::uint64_t;
+
+enum class ArtifactKind : std::uint8_t {
+    SourceText,
+    ToolLog,
+    TracePayload,
+    ExternalFile,
+    RemoteObject,
+    Custom
+};
+
+struct ArtifactRef {
+    ArtifactId id;
+    ArtifactKind kind;
+    std::string uri;          ///< file path, content-addressed id, or opaque app URI
+    std::string media_type;   ///< e.g. text/markdown, application/json
+    std::uint64_t byte_size;
+    std::string content_hash; ///< optional empty string when unknown
+};
+
+class ArtifactRefTable {
+public:
+    void put(const ArtifactRef& ref, const Transaction& txn);
+    std::optional<ArtifactRef> find(ArtifactId id,
+                                    const Transaction& txn) const;
+    bool erase(ArtifactId id, const Transaction& txn);
+};
+
+} // namespace mdbx_containers
+```
+
+Контрактные требования:
+
+- **Opaque URI.** `mdbx-containers` не интерпретирует `uri`; проверка
+  существования файла, прав доступа, remote fetch и encryption остаются на
+  стороне приложения.
+- **Hash optional but stable.** Пустой `content_hash` допустим, но если hash
+  задан, он должен быть stable identity artifact-а и не должен включать
+  volatile filesystem metadata.
+- **No payload hoarding.** Большие raw payloads не пишутся внутрь secondary
+  indexes; DBI хранит только ссылку и компактную диагностическую metadata.
+
+#### 12.8.2 `DerivationIndex`
+
+```cpp
+namespace mdbx_containers {
+
+enum class DerivationKind : std::uint8_t {
+    DerivedFrom,
+    Supports,
+    Contradicts,
+    Supersedes,
+    DetailOf,
+    SummaryOf,
+    Custom
+};
+
+struct DerivationEdge {
+    std::uint64_t from_unit_id;
+    std::uint64_t to_unit_id;
+    DerivationKind kind;
+    double confidence;
+    std::string producer_id;
+    std::string producer_version;
+    bool losslessly_traceable;
+};
+
+class DerivationIndex {
+public:
+    void add(const DerivationEdge& edge, const Transaction& txn);
+    std::vector<DerivationEdge> outgoing(std::uint64_t from_unit_id,
+                                         DerivationKind kind,
+                                         const Transaction& txn) const;
+    std::vector<DerivationEdge> incoming(std::uint64_t to_unit_id,
+                                         DerivationKind kind,
+                                         const Transaction& txn) const;
+    std::size_t remove_all_for(std::uint64_t unit_id,
+                               const Transaction& txn);
+};
+
+} // namespace mdbx_containers
+```
+
+Контрактные требования:
+
+- **Direction is explicit.** `from_unit_id -> to_unit_id` означает
+  «верхний/производный объект ссылается на нижний/evidence объект» для
+  `DerivedFrom`, `Supports`, `DetailOf`, `SummaryOf`. Для
+  `Supersedes` направление означает `from` supersedes `to`.
+- **Stable traversal.** `outgoing()` и `incoming()` возвращают коллекции в
+  детерминированном порядке: сначала `DerivationKind`, затем `to_unit_id`
+  или `from_unit_id`.
+- **No truth upgrade.** Наличие `Supports` edge не превращает derived claim
+  в canonical fact. Эпистемический статус, user confirmation и contradiction
+  policy остаются application-level payload-ами.
+
+#### 12.8.3 `DrillDownIndex`
+
+```cpp
+namespace mdbx_containers {
+
+using ProjectionId = std::uint64_t;
+
+enum class DrillDownKind : std::uint8_t {
+    Evidence,
+    Source,
+    Detail,
+    DerivedFrom,
+    Contradiction,
+    RawArtifact,
+    Custom
+};
+
+struct DrillDownRef {
+    ProjectionId projection_id;
+    std::uint64_t target_unit_id;
+    DrillDownKind kind;
+    std::uint8_t min_detail_level;
+};
+
+class DrillDownIndex {
+public:
+    void add(const DrillDownRef& ref, const Transaction& txn);
+    std::vector<DrillDownRef> refs_for(ProjectionId projection_id,
+                                      const Transaction& txn) const;
+    std::vector<std::uint64_t> targets_for(ProjectionId projection_id,
+                                           DrillDownKind kind,
+                                           const Transaction& txn) const;
+};
+
+} // namespace mdbx_containers
+```
+
+Контрактные требования:
+
+- **Projection first.** Drill-down начинается от compact projection, а не
+  от произвольного text span. Привязка text span -> projection node
+  остаётся на стороне `agent-memory-cpp`.
+- **Bounded expansion.** API возвращает refs, но не выполняет рекурсивный
+  graph walk сам. Максимальная глубина раскрытия задаётся retrieval/context
+  layer-ом.
+- **Detail levels are comparable.** `min_detail_level` хранится как число,
+  чтобы application enum вида `SYMBOLIC/SUMMARY/STRUCTURED/EVIDENCE/RAW`
+  мог эволюционировать без изменения layout `mdbx-containers`.
+
+#### 12.8.4 Benchmark implications
+
+Новые primitives должны проверяться не только latency-тестами, но и
+retrieval/eval сценариями:
+
+- **Traceability coverage:** доля returned compact hits, для которых найден
+  путь до evidence или raw artifact (`target >= 0.99` для fixture без
+  intentionally orphan records).
+- **Progressive disclosure cost:** latency и read amplification для
+  `SYMBOLIC -> EVIDENCE -> RAW` раскрытия при глубине 0/1/2/3.
+- **Layer selection accuracy:** на запросах типа profile/scenario/fact/raw
+  retriever должен выбирать ожидаемый abstraction level, а не всегда
+  проваливаться в raw chunks.
+- **Compression utility:** tokens before/after compact projection, pass-rate
+  или task-success delta, и доля запросов, где потребовался drill-down.
+- **Failure classification:** отличать `NO_MATCHES` от `EVIDENCE_MISSING`,
+  `ARTIFACT_UNAVAILABLE` и `PARTIAL_RESULTS`; пустой результат не должен
+  маскировать деградацию storage.
+
+Эти бенчмарки являются benchmark-runner задачей `agent-memory-cpp`, а не
+обязанностью `mdbx-containers`. На стороне `mdbx-containers` фиксируются
+только deterministic storage contracts, stable ordering и atomic multi-table
+write для primary unit + derivation/evidence/drilldown indexes.
+
 ## 13. Перекрёстные ссылки (потребители в agent-memory-cpp)
 
 Этот раздел фиксирует downstream-потребителей TZ: какие roadmap-документы и компоненты `agent-memory-cpp` будут использовать конкретные DBIs из секции 5.5 и API из секции 12.
@@ -1342,6 +1551,7 @@ void EmbeddingExtractionWorker::tick(std::int64_t now_ms,
 - [`guides/lexical-search-roadmap.md`](lexical-search-roadmap.md) §"BM25 baseline" — потребитель `lexical_index_*` DBI (`inverted_token_to_unit`, `field_to_postings`); `MultiTableWriter` обеспечивает атомарность write primary + secondary indexes.
 - [`guides/runtime-services-roadmap.md`](runtime-services-roadmap.md) §"PromptCache" / §"AsyncIndexer" / §"WriteGate" — потребитель `context_cache_*` DBI (M2+ persistence для `IResponseCache`), `TaskQueue` (TZ §12.5) для `IAsyncIndexer`.
 - [`guides/compaction-roadmap.md`](compaction-roadmap.md) §"CompactionWorker" — потребитель `MultiTableWriter` (атомарный compaction), `usage_stats_index` (для `DecayJob`), `embedding_meta` (для `EmbeddingRecomputeJob`), `TaskQueue` (TZ §12.5) для job lifecycle.
+- [`guides/knowledge-units-roadmap.md`](knowledge-units-roadmap.md) — будущий потребитель `DerivationIndex`, `EvidenceIndex`, `DrillDownIndex` и `ArtifactRefTable` для `AbstractionComponent`, `SourceRef`, `ProfileClaim` и compact projections.
 - [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md) §"Layer 1 (Storage Primitives)" — основной downstream-потребитель: все секции 5.5 DBIs становятся частью capability-aware MDBX-схемы компонентной архитектуры.
 
 ## Перекрёстные ссылки
