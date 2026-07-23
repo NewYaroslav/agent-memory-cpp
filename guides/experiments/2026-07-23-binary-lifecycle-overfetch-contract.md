@@ -6,6 +6,10 @@ Question: can the lifecycle benchmark distinguish the exact-neighbour target
 from the number of binary candidates returned, so future overfetch/rerank grids
 measure the intended metric?
 
+Follow-up: PR #84 adds the first overfetch + exact rerank grid on top of this
+contract. See
+[`2026-07-23-binary-lifecycle-overfetch-rerank.md`](2026-07-23-binary-lifecycle-overfetch-rerank.md).
+
 Setup:
 
 - command: `agent-memory-binary-lifecycle-bench`

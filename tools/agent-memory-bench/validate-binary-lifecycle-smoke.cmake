@@ -91,6 +91,11 @@ require_json(bit_count GET bit_count)
 require_json(oracle_k GET oracle_k)
 require_json(returned_candidate_limit GET returned_candidate_limit)
 require_json(result_limit GET result_limit)
+string(JSON rerank_candidate_limit_count
+    LENGTH
+    "${report_json}"
+    rerank_candidate_limits
+)
 require_json(mutation_count GET mutation_count)
 require_json(seed GET seed)
 require_json(query_noise_seed GET query_noise_seed)
@@ -118,6 +123,21 @@ if(NOT result_limit EQUAL returned_candidate_limit)
         "legacy result_limit must match returned_candidate_limit"
     )
 endif()
+if(NOT rerank_candidate_limit_count EQUAL 3)
+    message(FATAL_ERROR "rerank_candidate_limits must contain three smoke entries")
+endif()
+foreach(rerank_limit_index RANGE 0 2)
+    require_json(rerank_limit GET rerank_candidate_limits ${rerank_limit_index})
+    if(rerank_limit_index EQUAL 0 AND NOT rerank_limit EQUAL 16)
+        message(FATAL_ERROR "first rerank candidate limit must stay 16")
+    endif()
+    if(rerank_limit_index EQUAL 1 AND NOT rerank_limit EQUAL 32)
+        message(FATAL_ERROR "second rerank candidate limit must stay 32")
+    endif()
+    if(rerank_limit_index EQUAL 2 AND NOT rerank_limit EQUAL 64)
+        message(FATAL_ERROR "third rerank candidate limit must stay 64")
+    endif()
+endforeach()
 if(NOT mutation_count EQUAL 16)
     message(FATAL_ERROR "mutation_count must stay 16")
 endif()
@@ -382,6 +402,136 @@ foreach(result_count_label
         )
     endif()
 endforeach()
+
+function(require_rerank_grid backend_label)
+    string(JSON row_count
+        LENGTH
+        "${report_json}"
+        ${ARGN}
+        rerank
+    )
+    if(NOT row_count EQUAL 3)
+        message(FATAL_ERROR "${backend_label}.rerank must contain three rows")
+    endif()
+
+    set(previous_flat_coverage -1)
+    foreach(row_index RANGE 0 2)
+        require_json(candidate_limit GET ${ARGN} rerank ${row_index} candidate_limit)
+        if(row_index EQUAL 0)
+            set(expected_limit 16)
+        elseif(row_index EQUAL 1)
+            set(expected_limit 32)
+        else()
+            set(expected_limit 64)
+        endif()
+        if(NOT candidate_limit EQUAL expected_limit)
+            message(FATAL_ERROR
+                "${backend_label}.rerank[${row_index}].candidate_limit must be "
+                "${expected_limit}, got ${candidate_limit}"
+            )
+        endif()
+
+        require_json(binary_search_total_ms
+            GET ${ARGN} rerank ${row_index} binary_search_total_ms)
+        require_json(binary_search_mean_ms
+            GET ${ARGN} rerank ${row_index} binary_search_mean_ms)
+        require_json(binary_mean_result_count
+            GET ${ARGN} rerank ${row_index} binary_mean_result_count)
+        require_json(candidate_coverage
+            GET ${ARGN} rerank ${row_index} exact_top_k_candidate_coverage)
+        require_json(exact_rerank_total_ms
+            GET ${ARGN} rerank ${row_index} exact_rerank_total_ms)
+        require_json(exact_rerank_mean_ms
+            GET ${ARGN} rerank ${row_index} exact_rerank_mean_ms)
+        require_json(reranked_recall
+            GET ${ARGN} rerank ${row_index} reranked_recall_at_k_vs_exact)
+        require_json(reranked_top1
+            GET ${ARGN} rerank ${row_index} reranked_top1_agreement)
+        require_json(end_to_end_total_ms
+            GET ${ARGN} rerank ${row_index} end_to_end_total_ms)
+        require_json(end_to_end_mean_ms
+            GET ${ARGN} rerank ${row_index} end_to_end_mean_ms)
+
+        require_nonnegative(${binary_search_total_ms}
+            "${backend_label}.rerank[${row_index}].binary_search_total_ms")
+        require_nonnegative(${binary_search_mean_ms}
+            "${backend_label}.rerank[${row_index}].binary_search_mean_ms")
+        require_nonnegative(${exact_rerank_total_ms}
+            "${backend_label}.rerank[${row_index}].exact_rerank_total_ms")
+        require_nonnegative(${exact_rerank_mean_ms}
+            "${backend_label}.rerank[${row_index}].exact_rerank_mean_ms")
+        require_nonnegative(${end_to_end_total_ms}
+            "${backend_label}.rerank[${row_index}].end_to_end_total_ms")
+        require_nonnegative(${end_to_end_mean_ms}
+            "${backend_label}.rerank[${row_index}].end_to_end_mean_ms")
+        require_range(${candidate_coverage}
+            "${backend_label}.rerank[${row_index}].coverage" 0 1)
+        require_range(${reranked_recall}
+            "${backend_label}.rerank[${row_index}].reranked_recall" 0 1)
+        require_range(${reranked_top1}
+            "${backend_label}.rerank[${row_index}].reranked_top1" 0 1)
+        if("${backend_label}" STREQUAL "flat_binary")
+            if(NOT binary_mean_result_count EQUAL candidate_limit)
+                message(FATAL_ERROR
+                    "${backend_label}.rerank[${row_index}].binary_mean_result_count "
+                    "must match candidate_limit ${candidate_limit}, got "
+                    "${binary_mean_result_count}"
+                )
+            endif()
+        else()
+            if(NOT binary_mean_result_count GREATER 0
+               OR binary_mean_result_count GREATER candidate_limit)
+                message(FATAL_ERROR
+                    "${backend_label}.rerank[${row_index}].binary_mean_result_count "
+                    "must be in (0, ${candidate_limit}], got "
+                    "${binary_mean_result_count}"
+                )
+            endif()
+        endif()
+        if(NOT reranked_recall EQUAL candidate_coverage)
+            message(FATAL_ERROR
+                "${backend_label}.rerank[${row_index}] exact rerank recall "
+                "must match candidate coverage for the same exact scorer"
+            )
+        endif()
+        if("${backend_label}" STREQUAL "flat_binary")
+            if(candidate_coverage LESS previous_flat_coverage)
+                message(FATAL_ERROR
+                    "flat rerank coverage must not decrease as candidate_limit grows"
+                )
+            endif()
+            set(previous_flat_coverage ${candidate_coverage})
+        else()
+            require_json(mean_candidate_count
+                GET ${ARGN} rerank ${row_index} mean_candidate_count)
+            require_json(mean_probed_bucket_count
+                GET ${ARGN} rerank ${row_index} mean_probed_bucket_count)
+            require_json(mean_visited_posting_count
+                GET ${ARGN} rerank ${row_index} mean_visited_posting_count)
+            if(NOT mean_candidate_count GREATER 0)
+                message(FATAL_ERROR
+                    "${backend_label}.rerank[${row_index}].mean_candidate_count "
+                    "must be positive"
+                )
+            endif()
+            if(NOT mean_probed_bucket_count GREATER 0)
+                message(FATAL_ERROR
+                    "${backend_label}.rerank[${row_index}].mean_probed_bucket_count "
+                    "must be positive"
+                )
+            endif()
+            if(mean_visited_posting_count LESS mean_candidate_count)
+                message(FATAL_ERROR
+                    "${backend_label}.rerank[${row_index}].mean_visited_posting_count "
+                    "must be at least mean_candidate_count"
+                )
+            endif()
+        endif()
+    endforeach()
+endfunction()
+
+require_rerank_grid("flat_binary" flat_binary)
+require_rerank_grid("multiprobe_binary" multiprobe_binary)
 
 require_json(multiprobe_mean_candidate_count
     GET multiprobe_binary mean_candidate_count)

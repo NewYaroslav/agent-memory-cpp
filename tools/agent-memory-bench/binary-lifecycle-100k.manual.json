@@ -6,6 +6,7 @@
   "bit_count": 128,
   "oracle_k": 10,
   "returned_candidate_limit": 10,
+  "rerank_candidate_limits": [10, 32, 64, 128, 256, 512],
   "mutation_count": 1024,
   "seed": 42,
   "multiprobe_table_count": 8,
