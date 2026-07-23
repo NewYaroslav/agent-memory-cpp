@@ -32,6 +32,20 @@ target_link_libraries(agent-memory-aggregate-signature-bench
         agent_memory::json
 )
 
+add_executable(agent-memory-binary-lifecycle-bench
+    binary_lifecycle.cpp
+)
+
+target_link_libraries(agent-memory-binary-lifecycle-bench
+    PRIVATE
+        agent_memory::agent_memory
+        agent_memory::json
+)
+
+if(WIN32)
+    target_link_libraries(agent-memory-binary-lifecycle-bench PRIVATE Psapi)
+endif()
+
 add_executable(agent-memory-precomputed-artifact-verify
     precomputed_artifact_verify.cpp
 )
