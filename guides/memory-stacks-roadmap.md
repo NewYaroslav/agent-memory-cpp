@@ -213,6 +213,9 @@ enum class MemoryCapability : uint64_t {
     EmbeddingMigration = 1ull << 10,
     CompiledArticles   = 1ull << 11,
     ConversationMemory = 1ull << 12,
+    ChunkedContent     = 1ull << 13,
+    FullSourceRefs     = 1ull << 14,
+    ResponseCache      = 1ull << 15,
 };
 
 using CapabilitySet = std::underlying_type_t<MemoryCapability>;
@@ -374,9 +377,13 @@ struct MemoryProfileSpec {
     bool enable_fact_payload = false;
     bool enable_conversation_episode = false;
     bool enable_compiled_article = false;
+    bool enable_chunk_payloads = true;
+    bool enable_full_source_refs = false;
     bool enable_embedding_meta = false;
     bool enable_compaction = false;
+    bool enable_async_indexer = false;
     bool enable_prompt_cache = false;
+    bool enable_response_cache = false;
     bool enable_context_planner = false;
     bool enable_encrypted_storage = false;
 
@@ -471,6 +478,7 @@ struct WriteRequest {
     std::optional<ChunkPayload> chunk_payload;
     std::optional<ConversationEpisodePayload> episode_payload;
     std::optional<CompiledArticlePayload> article_payload;
+    std::optional<std::vector<SourceRef>> full_source_refs; // requires enable_full_source_refs
     std::vector<ComponentVariant> components;
     std::vector<SearchProjection> projections;
     std::vector<GraphEdge> graph_edges;
@@ -965,10 +973,11 @@ authoritative DBI budget checkpoint — в §5.5.1 того же TZ.
 ### 12.1. Capability-to-Storage Mapping
 
 `MemoryProfileSpec` выбирает logical capabilities: QAPairs, TemporalFact,
-ConversationMemory, CompiledArticles, ChunkedContent, DenseVectors,
-LexicalBm25F, GraphRelations, TemporalValidity, SpeakerAttribution,
-UsageStats, Compaction, PromptPrefixCache and opt-in ResponseCache. Concrete
-DBI names and table types for these capabilities are enumerated in TZ §5.5.
+ConversationMemory, CompiledArticles, ChunkedContent, FullSourceRefs,
+DenseVectors, LexicalBm25F, GraphRelations, TemporalValidity,
+SpeakerAttribution, UsageStats, Compaction, PromptPrefixCache and opt-in
+ResponseCache. Concrete DBI names and table types for these capabilities are
+enumerated in TZ §5.5.
 
 ### 12.2. Runtime and Mode-Specific Deltas
 

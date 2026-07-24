@@ -89,10 +89,11 @@ public:
 };
 
 struct ResponseCacheKey {
+    uint32_t schema_version = 1;
     ScopeId scope_id;
     std::string provider_id;
     std::string model_id;
-    std::string prompt_hash;     // hash(prompt + tools + temperature)
+    std::string request_hash;    // hash(canonical prompt + tools + params)
     std::optional<std::string> suffix;
 };
 
@@ -201,8 +202,16 @@ LRU eviction по `size_bytes` (когда превышен `max_bytes`) и по
 
 ```
 response_cache
-  key = (scope_id, prompt_hash) → CachedResponse
+  key = ResponseCacheStorageKey → CachedResponse
+
+ResponseCacheStorageKey =
+  CompositeKey<ScopeId, ProviderId, ModelId, RequestHash, SuffixBytes, SchemaVersion>
 ```
+
+`ResponseCacheStorageKey` is semantically equivalent to `ResponseCacheKey`.
+`SuffixBytes` uses canonical encoding where empty optional suffix and empty
+string suffix are distinct. If the hash recipe or canonical request encoding
+changes, `schema_version` changes and old entries are ignored or migrated.
 
 При `MemoryStack::open()` — загрузить из DBI. На eviction (LRU in-memory) — удалить из DBI. Переживает restart.
 
@@ -306,7 +315,25 @@ See [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5 f
 
 ### 4.1. Purpose
 
-Батчинг вставок в lexical/vector индексы для уменьшения write latency. Пишет в MemoryStack немедленно, но propagation в secondary indexes (inverted_token_to_unit, embedding_vectors) — async через очередь.
+AsyncIndexer выполняет rebuild/backfill и тяжёлые или explicitly
+eventually-consistent indexing jobs. Он **не** является владельцем default
+write visibility для critical retrieval indexes.
+
+Default M0/M1 consistency mode:
+
+- `MemoryStack::write_unit` commits envelope, components, projections,
+  content-key/by-kind indexes, lexical candidate/stat indexes needed by active
+  retrieval, metadata filters and selected lightweight secondary indexes in one
+  `MultiTableWriter` transaction.
+- AsyncIndexer may rebuild those indexes from authoritative unit revisions, but
+  it must not be required for a newly committed unit to become retrievable in
+  the same profile.
+
+Async eventual mode is allowed only as explicit profile policy for indexes that
+declare `eventually_consistent=true` (for example heavy embedding recompute,
+HNSW graph rebuild, bulk lexical backfill). In that mode write_unit must enqueue
+a durable `IndexUpdateJob(unit_id, revision, projection_kind)` and readers must
+respect revision/generation guards documented by the owning roadmap.
 
 ### 4.2. Interface
 
@@ -376,6 +403,12 @@ private:
 
 Worker thread батчит до batch_size или max_bytes, потом flushes через MultiTableWriter. На stop — flushes остаток.
 
+Jobs are idempotent and guarded by `(unit_id, revision)`: if the unit has been
+updated or erased before the job runs, the worker skips stale work. Crash
+recovery replays durable jobs; delete/update before an older job is processed is
+safe because the worker compares the stored revision before writing derived
+indexes.
+
 ### 4.4. Batch triggers
 
 - Size: batch_size (default 1000 jobs).
@@ -428,6 +461,9 @@ promotion. `ReadyOrderKey = (priority_rank, job_id)`, где меньший кл
 priority сортировался раньше. `LeaseUntilKey = (lease_until_ms, job_id)`.
 `JobId` является durable monotonic sequence внутри queue и тем самым
 обеспечивает FIFO для одинаковой priority без отдельной sequence/meta DBI.
+Allocation uses an MDBX sequence bound to `jobs_by_id`; it is advanced inside
+the same enqueue transaction and is never derived from `max(job_id) + 1`.
+Pruning terminal jobs does not reset or reuse the sequence.
 
 `claim_next(now, worker_id, lease_duration)` выполняется как atomic
 compare/claim в write transactions:
@@ -460,6 +496,8 @@ struct JobIndexKeys {
 State transitions:
 
 - `enqueue` создает `Pending` record и scheduled либо ready/status index entries.
+  It allocates `JobId` from the durable `jobs_by_id` sequence in the same write
+  transaction; concurrent enqueue and restart must preserve monotonicity.
 - `claim_next` переводит `Pending -> Running`, снимает ready entry и ставит
   lease/status entries.
 - `renew_lease` обновляет `lease_until_ms` и `jobs_by_lease`.
@@ -477,6 +515,14 @@ State transitions:
   `lease_until_ms <= now`; если `cancel_requested = true`, job переходит в
   `Cancelled`, иначе idempotent jobs возвращаются в `Pending`, а
   non-idempotent jobs помечаются как `Failed`/`Dead` по policy.
+
+Queue storage acceptance cases:
+
+- concurrent enqueue transactions allocate distinct increasing `JobId` values;
+- after process restart, the next enqueue continues from the durable MDBX
+  sequence;
+- after pruning terminal jobs, including the current maximum `JobId`, the next
+  enqueue still allocates a greater id and never reuses a deleted id.
 
 Compaction handoff recovery uses the same `JobId`: `compaction_handoffs`
 stores checkpoint payload for the running job, while queue lease recovery is
@@ -684,7 +730,7 @@ returning a shallow executable plan.
 |---|---|---|
 | PromptPrefixCache | `enable_prompt_cache = true` | opt-in (default ON для hybrid retrieval профилей) |
 | ResponseCache | `enable_response_cache = true` | opt-in, default **OFF** (для безопасности) |
-| AsyncIndexer | (always on for write perf) | always |
+| AsyncIndexer | `enable_async_indexer = true` or required by an async-only index policy | optional; rebuild/backfill/heavy async jobs |
 | WriteGate | (always on if WritePolicy set) | conditional |
 | CompactionWorker | `enable_compaction = true` | opt-in |
 | MemoryAwareContextPlanner | `enable_context_planner = true` | opt-in |
@@ -700,7 +746,8 @@ returning a shallow executable plan.
 2. Инициализируются runtime-сервисы:
    - `IPromptPrefixCache` — если `enable_prompt_cache=true` (default ON для hybrid retrieval профилей).
    - `IResponseCache` — только если `enable_response_cache=true` (default OFF).
-   - `AsyncIndexer` — всегда.
+   - `AsyncIndexer` — если `enable_async_indexer=true` или выбран profile с
+     async-only indexing policy.
    - `WriteGate` — если `spec.write_policy` задан.
    - `CompactionWorker` — если `enable_compaction=true`.
    - `IMemoryAwareContextPlanner` — если `enable_context_planner=true`.
@@ -735,7 +782,7 @@ Application
   ↓
 WriteGate.evaluate(request)
   ↓
-  ├── Accept → Enqueue to AsyncIndexer + MultiTableWriter (envelope + components + projections)
+  ├── Accept → MultiTableWriter (primary + critical indexes) and optional durable IndexUpdateJob for async-only indexes
   ├── Buffer → wait for trigger
   ├── Deduplicate → return existing unit_id
   ├── Supersede → mark old as Superseded, write new

@@ -31,6 +31,9 @@ agent-memory-cpp реализует ДОМЕННЫЕ КОНТРАКТЫ (Knowled
 - `BidirectionalRelationIndex<Scope, Source, Target, Tag, Payload>` — только
   после двух независимых consumers; scope/tag/payload opaque, traversal
   page-based with DUPSORT-aware cursor `(encoded_key, encoded_value)`.
+  Generic helper assumes unique `(scope, source, target, tag)` and upsert
+  semantics; multiple evidence records require downstream payload aggregation or
+  an explicit domain relation id.
 - `LargeValueStore<BlobId>` / `ChunkedBlobStore<BlobId>` — только если нужны
   partial reads, chunk-level checksums/compression, bounded chunks, orphan
   cleanup и повторное использование за пределами `agent-memory-cpp`.

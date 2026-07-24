@@ -437,7 +437,7 @@ payload shapes and explains the design.
 inverted_token_to_unit:          // DUPSORT secondary index
     key   = (scope_id, token_id, projection_kind, field_id) -> DUPSORT unit_id
 
-field_to_postings:
+field_to_postings:                 // KV posting stats by full posting identity
     key   = (scope_id, projection_kind, field_id, token_id, unit_id)
     value = PostingStats { tf, positions_count, generation, resource_id }
 
@@ -493,7 +493,8 @@ When a unit is reindexed for a given `projection_kind`:
 3. Load the new SearchProjection set for the unit.
 4. Tokenize each (projection_kind, field_id) text.
 5. Upsert token dictionary entries (shared across projection_kinds).
-6. Write field_to_postings and inverted_token_to_unit entries.
+6. Write `field_to_postings` KV entries and `inverted_token_to_unit`
+   candidate-index entries.
 7. Update lexical_token_stats and lexical_chunk_stats per projection_kind.
 8. Update lexical_collection_stats per projection_kind.
 9. Write new lexical manifest refs and bump generation.
@@ -652,14 +653,16 @@ inverted_token_to_unit:
     key   = (scope_id, token_id, projection_kind, field_id)
     value = DUPSORT unit_id
 
-field_to_postings:
+field_to_postings:                 // KV posting stats by full posting identity
     key   = (scope_id, projection_kind, field_id, token_id, unit_id)
     value = PostingStats { tf, positions_count, generation, resource_id }
 ```
 
 A `unit_id` may appear multiple times for the same token — once per
 projection_kind/field_id combination that contains it. The scorer joins these
-postings at query time using the per-field weights defined below.
+postings at query time using the per-field weights defined below. Targeted
+update/delete of one posting uses the full `(scope_id, projection_kind,
+field_id, token_id, unit_id)` key; `PostingStats` never carries identity.
 
 ### Projection-Weighted BM25F Scoring
 

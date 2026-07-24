@@ -150,6 +150,11 @@ struct SourceRef {
 **M1 (добавление `source_refs` DBI):**
 - В envelope остаётся `vector<SourceRefSummary>` (≤3).
 - Полные `SourceRef` с `excerpt_text` хранятся в отдельной `source_refs` DBI (key = `KnowledgeUnitId` → `vector<SourceRef>`).
+- Public write path: `WriteRequest::full_source_refs` writes full refs
+  atomically with the unit when `enable_full_source_refs=true`. Migration/admin
+  tools may also call `SourceRefStore::replace_for_unit(unit_id, refs, txn)`;
+  this API replaces the entire vector for that unit and must be used in the
+  same transaction as envelope summary updates when both change.
 - Reverse lookup по `resource_id` строится через `metadata_filters` (DBI) — см. canonical physical manifest `mdbx-containers-extension-tz.md` §5.5.
 - При необходимости быстрого reverse lookup добавляется отдельный DBI
   `source_refs_by_resource` (опциональный +1 profile delta; см.
@@ -182,6 +187,12 @@ Content-addressing (дедупликация, миграция, idempotent upser
 
 - **ID** = runtime identity, opaque handle для map key, cross-reference и supersedence chains. Меняется при erase/recreate. Monotonic uint64_t.
 - **Key** = content-addressing handle, детерминированно вычисляется из payload. Один и тот же content → один и тот же key. Используется для dedupe (две записи одного контента), миграции и bulk import.
+
+`KnowledgeUnitKey` is immutable for an existing `KnowledgeUnitId`: changing
+`kind`, `scope` or content hash creates a new unit id and records
+supersede/merge lineage instead of mutating the old id. Mutable updates may
+change envelope metadata, lifecycle, summaries, components and projections, but
+must preserve the original content-addressing key.
 
 ```cpp
 class KnowledgeUnitId {
@@ -767,7 +778,7 @@ enum class DerivedRecordKind : uint32_t {
 | ChunkPayload | `chunk_payloads` | Chunk kind (default, всегда) |
 | ConversationEpisodePayload | `conversation_episode_payloads` | ConversationMemory=true |
 | CompiledArticlePayload | `compiled_article_payloads` | CompiledArticles=true |
-| Full SourceRef vector | `source_refs` | FullSourceRefs=true (M1) |
+| Full SourceRef vector | `source_refs` | `enable_full_source_refs=true` (M1) |
 | SearchProjections | `unit_projections` | indexed retrieval (always для BasicRag+) |
 
 Operational components живут в единой `unit_components` DBI через `TypeDiscriminatedTable` (из `mdbx-containers-extension-tz.md`). Per-kind payloads — отдельные таблицы для изоляции schema и быстрого scan по kind.
