@@ -10,7 +10,8 @@ primitives in `agent-memory-cpp`. It concretizes **Layer 2** of
 [`guides/memory-stacks-roadmap.md`](memory-stacks-roadmap.md), defining how the
 storage-shape primitives used by retrieval (dense vectors, binary signatures,
 reverse indexes) are organized under the component architecture
-(Envelope + Components + SearchProjections), the capability-aware MDBX layout,
+(Envelope + Components + SearchProjections), the capability-aware physical MDBX
+manifest from [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md),
 the multi-projection / multi-model embedding model (ADR-007), and the
 scope-aware multi-tenancy rule (ADR-012).
 
@@ -311,6 +312,39 @@ AGENT_MEMORY_HAS_ZSTD
 - Add tests that verify round-trip content, uncompressed hash, codec metadata,
   and missing-dictionary failures.
 
+### Raw Resource Body Compression
+
+Raw resources (`.md`, `.txt`, extracted `.pdf`, transcripts, logs) are a
+separate compression domain from embeddings, postings and generated summaries.
+The roadmap target is to support both:
+
+- MDBX-backed `ResourceBodyStore`, where body chunks live in primary blob/body
+  tables and are referenced by `ResourceId` / `SourceRef`;
+- file-pack storage, where the original folder layout can be preserved and
+  files are replaced or mirrored by compressed container artifacts that require
+  an application viewer/exporter.
+
+Resource-body compression contract:
+
+- compression unit is a bounded body chunk, not the entire corpus;
+- each body or chunk records `codec`, `codec_level`, `dictionary_id`,
+  `uncompressed_size`, `uncompressed_hash`, content type and source revision;
+- chunk boundaries should align with ingestion/chunking offsets when feasible
+  so citation drill-down does not decompress unrelated text;
+- reverse indexes, posting lists and relation indexes store ids/ranges only,
+  never inline body bytes;
+- raw body storage is optional profile delta and must be accounted for in
+  `mdbx-containers-extension-tz.md` §5.5.1 when MDBX-backed.
+
+Benchmarks before enabling compression by default:
+
+- compression ratio by source type (`md`, `txt`, extracted `pdf`, transcript,
+  logs);
+- random chunk read latency;
+- full resource restore/export latency;
+- write amplification during replace/revision updates;
+- dictionary training benefit vs operational complexity.
+
 ## Vector Encoding Tasks
 
 ### Canonical Float Storage
@@ -538,7 +572,7 @@ struct EmbeddingRecomputeJob final {
 ```
 
 Progress is reported through `compaction_handoffs` (see
-`memory-stacks-roadmap.md` Section 12.4 and `compaction-roadmap.md`). The
+`mdbx-containers-extension-tz.md` §5.5.1 and `compaction-roadmap.md`). The
 handoff payload includes the recomputed `(unit_id, projection_kind)` count, the
 target `version`, and a recovery token for crash-safe resume.
 
@@ -1929,9 +1963,11 @@ storage estimates, quality targets и per-stack defaults).
 
 - [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — Layer 2 context,
   ADR-007 (multi-projection embeddings), ADR-012 (scope-aware secondary
-  indexes), capability matrix, MDBX layout (Section 12), implementation
+  indexes), capability matrix, implementation
   order (Section 16), open issues (Section 17, especially 17.8 for
   embedding migration).
+- [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) —
+  canonical physical MDBX manifest and DBI budget (§5.5/§5.5.1).
 - [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) — Envelope +
   retrieval flow that this optimization layer serves.
 - [`lexical-search-roadmap.md`](lexical-search-roadmap.md) — BM25F over

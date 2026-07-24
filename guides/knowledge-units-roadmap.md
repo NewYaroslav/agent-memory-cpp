@@ -13,6 +13,9 @@
 - `KnowledgeUnitKind` (canonical enum) и kind → payload mapping (какой kind использует какой payload).
 - Per-kind правила генерации `primary_text` и `SearchProjection`.
 - `SourceRef` contract и migration mapping.
+- Generic raw document import: как `.md`, `.txt`, extracted `.pdf`,
+  transcripts and logs становятся searchable units без предварительной
+  curated-card конвертации.
 - `KnowledgeUnitId` monotonic-uint64 scheme (opaque, никогда не reused; content-addressing через отдельный `KnowledgeUnitKey`).
 - Lifecycle FSM (4 durable states: Active / Superseded / Deprecated / Erased) и anti-loop подсвинок через `UsageStatsComponent.cooldown_until_ms`.
 - Manifest integration через `DerivedRecordKind`.
@@ -21,7 +24,7 @@
 
 Cross-references:
 
-- `guides/memory-stacks-roadmap.md` — ADR-001 (envelope + components), `MemoryProfileSpec`, `MemoryStack`, MDBX layout, maturity levels.
+- `guides/memory-stacks-roadmap.md` — ADR-001 (envelope + components), `MemoryProfileSpec`, `MemoryStack`, physical manifest ownership, maturity levels.
 - `guides/knowledge-base-roadmap.md` — envelope shape, retrieval flow, decay-aware scoring, evaluation pipeline.
 - `guides/lexical-search-roadmap.md` — BM25F по `SearchProjection`s, field-weighted indexing.
 - `guides/optimization-roadmap.md` — vector/binary storage, multi-projection embeddings.
@@ -66,7 +69,7 @@ enum class KnowledgeUnitKind : uint16_t {
 | Summary | (no specific payload) | Embedded в primary_text | компрессированное представление |
 | CompiledArticle | CompiledArticlePayload | — | Karpathy-style wiki articles |
 | ConversationEpisode | ConversationEpisodePayload | — | multi-utterance bundle |
-| Note | (no specific payload) | Embedded в primary_text | generic free-form |
+| Note | (no specific payload) | Embedded в primary_text, `ResourceBodyStore` source | generic free-form / raw document entrypoint |
 | Task | (reserved) | — | для future handoff structure |
 | Decision | (reserved) | — | для future handoff structure |
 | Custom | metadata_typed["payload"] | — | escape hatch через JSON-like value |
@@ -76,6 +79,31 @@ enum class KnowledgeUnitKind : uint16_t {
 ### 2.2. Reserved kinds
 
 `Task` (handoff records) и `Decision` (decision points в agent reasoning) зарезервированы для follow-up. Контракты будут определены, когда соответствующие use-cases материализуются (M2+).
+
+### 2.3. Generic raw document units
+
+Raw files do not have to arrive as curated cards. For `.md`, `.txt`,
+extracted `.pdf`, transcript and log imports, the importer creates a minimal
+generic unit when no stronger domain mapping is available:
+
+- `kind = KnowledgeUnitKind::Note` for one document-level unit, or
+  `kind = KnowledgeUnitKind::Chunk` when the importer materializes each chunk
+  as a separate retrieval unit;
+- `ResourceId` is derived from stable URI/path plus content hash or from an
+  application-provided identity;
+- `title` comes from metadata, H1, first meaningful heading, or filename;
+- `trust_level` defaults to profile policy (`C`/`D`) unless supplied by source
+  metadata;
+- tags come from frontmatter/sidecar metadata when available;
+- `SourceRef` points back to the raw resource and byte/text range;
+- `SearchProjection::Original` is generated from extracted text immediately;
+- curated Facts/QAPairs/Summaries may be derived later by compaction or
+  application normalizers.
+
+This is intentionally different from a curated card. A generic raw document
+unit is searchable and citeable, but carries weaker semantics. It should not be
+forced to pretend to be `Fact`, `QAPair`, `CompiledArticle` or any other
+curated kind until an explicit normalizer/extractor produces those units.
 
 ## 3. SourceRef (canonical contract)
 
@@ -122,8 +150,15 @@ struct SourceRef {
 **M1 (добавление `source_refs` DBI):**
 - В envelope остаётся `vector<SourceRefSummary>` (≤3).
 - Полные `SourceRef` с `excerpt_text` хранятся в отдельной `source_refs` DBI (key = `KnowledgeUnitId` → `vector<SourceRef>`).
-- Reverse lookup по `resource_id` строится через `metadata_filters` (DBI) — см. `memory-stacks-roadmap.md` секция 12.3.
-- При необходимости быстрого reverse lookup добавляется отдельный DBI `source_refs_by_resource` (опционально, не в M1 budget).
+- Public write path: `WriteRequest::full_source_refs` writes full refs
+  atomically with the unit when `enable_full_source_refs=true`. Migration/admin
+  tools may also call `SourceRefStore::replace_for_unit(unit_id, refs, txn)`;
+  this API replaces the entire vector for that unit and must be used in the
+  same transaction as envelope summary updates when both change.
+- Reverse lookup по `resource_id` строится через `metadata_filters` (DBI) — см. canonical physical manifest `mdbx-containers-extension-tz.md` §5.5.
+- При необходимости быстрого reverse lookup добавляется отдельный DBI
+  `source_refs_by_resource` (опциональный +1 profile delta; см.
+  `mdbx-containers-extension-tz.md` §5.5.1).
 
 Пример создания envelope с inline summary (M0):
 
@@ -152,6 +187,12 @@ Content-addressing (дедупликация, миграция, idempotent upser
 
 - **ID** = runtime identity, opaque handle для map key, cross-reference и supersedence chains. Меняется при erase/recreate. Monotonic uint64_t.
 - **Key** = content-addressing handle, детерминированно вычисляется из payload. Один и тот же content → один и тот же key. Используется для dedupe (две записи одного контента), миграции и bulk import.
+
+`KnowledgeUnitKey` is immutable for an existing `KnowledgeUnitId`: changing
+`kind`, `scope` or content hash creates a new unit id and records
+supersede/merge lineage instead of mutating the old id. Mutable updates may
+change envelope metadata, lifecycle, summaries, components and projections, but
+must preserve the original content-addressing key.
 
 ```cpp
 class KnowledgeUnitId {
@@ -225,7 +266,7 @@ Storage использует **два** DBI для разделения identity
 
 | DBI | Key | Value | Назначение |
 |---|---|---|---|
-| `unit_id_to_envelope` | `KnowledgeUnitId` | `KnowledgeUnitEnvelope` | primary storage; O(1) lookup по id |
+| `knowledge_units` | `KnowledgeUnitId` | `KnowledgeUnitEnvelope` | primary storage; O(1) lookup по id |
 | `content_key_to_unit_id` | `KnowledgeUnitKey` | `KnowledgeUnitId` | dedupe/migration; O(1) "есть ли уже unit с таким content?" |
 
 Идемпотентный upsert через `content_key_to_unit_id`:
@@ -248,7 +289,7 @@ if (existing) {
 auto new_id = KnowledgeUnitId::allocate();
 unit.id = new_id;
 MultiTableWriter writer;
-writer.put(unit_id_to_envelope, new_id, unit);
+writer.put(knowledge_units, new_id, unit);
 writer.put(content_key_to_unit_id, key, new_id);
 writer.commit();
 ```
@@ -261,7 +302,7 @@ writer.commit();
 2. Для каждого envelope:
    - Извлечь `(kind, scope, content_hash)` из старого ID.
    - Аллоцировать новый monotonic `KnowledgeUnitId`.
-   - Перезаписать envelope с новым id в `unit_id_to_envelope`.
+   - Перезаписать envelope с новым id в `knowledge_units`.
    - Записать `KnowledgeUnitKey → KnowledgeUnitId` в `content_key_to_unit_id`.
 3. Обновить все cross-reference (`anchor_unit_id`, `superseded_by`, `derived_from`) — старые ID заменяются на новые через lookup-таблицу.
 4. Перестроить `inverted_token_to_unit`, `field_to_postings`, secondary indexes.
@@ -726,7 +767,7 @@ enum class DerivedRecordKind : uint32_t {
 | Component / Payload | DBI имя | Open when |
 |---|---|---|
 | KnowledgeUnitEnvelope | `knowledge_units` | always |
-| KnowledgeUnit by kind | `knowledge_units_by_kind` | always (DUPSORT) |
+| KnowledgeUnit by kind | `knowledge_units_by_kind` | always (scope-aware DUPSORT) |
 | UsageStatsComponent | `unit_components` (tag=UsageStats) | UsageStats=true |
 | SpeakerComponent | `unit_components` (tag=Speaker) | SpeakerAttribution=true |
 | TemporalComponent | `unit_components` (tag=Temporal) | TemporalValidity=true |
@@ -737,6 +778,7 @@ enum class DerivedRecordKind : uint32_t {
 | ChunkPayload | `chunk_payloads` | Chunk kind (default, всегда) |
 | ConversationEpisodePayload | `conversation_episode_payloads` | ConversationMemory=true |
 | CompiledArticlePayload | `compiled_article_payloads` | CompiledArticles=true |
+| Full SourceRef vector | `source_refs` | `enable_full_source_refs=true` (M1) |
 | SearchProjections | `unit_projections` | indexed retrieval (always для BasicRag+) |
 
 Operational components живут в единой `unit_components` DBI через `TypeDiscriminatedTable` (из `mdbx-containers-extension-tz.md`). Per-kind payloads — отдельные таблицы для изоляции schema и быстрого scan по kind.
@@ -745,7 +787,12 @@ Operational components живут в единой `unit_components` DBI чере
 
 При `MemoryStack::open(spec)`:
 
-1. Всегда создаются core DBI: `knowledge_units`, `knowledge_units_by_kind`, `schema_info`.
+1. Core/default DBI берутся из canonical manifest
+   `mdbx-containers-extension-tz.md` §5.5. Для knowledge-unit identity path это
+   включает `knowledge_units`, `content_key_to_unit_id`,
+   `knowledge_units_by_kind`, `unit_components`, `unit_projections`,
+   `metadata_filters` и `schema_info`; capability DBI вроде `source_refs`
+   открываются по профилю.
 2. По capability флагам создаются дополнительные DBI (см. таблицу 8.1).
 3. При drift detected (см. `memory-stacks-roadmap.md` секция 14): error или auto-migrate (per ADR-003, ADR-004).
 
@@ -817,7 +864,7 @@ Migration strategy:
 
 1. Построить lookup-таблицу `old_id → new_id` через чтение всех envelope и вычисление `KnowledgeUnitKey` (kind, scope, content_hash из старого ID).
 2. Аллоцировать новый monotonic `KnowledgeUnitId` для каждого уникального key.
-3. Перезаписать envelope с новым id в `unit_id_to_envelope`.
+3. Перезаписать envelope с новым id в `knowledge_units`.
 4. Записать `KnowledgeUnitKey → KnowledgeUnitId` в `content_key_to_unit_id`.
 5. Обновить все cross-reference (`anchor_unit_id`, `superseded_by`, `derived_from`) через lookup-таблицу.
 6. Перестроить `inverted_token_to_unit`, `field_to_postings`, secondary indexes.
@@ -858,7 +905,7 @@ Round-trip test обязателен: `basic_rag` → `agent_ltm` → `basic_rag
 
 Внутренние документы:
 
-- `guides/memory-stacks-roadmap.md` — ADR-001 (envelope + components), ADR-003 (profile/scope), ADR-004 (KnowledgeUnit миграция), ADR-005 (search text), ADR-008 (decay/anti-loop), ADR-011 (lifecycle FSM). `MemoryProfileSpec`, `MemoryStack`, MDBX layout, maturity levels.
+- `guides/memory-stacks-roadmap.md` — ADR-001 (envelope + components), ADR-003 (profile/scope), ADR-004 (KnowledgeUnit миграция), ADR-005 (search text), ADR-008 (decay/anti-loop), ADR-011 (lifecycle FSM). `MemoryProfileSpec`, `MemoryStack`, physical manifest ownership, maturity levels.
 - `guides/knowledge-base-roadmap.md` — `KnowledgeUnitEnvelope` contract, retrieval flow, `IComponentStore`/`IProjectionStore`, `SearchProjection` generation rules, `DecayAwareRetriever`, evaluation pipeline.
 - `guides/lexical-search-roadmap.md` — BM25F по projections, field-weighted indexing, postings structure.
 - `guides/optimization-roadmap.md` — vector storage per `(model_id, projection_kind)`, binary signature indexes, scope-aware secondary indexes.

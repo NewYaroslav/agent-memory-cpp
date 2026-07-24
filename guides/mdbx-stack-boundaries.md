@@ -8,35 +8,51 @@
 
 agent-memory-cpp реализует ДОМЕННЫЕ КОНТРАКТЫ (KnowledgeUnit, RetrievalPlan, IContextBuilder, eval, ...) и АДАПТЕРЫ к хранилищу (MdbxKnowledgeUnitStore, MdbxQAKnowledgeBase, MdbxGraphStore, ...). Адаптеры строятся ПОВЕРХ generic-примитивов и upstream-модулей mdbx-containers.
 
+Нормативные источники: `guides/architecture.md` и
+`guides/mdbx-containers-extension-tz.md`. Этот файл — краткий индекс границ
+для AI-агентов; при конфликте побеждают архитектурный документ и TZ.
+
 ## Что реализуется в mdbx-containers (upstream)
 
 ### Generic-примитивы (наши требования в TZ)
 
 - `ReverseIndexTable` — secondary index через DUPSORT
 - `RangeIndexTable` — range queries + pagination
-- `TypeDiscriminatedTable<EnumTag, ValueVariant>` — type-tag polymorphic
-- `CompositeKey<K1, K2>` + helpers — typed composite keys
+- `TypeDiscriminatedTable<EnumTag, Key, ValueTypes...>` — type-tag
+  polymorphic values behind caller-owned keys
+- `CompositeKey<Parts...>` + helpers — typed composite keys
 - `MultiTableWriter` / `Connection::multi_write` — atomic multi-table writes
 - `KeyValueTable` extensions (batch, diagnostics, paginated_range)
 - `Config` extensions (enable_metrics, table_creation_callback)
-- `HybridSearch::rrf_fuse` — RRF helper
 - Utility functions (hamming_*, sortable_key_from_*, hex)
 
-### Domain-модули (по upstream roadmap)
+### Candidate generic primitives (не текущие требования)
 
-- `DocumentStore`, `ChunkStore` — базовые контейнеры для документов/чанков
-- `TextIndex` (inverted) — token → posting
-- `GraphStore` (typed directed edges) — node/edge storage
-- `EventStore` / `TimelineStore` — события с range queries
-- `MemoryStore` / `MemoryUsageStore` — facts с decay
-- `EntityStore` / `AliasTable` — entities с alias resolution
-- `EvidenceSet` / `RetrievalTraceStore` — provenance для retrieval
-- `TaskQueue` / `JobStore` — persistent job queue
-- `IdAllocatorTable` / `CounterTable` — стабильные ID
-- `CollectionMetadata` / `MetadataTable` — typed metadata для коллекций
+- `BidirectionalRelationIndex<Scope, Source, Target, Tag, Payload>` — только
+  после двух независимых consumers; scope/tag/payload opaque, traversal
+  page-based with DUPSORT-aware cursor `(encoded_key, encoded_value)`.
+  Generic helper assumes unique `(scope, source, target, tag)` and upsert
+  semantics; multiple evidence records require downstream payload aggregation or
+  an explicit domain relation id.
+- `LargeValueStore<BlobId>` / `ChunkedBlobStore<BlobId>` — только если нужны
+  partial reads, chunk-level checksums/compression, bounded chunks, orphan
+  cleanup и повторное использование за пределами `agent-memory-cpp`.
+- `PersistentQueue` — только отдельным proposal после двух независимых
+  не-agent-memory consumers; текущий `TaskQueue` остаётся downstream runtime
+  abstraction.
 
 ### Что НЕ реализуется в mdbx-containers
 
+- RRF / retrieval fusion / cross-encoder orchestration
+- Domain stores: `DocumentStore`, `ChunkStore`, `GraphStore`, `EventStore`,
+  `TimelineStore`, `MemoryStore`, `EvidenceSet`, `RetrievalTraceStore`
+- Runtime workers and queues: `TaskQueue`, retry/backoff/lease/cancellation
+  state machines
+- Graph semantics: `EdgeKind`, expiration policy, evidence/provenance policy,
+  contradiction handling, bounded expansion rules
+- Source/artifact identity: `SourceRef`, `ResourceId`, `ArtifactDescriptor`,
+  raw-document retention policy
+- Usage decay, freshness ranking, profile/scenario lifecycle
 - LLM-вызовы (любые модели, провайдеры, prompt engineering)
 - Embedding model execution (ONNX, llama.cpp, OpenAI-compat, ...)
 - Парсеры (markdown, PDF, DOCX, code, ASR, VLM)
@@ -66,12 +82,13 @@ agent-memory-cpp реализует ДОМЕННЫЕ КОНТРАКТЫ (Knowled
 
 ### Адаптеры к mdbx-containers (`src/agent_memory/infrastructure/mdbx/`)
 
-- `MdbxKnowledgeUnitStore` (planned) — реализует `IKnowledgeUnitStore` через `TypeDiscriminatedTable<KnowledgeUnitKind, ...>` + reverse indexes
-- `MdbxQAKnowledgeBase` (planned) — реализует `IQAKnowledgeBase` через `KeyValueTable<QAPairId, QAPairPayload>` + `ReverseIndexTable<token, QAPairId>`
-- `MdbxFactStore` (planned) — реализует `IFactStore` через `KeyValueTable<FactId, FactPayload>` + `ReverseIndexTable<token, FactId>` + MemoryUsageStore integration для decay
+- `MdbxKnowledgeUnitStore` (planned) — реализует `IKnowledgeUnitStore` через `knowledge_units` envelope table + `unit_components` + `unit_projections` + per-kind payload DBIs
+- `MdbxQAKnowledgeBase` (planned) — реализует `IQAKnowledgeBase` через canonical `qa_payloads` + projection/inverted indexes
+- `MdbxFactStore` (planned) — реализует `IFactStore` через canonical `fact_payloads` + projection/inverted indexes; decay считается downstream
 - `MdbxTemporalIndex` (planned) — реализует `ITemporalIndex` через `RangeIndexTable<sortable_uint64_timestamp, EventPayload>`
-- `MdbxGraphStore` (planned) — реализует `IGraphStore` через `KeyValueTable<NodeId, NodePayload>` + `ReverseIndexTable<(src, edge_kind), EdgePayload>` + `ReverseIndexTable<dst, src>`
+- `MdbxGraphStore` (planned) — реализует `IGraphStore` через `graph_edges_by_src` / `graph_edges_by_dst`; `EdgeKind` и traversal policy downstream
 - `MdbxResourceMetadataFilters` (planned) — `ReverseIndexTable<(metadata_key, metadata_value), ResourceId>` для pre-filter
+- `MdbxResourceBodyStore` (planned) — optional primary raw body storage через `KeyValueTable<ResourceId, bytes>` или application-owned chunked layout; не через reverse indexes
 - Существующие: `MdbxDocumentStorage`, `MdbxResourceManifestStorage`
 
 ### Retrieval composition
@@ -104,9 +121,10 @@ agent-memory-cpp реализует ДОМЕННЫЕ КОНТРАКТЫ (Knowled
 | Нужен persistent storage в production | MDBX adapter поверх upstream примитивов |
 | Unit-тесты, контракт-тесты | In-memory адаптер (planned) |
 | Embedded deployment без MDBX | In-memory адаптер |
-| Новая таблица в agent-memory-cpp | Сначала проверить: есть ли generic-примитив в mdbx-containers? Если да — использовать. Если нет — добавить в TZ |
+| Новая таблица в agent-memory-cpp | Сначала проверить: есть ли generic-примитив в mdbx-containers? Если да — использовать. Если нет — описать adapter-local layout; в TZ добавлять только reusable storage primitive |
 | Новая доменная абстракция (например, новый KnowledgeUnitKind) | Только в agent-memory-cpp, в mdbx-containers НЕ идёт |
 | Новый generic storage pattern (например, новый вид индекса) | Сначала в TZ для mdbx-containers |
+| Raw docs/tool logs в MDBX | `ResourceBodyStore` в agent-memory-cpp; body bytes только в primary body/blob table, не в reverse indexes |
 
 ## Связь с другими документами
 
@@ -116,4 +134,5 @@ agent-memory-cpp реализует ДОМЕННЫЕ КОНТРАКТЫ (Knowled
 - `guides/lexical-search-roadmap.md` — BM25F fielded storage
 - `guides/optimization-roadmap.md` — compression, binary signature index, bucket index
 - `guides/architecture.md` — общая архитектура проекта
-- `guides/memory-stacks-roadmap.md` — центральный манифест архитектуры (CapabilitySet, MemoryProfileSpec, MemoryStack, MDBX layout, Maturity Levels M0/M1/M2).
+- `guides/memory-stacks-roadmap.md` — центральный манифест архитектуры (CapabilitySet, MemoryProfileSpec, MemoryStack, validation, Maturity Levels M0/M1/M2).
+- `guides/mdbx-containers-extension-tz.md` — canonical physical MDBX manifest and DBI budget.

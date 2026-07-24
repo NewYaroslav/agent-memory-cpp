@@ -2,7 +2,7 @@
 
 > Все C++ сниппеты в этом документе — illustrative C++17 (не designated initializers, не std::span, не std::strong_ordering). Компилируемые примеры — отдельная задача `examples/` при старте реализации.
 
-Центральная спецификация архитектуры памяти `agent-memory-cpp`. Определяет модель данных (envelope + components + projections), декларативную спецификацию профилей, runtime-стек, capability matrix, валидационные правила и MDBX layout. Документ supersede'ит компонент-агностичные части `knowledge-base-roadmap.md` и `knowledge-units-roadmap.md` для разделов, относящихся к profiles/stacks.
+Центральная спецификация архитектуры памяти `agent-memory-cpp`. Определяет модель данных (envelope + components + projections), декларативную спецификацию профилей, runtime-стек, capability matrix, валидационные правила и maturity levels. Единственный canonical physical MDBX manifest и DBI budget живут в `guides/mdbx-containers-extension-tz.md` §5.5/§5.5.1. Документ supersede'ит компонент-агностичные части `knowledge-base-roadmap.md` и `knowledge-units-roadmap.md` для разделов, относящихся к profiles/stacks.
 
 > Research background for the M2+ retrieval-hook contracts
 > (`IQueryTransformer`, `IRetrievalEvaluator`) and for dense-retrieval
@@ -19,6 +19,8 @@
 - Как MDBX environment раскладывается по DBI в зависимости от профиля.
 - Какие уровни зрелости (M0/M1/M2) определяют ship-it критерии.
 - Какие cross-cutting runtime-сервисы ортогональны профилям.
+- Как raw resources (`.md`, `.txt`, extracted `.pdf`, transcripts, logs) живут
+  рядом с normalized/card-like knowledge units.
 
 Non-goals документа:
 
@@ -49,6 +51,7 @@ Non-goals документа:
 | ADR-013 | Runtime services | PromptPrefixCache + optional ResponseCache, CompactionWorker, WriteGate, AsyncIndexer — отдельный слой |
 | ADR-014 | CLI | Отдельный target `agent-memory-cli`, не core library |
 | ADR-015 | Maturity Levels | M0 (MVP) / M1 (Production) / M2 (Advanced) с ship-it критериями |
+| ADR-016 | Raw resources vs normalized units | Raw ResourceBody first-class; card-like KnowledgeUnits are curated derivatives, not mandatory input format |
 
 См. также [`code-intelligence-roadmap.md`](code-intelligence-roadmap.md) для Bounded BFS + schema introspection (Pattern 5) borrowed from `codebase-memory-mcp` — это extension candidate для `GraphStore` (расширяет capability flag `GraphRelations` поверх substrate из ADR-006 GraphStorage; storage substrate и capability flag — отдельные сущности, не синонимы).
 
@@ -76,7 +79,9 @@ Layer C: SearchProjections (retrieval-specific text views)
   QAQuestion, QAAnswer, Summary, CodeSymbols
 ```
 
-Каждый слой имеет собственный MDBX layout и обновляется независимо (но атомарно через MultiTableWriter при coordinated writes).
+Каждый слой имеет собственные logical stores и обновляется независимо (но
+атомарно через MultiTableWriter при coordinated writes). Physical MDBX DBI
+names and key shapes закреплены в `mdbx-containers-extension-tz.md` §5.5.
 
 ### 3.2. Обоснование
 
@@ -89,6 +94,54 @@ Layer C: SearchProjections (retrieval-specific text views)
 - Монолитный KnowledgeUnit с 50 optional полями. Отклонён: нарушает инварианты, раздувает I/O.
 - Полностью отдельные storage типы для каждого use-case. Отклонён: дублирование кода, невозможность RRF fusion, нет единого API.
 - JSON-value envelope с произвольными полями. Отклонён: теряем строгие типы C++, schema validation, индексы по typed fields.
+
+## 3A. ADR-016: Raw Resources vs Normalized Units
+
+### 3A.1. Решение
+
+Raw resources являются first-class input/storage layer, а card-like
+`KnowledgeUnit` — normalized/curated layer поверх них. Импорт `.md`, `.txt`,
+extracted `.pdf`, transcript, log или playbook не требует предварительной
+ручной конвертации в карточку. Если вход не содержит curated schema, importer
+создаёт минимальный generic document unit и связывает его с raw body через
+`ResourceId`/`SourceRef`.
+
+```text
+RawResource / ResourceBody
+  original bytes or extracted text, revisions, codec, content hash
+
+KnowledgeUnitEnvelope + Components
+  normalized semantic unit: Fact, QAPair, Note, Chunk, Summary, ...
+
+SearchProjection
+  retrieval-facing text derived from raw body or normalized payload
+```
+
+Card-like units полезны для curated knowledge: trust, tags, outdated flags,
+lifecycle, facts, QA, summaries, decisions and graph relations. Они не являются
+единственным допустимым ingestion format.
+
+### 3A.2. Обоснование
+
+Агенты часто начинают с сырой базы знаний: Obsidian vault, playbooks, markdown
+notes, `.txt` logs, PDF extracts. Требование сначала привести всё к curated
+card schema делает early RAG слишком хрупким. При этом нормализованные units
+нужны для фильтров, trust policy, lifecycle, compaction, graph relations and
+evaluation. Поэтому система поддерживает оба уровня:
+
+- raw resources обеспечивают faithful citation, export, re-chunking and
+  drill-down;
+- normalized units дают controlled semantics and policy hooks;
+- compaction/summarization может позже вывести curated facts/cards/summaries
+  из raw document units.
+
+### 3A.3. Storage boundary
+
+Raw body bytes не хранятся в envelope, `unit_components`,
+`unit_projections` или reverse indexes. Они живут в `ResourceBodyStore`
+(MDBX-backed или file-pack backend), а search indexes хранят ids, compact
+postings, projections and source ranges. См. `mdbx-containers-extension-tz.md`
+§12.9 and `optimization-roadmap.md` §"Raw Resource Body Compression".
 
 ## 4. ADR-002: MemoryStack vs MemoryProfileSpec
 
@@ -160,6 +213,9 @@ enum class MemoryCapability : uint64_t {
     EmbeddingMigration = 1ull << 10,
     CompiledArticles   = 1ull << 11,
     ConversationMemory = 1ull << 12,
+    ChunkedContent     = 1ull << 13,
+    FullSourceRefs     = 1ull << 14,
+    ResponseCache      = 1ull << 15,
 };
 
 using CapabilitySet = std::underlying_type_t<MemoryCapability>;
@@ -321,9 +377,13 @@ struct MemoryProfileSpec {
     bool enable_fact_payload = false;
     bool enable_conversation_episode = false;
     bool enable_compiled_article = false;
+    bool enable_chunk_payloads = true;
+    bool enable_full_source_refs = false;
     bool enable_embedding_meta = false;
     bool enable_compaction = false;
+    bool enable_async_indexer = false;
     bool enable_prompt_cache = false;
+    bool enable_response_cache = false;
     bool enable_context_planner = false;
     bool enable_encrypted_storage = false;
 
@@ -418,6 +478,7 @@ struct WriteRequest {
     std::optional<ChunkPayload> chunk_payload;
     std::optional<ConversationEpisodePayload> episode_payload;
     std::optional<CompiledArticlePayload> article_payload;
+    std::optional<std::vector<SourceRef>> full_source_refs; // requires enable_full_source_refs
     std::vector<ComponentVariant> components;
     std::vector<SearchProjection> projections;
     std::vector<GraphEdge> graph_edges;
@@ -887,158 +948,48 @@ Cross-cutting Runtime Services (runtime/) — orthogonal
 - Layer 2 не зависит от Layer 3 (можно использовать напрямую).
 - Runtime services могут вызываться из любого layer, но сами не зависят от конкретного MemoryStack.
 
-## 12. MDBX Storage Layout
+## 12. MDBX Storage Layout Ownership
 
-Один MDBX environment, набор DBI в зависимости от профиля.
+Этот документ является canonical source для data model, profiles,
+capabilities and `MemoryStack::open(spec)` validation. Единственный canonical
+physical MDBX manifest живёт в
+[`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5, а
+authoritative DBI budget checkpoint — в §5.5.1 того же TZ.
 
-### 12.1. Всегда открываются (core DBI)
+Следствия:
 
-```
-unit_id_to_envelope
-  key = KnowledgeUnitId → KnowledgeUnitEnvelope (msgpack/flat binary)
-  // KnowledgeUnitId — монотонный opaque uint64_t, никогда не reused.
+- новые physical DBI names добавляются сначала в TZ §5.5/§5.5.1;
+- этот roadmap может ссылаться на capabilities and logical stores, но не
+  дублирует key/value layout таблиц;
+- `content_key_to_unit_id` является частью canonical manifest TZ §5.5 и
+  используется для `KnowledgeUnitKey -> KnowledgeUnitId` dedupe/migration
+  lookup;
+- runtime queues, compaction handoffs, resource bodies, persistent caches and
+  mode-specific dense indexes учитываются как explicit profile deltas в TZ
+  §5.5.1 or in the owning roadmap before implementation;
+- если разделы расходятся, physical manifest из TZ побеждает, а этот документ
+  должен быть обновлён как stale reference.
 
-content_key_to_unit_id
-  key = KnowledgeUnitKey → KnowledgeUnitId
-  // KnowledgeUnitKey = (KnowledgeUnitKind, ScopeId, ContentHash);
-  // secondary index для dedupe / supersedence / migration.
+### 12.1. Capability-to-Storage Mapping
 
-knowledge_units_by_kind
-  key = (kind, UnitId) → empty
-  [DUPSORT secondary index]
-```
+`MemoryProfileSpec` выбирает logical capabilities: QAPairs, TemporalFact,
+ConversationMemory, CompiledArticles, ChunkedContent, FullSourceRefs,
+DenseVectors, LexicalBm25F, GraphRelations, TemporalValidity,
+SpeakerAttribution, UsageStats, Compaction, PromptPrefixCache and opt-in
+ResponseCache. Concrete DBI names and table types for these capabilities are
+enumerated in TZ §5.5.
 
-### 12.2. Открываются по capability
+### 12.2. Runtime and Mode-Specific Deltas
 
-```
-unit_components                         // если любой компонент включён
-  key = (ComponentKind tag, UnitId) → ValueVariant<UsageStats | Speaker | Temporal | EmbeddingMeta | CompactionMeta>
-  [TypeDiscriminatedTable из mdbx-containers]
+Compaction uses downstream `TaskQueue`/`JobStore` from
+`runtime-services-roadmap.md` §4.6. Its MDBX recipe is
+`mdbx-containers-extension-tz.md` §12.5 and currently costs +5 queue DBI per
+persistent queue plus +1 `compaction_handoffs` DBI when compaction is enabled.
 
-qa_payloads                             // если QAPayload включён
-  key = UnitId → QAPayload
-
-fact_payloads                           // если FactPayload включён
-  key = UnitId → FactPayload
-
-conversation_episode_payloads           // если ConversationEpisode включён
-  key = UnitId → ConversationEpisodePayload
-
-compiled_article_payloads               // если CompiledArticle включён
-  key = UnitId → CompiledArticlePayload
-
-chunk_payloads                          // всегда для Chunk kind
-  key = UnitId → ChunkPayload
-
-unit_projections                        // всегда для indexed retrieval
-  key = (scope_id, UnitId, ProjectionKind, revision) → SearchProjection
-
-embedding_meta                          // если EmbeddingMetaComponent или EmbeddingMigration
-  key = (scope_id, UnitId, ProjectionKind, model_id, version) → EmbeddingMeta
-
-embedding_vectors                       // если DenseVectors
-  key = (scope_id, model_id, ProjectionKind, UnitId) → vector_blob
-```
-
-### 12.3. Secondary indexes (по capability)
-
-```
-inverted_token_to_unit                  // если LexicalBm25F
-  key = (scope_id, token_id, projection_kind, field_id) → DUPSORT unit_id
-
-field_to_postings                       // если LexicalBm25F
-  key = (scope_id, projection_kind, field_id, token_id, unit_id) → PostingStats
-
-metadata_filters                        // всегда (lightweight metadata)
-  key = (scope_id, metadata_key, metadata_value, unit_id) → empty
-  [ReverseIndexTable]
-
-graph_edges_by_src                      // если GraphRelations
-  key = (scope_id, from_unit_id, edge_kind, to_unit_id) → GraphEdgePayload
-
-graph_edges_by_dst                      // если GraphRelations
-  key = (scope_id, to_unit_id, edge_kind, from_unit_id) → GraphEdgePayload
-
-temporal_event_index                    // если TemporalValidity
-  key = (scope_id, valid_from_ms, valid_until_ms, unit_id) → empty
-
-temporal_unit_index                     // если TemporalValidity
-  key = (scope_id, observed_at_ms, unit_id) → empty
-
-speaker_to_units                        // если SpeakerAttribution
-  key = (scope_id, speaker_id, unit_id) → empty
-
-session_to_units                        // если SpeakerAttribution
-  key = (scope_id, session_id, unit_id) → empty
-
-usage_stats_index                       // если UsageStats
-  key = (scope_id, unit_id) → UsageStatsComponent (копия для быстрого ranking)
-```
-
-### 12.4. Compaction / runtime
-
-```
-compaction_jobs                         // если Compaction
-  key = JobId → JobState
-
-compaction_handoffs                     // если Compaction
-  key = SessionId → HandoffRecord
-
-// УДАЛЕНО: generation_index (replaced by per-posting unit_revision check).
-// Stale-filter через LexicalPosting.unit_revision < envelope.revision
-// (см. §17.11 Stale-filter pattern).
-
-prompt_prefix_cache_meta                // если PromptPrefixCache включён
-  key = (scope_id, provider_id, model_id, prefix_hash) → PromptPrefixCacheMetadata
-
-response_cache                          // если opt-in ResponseCache capability включена (default OFF)
-  key = ResponseCacheKey → CachedResponse
-```
-
-### 12.5. Schema metadata
-
-```
-schema_info
-  key = "schema" → SchemaInfo{envelope_version, component_versions[NUM_KINDS], profile_signature}
-```
-
-### 12.6. DBI budget
-
-Целевой максимум — 64 DBI на один MemoryStack (расширение `max_dbs` 16→64 в `mdbx-containers`). При M1-профилях типичный usage — 18-22 DBI. При FullResearch — до 30 DBI. Headroom есть.
-
-### 12.7. Mode-aware DBI creation (DenseIndexConfig → DBI set)
-
-Выбор `DenseIndexConfig.mode` напрямую определяет набор обязательных DB dense-индексов. Capability-aware логика в `MemoryStack::open(spec)`:
-
-```
-Exact mode (DenseIndexConfig.mode == Exact):
-  embedding_vectors DBI — обязательна.
-
-BinaryCandidateFilter (BinaryCandidateFilter):
-  embedding_vectors DBI + binary_bucket_index DBI.
-
-BinaryOnly (BinaryOnly):
-  только binary_bucket_index DBI (embedding_vectors НЕ открывается).
-
-ApproximateVector Safe (ApproximateVector + store_float_fallback == true):
-  embedding_vectors + binary_bucket_index + decoder (в registry, не DBI).
-
-ApproximateVector Compact (ApproximateVector + store_float_fallback == false):
-  binary_bucket_index + decoder (embedding_vectors НЕ открывается).
-
-Hnsw mode (DenseIndexMode::Hnsw):
-  - embedding_vectors DBI (для float storage и rerank если mode hybrid).
-  - hnsw_graph_index DBI (M-level proximity graph adjacency list).
-  - graph_node_storage DBI (vector IDs + levels + neighbors).
-
-Storage estimate (1M units × 768-dim float32):
-  embedding_vectors: ~3 GB.
-  hnsw_graph_index: ~600 MB (avg M=32 edges per node × 8 bytes).
-  graph_node_storage: ~80 MB (1M units × 16-byte neighbor level header).
-  Total: ~3.7 GB (без учёта PR-curve overhead).
-```
-
-Таким образом выбор `mode` сужает или расширяет dense-набор DBI. `MemoryStack::open()` валидирует согласованность между `enable_dense_vectors` capability и `dense_index_config.mode` (например, `mode == BinaryOnly` с `enable_dense_vectors == false` допустим, но log-warn: float index будет lazy-built при первом Exact-mode retrieval).
+PromptPrefixCache, opt-in ResponseCache, raw `ResourceBodyStore`, HNSW,
+binary bucket indexes and other mode-specific dense indexes are not part of
+the baseline physical manifest unless their owning roadmap adds an explicit
+profile-delta row to TZ §5.5.1.
 
 ## 13. Maturity Levels
 
@@ -1058,7 +1009,9 @@ Storage estimate (1M units × 768-dim float32):
 - ChunkPayload (minimal) для BasicRagStack с M0. Остальные per-kind payloads (FactPayload, ConversationEpisodePayload, CompiledArticlePayload) — M1.
 - BasicRagStack, QAKnowledgeBaseStack.
 - Чтение через ILexicalIndex, запись через простой write API.
-- scope_id во всех DBI keys (multi-tenancy с самого начала).
+- `scope_id` обязателен во всех secondary/range keys, которые обслуживают
+  tenant/project/agent-scoped lookup или range query. Primary lookup by globally
+  unique `UnitId` является явным исключением.
 
 Не включено (M1+): Components, расширенные QAPayload (variants/frequency/bi-temporal) и остальные per-kind payloads (FactPayload, ConversationEpisodePayload, CompiledArticlePayload), дополнительные SearchProjections (QAQuestion/QAAnswer/Summary), DecayPolicy/WritePolicy, Compaction, PromptPrefixCache + ResponseCache, full SourceRef DBI (в M0 — только inline summary).
 
@@ -1145,7 +1098,9 @@ new_spec.decay_policy = MemoryProfiles::DefaultAgentDecay();
 
 Это additive: новая DBI создаётся, существующие данные не трогаются. `profile_signature` обновляется.
 
-Content-key index (`content_key_to_unit_id`) — additive, можно добавить в M0 или позже.
+Content-key index (`content_key_to_unit_id`) входит в canonical physical
+manifest; legacy DBs without it require additive profile-signature migration
+before enabling content-addressed dedupe.
 
 ### 14.2. Major migration (новая БД)
 
@@ -1198,7 +1153,10 @@ Migration tool встроен в CLI как `agent-memory-cli profile-migrate`.
 ### Шаг 1: Envelope + базовые DBI
 
 - Создать `KnowledgeUnitEnvelope` struct (lean hot-path envelope, ~16 полей: id, kind, scope_id, primary_text, display_text, lifecycle_state, sources, timestamps, revision, lineage fields, priority_weight).
-- MDBX DBI: `knowledge_units`, `knowledge_units_by_kind`, `schema_info`.
+- MDBX DBI: default-open physical set from
+  `mdbx-containers-extension-tz.md` §5.5, including identity DBI
+  `knowledge_units`, `content_key_to_unit_id`, `knowledge_units_by_kind` and
+  `schema_info`.
 - Сериализация envelope через flat binary (msgpack или custom).
 - `MemoryStack::open()` для пустой spec (только envelope + lexical).
 - Lifecycle FSM с 4 durable states (Active, Superseded, Deprecated, Erased). SoftSuppressed/cooldown — runtime state в UsageStatsComponent, не durable lifecycle.
@@ -1352,7 +1310,8 @@ double apply_filters(
 
 - ICompactionJob interface.
 - Job types: DecayJob, DedupeJob, ArchiveColdJob.
-- TaskQueue из mdbx-containers TZ.
+- Downstream `TaskQueue`/`JobStore` из `runtime-services-roadmap.md` §4.6;
+  MDBX storage recipe — `mdbx-containers-extension-tz.md` §12.5.
 - CompactionHandoff structure.
 - Async worker thread.
 

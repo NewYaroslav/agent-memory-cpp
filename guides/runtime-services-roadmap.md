@@ -7,7 +7,7 @@
 ## 1. Purpose
 
 - Что описывает: PromptCache split (`IPromptPrefixCache` provider-side + `IResponseCache` local opt-in), AnthropicCacheControlAdapter, AsyncIndexer (batch вставки в lexical/vector индексы), WriteGate (применяет WritePolicy). Все сервисы ортогональны profile (доступны через интерфейсы, не зависят от конкретного MemoryStack).
-- Cross-references: memory-stacks-roadmap.md (ADR-013, секции 7, 12.4), knowledge-base-roadmap.md (RetrievalTrace), policies-roadmap.md (WritePolicy), compaction-roadmap.md (job submission).
+- Cross-references: memory-stacks-roadmap.md (ADR-013, секции 7, 11, 16), knowledge-base-roadmap.md (RetrievalTrace), policies-roadmap.md (WritePolicy), compaction-roadmap.md (job submission), mdbx-containers-extension-tz.md (§12.5 storage recipe, §5.5.1 DBI budget).
 
 ## 2. Layer Architecture Review
 
@@ -89,10 +89,11 @@ public:
 };
 
 struct ResponseCacheKey {
+    uint32_t schema_version = 1;
     ScopeId scope_id;
     std::string provider_id;
     std::string model_id;
-    std::string prompt_hash;     // hash(prompt + tools + temperature)
+    std::string request_hash;    // hash(canonical prompt + tools + params)
     std::optional<std::string> suffix;
 };
 
@@ -201,8 +202,16 @@ LRU eviction по `size_bytes` (когда превышен `max_bytes`) и по
 
 ```
 response_cache
-  key = (scope_id, prompt_hash) → CachedResponse
+  key = ResponseCacheStorageKey → CachedResponse
+
+ResponseCacheStorageKey =
+  CompositeKey<ScopeId, ProviderId, ModelId, RequestHash, SuffixBytes, SchemaVersion>
 ```
+
+`ResponseCacheStorageKey` is semantically equivalent to `ResponseCacheKey`.
+`SuffixBytes` uses canonical encoding where empty optional suffix and empty
+string suffix are distinct. If the hash recipe or canonical request encoding
+changes, `schema_version` changes and old entries are ignored or migrated.
 
 При `MemoryStack::open()` — загрузить из DBI. На eviction (LRU in-memory) — удалить из DBI. Переживает restart.
 
@@ -306,7 +315,25 @@ See [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5 f
 
 ### 4.1. Purpose
 
-Батчинг вставок в lexical/vector индексы для уменьшения write latency. Пишет в MemoryStack немедленно, но propagation в secondary indexes (inverted_token_to_unit, embedding_vectors) — async через очередь.
+AsyncIndexer выполняет rebuild/backfill и тяжёлые или explicitly
+eventually-consistent indexing jobs. Он **не** является владельцем default
+write visibility для critical retrieval indexes.
+
+Default M0/M1 consistency mode:
+
+- `MemoryStack::write_unit` commits envelope, components, projections,
+  content-key/by-kind indexes, lexical candidate/stat indexes needed by active
+  retrieval, metadata filters and selected lightweight secondary indexes in one
+  `MultiTableWriter` transaction.
+- AsyncIndexer may rebuild those indexes from authoritative unit revisions, but
+  it must not be required for a newly committed unit to become retrievable in
+  the same profile.
+
+Async eventual mode is allowed only as explicit profile policy for indexes that
+declare `eventually_consistent=true` (for example heavy embedding recompute,
+HNSW graph rebuild, bulk lexical backfill). In that mode write_unit must enqueue
+a durable `IndexUpdateJob(unit_id, revision, projection_kind)` and readers must
+respect revision/generation guards documented by the owning roadmap.
 
 ### 4.2. Interface
 
@@ -376,6 +403,12 @@ private:
 
 Worker thread батчит до batch_size или max_bytes, потом flushes через MultiTableWriter. На stop — flushes остаток.
 
+Jobs are idempotent and guarded by `(unit_id, revision)`: if the unit has been
+updated or erased before the job runs, the worker skips stale work. Crash
+recovery replays durable jobs; delete/update before an older job is processed is
+safe because the worker compares the stored revision before writing derived
+indexes.
+
 ### 4.4. Batch triggers
 
 - Size: batch_size (default 1000 jobs).
@@ -389,6 +422,115 @@ Worker thread батчит до batch_size или max_bytes, потом flushes 
 - Re-enqueue failed jobs.
 - Increment stats.jobs_failed.
 - Если retry > 3 — log error и drop.
+
+### 4.6. Persistent Runtime Queue
+
+`TaskQueue` / `JobStore` является downstream runtime abstraction
+`agent-memory-cpp`, а не public API `mdbx-containers`. Он владеет job lifecycle:
+`Pending`, `Running`, `Done`, `Failed`, `Dead`, `Cancelled`,
+retry/backoff policy, worker leases, attempts, stale-worker recovery,
+priority/FIFO ordering и cancellation.
+
+Persistent MDBX implementation uses generic storage primitives only:
+
+```text
+jobs_by_id:
+  KeyValueTable<JobId, JobRecord>
+
+jobs_scheduled:
+  RangeIndexTable<ScheduleKey, JobId>
+
+jobs_ready:
+  RangeIndexTable<ReadyOrderKey, JobId>
+
+jobs_by_lease:
+  RangeIndexTable<LeaseUntilKey, JobId>
+
+jobs_by_status:
+  ReverseIndexTable<JobStatus, JobId>
+```
+
+`JobRecord` хранит как минимум `job_id`, `kind`, codec/versioned payload bytes,
+`status`, `priority`, `created_at_ms`,
+`run_after_ms`, `attempts`, `max_attempts`, `lease_owner`, `lease_until_ms`,
+`cancel_requested`, optional `started_at_ms`, `completed_at_ms` и `last_error`.
+
+`ScheduleKey = (run_after_ms, job_id)` используется только для delayed
+promotion. `ReadyOrderKey = (priority_rank, job_id)`, где меньший ключ
+выбирается раньше; `priority_rank` нормализуется так, чтобы higher logical
+priority сортировался раньше. `LeaseUntilKey = (lease_until_ms, job_id)`.
+`JobId` является durable monotonic sequence внутри queue и тем самым
+обеспечивает FIFO для одинаковой priority без отдельной sequence/meta DBI.
+Allocation uses an MDBX sequence bound to `jobs_by_id`; it is advanced inside
+the same enqueue transaction and is never derived from `max(job_id) + 1`.
+Pruning terminal jobs does not reset or reuse the sequence.
+
+`claim_next(now, worker_id, lease_duration)` выполняется как atomic
+compare/claim в write transactions:
+
+1. `promote_due(now)` переносит все `jobs_scheduled` entries с
+   `run_after_ms <= now` в `jobs_ready`. Implementation may process bounded
+   pages, but it must repeatedly read the first due page (`offset = 0`) or use
+   cursor pagination after each mutation, and it must not claim from ready until
+   the due prefix for `now` is drained; otherwise high-priority due jobs could
+   be hidden behind older low-priority jobs.
+2. bounded read первого ready key (`limit = 1`), перечитать primary job record,
+   проверить application predicate (`Pending`, not cancelled, attempts <
+   max), перевести job в `Running`, записать lease, обновить primary record and
+   ready/status/lease indexes, затем commit.
+
+Реализация не делает unbounded materialization очереди; large due backlogs
+обрабатываются page loop-ом с продолжением по cursor.
+
+Index membership is state-dependent:
+
+```cpp
+struct JobIndexKeys {
+    std::optional<ScheduleKey> scheduled;  // Pending delayed
+    std::optional<ReadyOrderKey> ready;    // Pending ready
+    JobStatus status;                      // every durable state
+    std::optional<LeaseUntilKey> lease;    // Running only
+};
+```
+
+State transitions:
+
+- `enqueue` создает `Pending` record и scheduled либо ready/status index entries.
+  It allocates `JobId` from the durable `jobs_by_id` sequence in the same write
+  transaction; concurrent enqueue and restart must preserve monotonicity.
+- `claim_next` переводит `Pending -> Running`, снимает ready entry и ставит
+  lease/status entries.
+- `renew_lease` обновляет `lease_until_ms` и `jobs_by_lease`.
+- `complete` переводит `Running -> Done`, удаляет lease entry и обновляет
+  status.
+- `fail_retry` переводит `Running -> Pending`, увеличивает attempts,
+  применяет backoff в `run_after_ms` и возвращает scheduled или ready entry.
+- `fail_dead` переводит `Running -> Dead`, когда retry budget исчерпан.
+- `request_cancel` переводит `Pending -> Cancelled`; для `Running` ставит
+  `cancel_requested`, после чего worker завершает cooperative cancel либо
+  lease recovery переводит record в terminal/cancellable state.
+- `ack_cancel` переводит `Running -> Cancelled`, удаляет lease entry и
+  выставляет `completed_at_ms`.
+- `recover_expired_leases(now)` bounded-scan-ит `jobs_by_lease` по
+  `lease_until_ms <= now`; если `cancel_requested = true`, job переходит в
+  `Cancelled`, иначе idempotent jobs возвращаются в `Pending`, а
+  non-idempotent jobs помечаются как `Failed`/`Dead` по policy.
+
+Queue storage acceptance cases:
+
+- concurrent enqueue transactions allocate distinct increasing `JobId` values;
+- after process restart, the next enqueue continues from the durable MDBX
+  sequence;
+- after pruning terminal jobs, including the current maximum `JobId`, the next
+  enqueue still allocates a greater id and never reuses a deleted id.
+
+Compaction handoff recovery uses the same `JobId`: `compaction_handoffs`
+stores checkpoint payload for the running job, while queue lease recovery is
+the only owner allowed to requeue or terminalize expired work. `CompactionWorker`
+must not enqueue a second resume job for the same handoff.
+
+`mdbx-containers` отвечает только за generic tables and transaction
+atomicity; runtime semantics остаются здесь.
 
 ## 5. WriteGate
 
@@ -588,7 +730,7 @@ returning a shallow executable plan.
 |---|---|---|
 | PromptPrefixCache | `enable_prompt_cache = true` | opt-in (default ON для hybrid retrieval профилей) |
 | ResponseCache | `enable_response_cache = true` | opt-in, default **OFF** (для безопасности) |
-| AsyncIndexer | (always on for write perf) | always |
+| AsyncIndexer | `enable_async_indexer = true` or required by an async-only index policy | optional; rebuild/backfill/heavy async jobs |
 | WriteGate | (always on if WritePolicy set) | conditional |
 | CompactionWorker | `enable_compaction = true` | opt-in |
 | MemoryAwareContextPlanner | `enable_context_planner = true` | opt-in |
@@ -604,7 +746,8 @@ returning a shallow executable plan.
 2. Инициализируются runtime-сервисы:
    - `IPromptPrefixCache` — если `enable_prompt_cache=true` (default ON для hybrid retrieval профилей).
    - `IResponseCache` — только если `enable_response_cache=true` (default OFF).
-   - `AsyncIndexer` — всегда.
+   - `AsyncIndexer` — если `enable_async_indexer=true` или выбран profile с
+     async-only indexing policy.
    - `WriteGate` — если `spec.write_policy` задан.
    - `CompactionWorker` — если `enable_compaction=true`.
    - `IMemoryAwareContextPlanner` — если `enable_context_planner=true`.
@@ -616,7 +759,9 @@ returning a shallow executable plan.
 1. Stop accepting new requests.
 2. AsyncIndexer.flush() — finish pending batches.
 3. CompactionWorker.stop() — finish current job, then exit.
-4. `IResponseCache` — опционально persist to DBI (`response_cache`).
+4. `IResponseCache` — опционально persist to DBI (`response_cache`), только
+   если выбран `enable_response_cache=true`; physical storage costs +1 opt-in
+   profile delta in `mdbx-containers-extension-tz.md` §5.5.1.
 5. `IPromptPrefixCache` — persistence не требуется (ключи детерминированно вычисляются).
 6. Освобождение handles.
 
@@ -637,7 +782,7 @@ Application
   ↓
 WriteGate.evaluate(request)
   ↓
-  ├── Accept → Enqueue to AsyncIndexer + MultiTableWriter (envelope + components + projections)
+  ├── Accept → MultiTableWriter (primary + critical indexes) and optional durable IndexUpdateJob for async-only indexes
   ├── Buffer → wait for trigger
   ├── Deduplicate → return existing unit_id
   ├── Supersede → mark old as Superseded, write new
@@ -739,7 +884,7 @@ Per memory-stacks-roadmap.md секция 16, конкретизация:
 | 11.2 | AsyncIndexer (background thread + batch processing) |
 | 12.5 | `IPromptPrefixCache` (in-memory LRU key dedup) + `AnthropicCacheControlAdapter` |
 | 12.6 | `IResponseCache` stub (default OFF, no-op implementation для safe by default) |
-| M2.x | `IResponseCache` full implementation + MDBX persistence (`response_cache` DBI) |
+| M2.x | `IResponseCache` full implementation + MDBX persistence (`response_cache` DBI, +1 opt-in profile delta in `mdbx-containers-extension-tz.md` §5.5.1) |
 | M2.x | `IMemoryAwareContextPlanner` + urgency/recall/risk-aware context policy |
 
 ## 10. Open Issues
@@ -753,7 +898,8 @@ Per memory-stacks-roadmap.md секция 16, конкретизация:
 
 ## 11. References
 
-- `guides/memory-stacks-roadmap.md` — секции 7, 11, 12.4, 16.
+- `guides/memory-stacks-roadmap.md` — секции 7, 11, 16; ADR-013.
+- `guides/mdbx-containers-extension-tz.md` — §12.5 runtime queue storage recipe and §5.5.1 DBI budget.
 - `guides/knowledge-base-roadmap.md` — RetrievalTrace интеграция.
 - `guides/policies-roadmap.md` — WritePolicy.
 - `guides/compaction-roadmap.md` — CompactionWorker.

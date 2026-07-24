@@ -9,7 +9,7 @@
 >
 > Related roadmaps:
 > - [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — envelopes, components,
->   projections, profile/stack model, MDBX layout.
+>   projections, profile/stack model, physical manifest ownership.
 > - [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) — knowledge units,
 >   `KnowledgeUnitId`, retrieval flow contracts.
 > - [`knowledge-units-roadmap.md`](knowledge-units-roadmap.md) — per-kind payload
@@ -210,10 +210,10 @@ Token strings should be normalized before they receive ids:
 
 ```text
 lexical_token_by_text:
-    normalized_token -> token_id
+    (scope_id, normalized_token) -> token_id
 
 lexical_token_by_id:
-    token_id -> normalized_token
+    (scope_id, token_id) -> normalized_token
 ```
 
 The reverse dictionary is not required for scoring, but it is useful for
@@ -429,7 +429,7 @@ lexical indexing is unit-aware, projection-aware, and plan-aware.
 ## MDBX Layout
 
 The lexical DBI set is part of the stack-wide layout described in
-[`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) section 12.3. The DBI
+[`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5. The DBI
 names and key shapes from that section are normative; this section adds the
 payload shapes and explains the design.
 
@@ -437,16 +437,16 @@ payload shapes and explains the design.
 inverted_token_to_unit:          // DUPSORT secondary index
     key   = (scope_id, token_id, projection_kind, field_id) -> DUPSORT unit_id
 
-field_to_postings:
+field_to_postings:                 // KV posting stats by full posting identity
     key   = (scope_id, projection_kind, field_id, token_id, unit_id)
     value = PostingStats { tf, positions_count, generation, resource_id }
 
 lexical_token_by_text:
-    key   = normalized token
+    key   = (scope_id, normalized token)
     value = token_id
 
 lexical_token_by_id:
-    key   = token_id
+    key   = (scope_id, token_id)
     value = normalized token
 
 lexical_chunk_stats:
@@ -493,7 +493,8 @@ When a unit is reindexed for a given `projection_kind`:
 3. Load the new SearchProjection set for the unit.
 4. Tokenize each (projection_kind, field_id) text.
 5. Upsert token dictionary entries (shared across projection_kinds).
-6. Write field_to_postings and inverted_token_to_unit entries.
+6. Write `field_to_postings` KV entries and `inverted_token_to_unit`
+   candidate-index entries.
 7. Update lexical_token_stats and lexical_chunk_stats per projection_kind.
 8. Update lexical_collection_stats per projection_kind.
 9. Write new lexical manifest refs and bump generation.
@@ -619,7 +620,7 @@ struct SearchProjection final {
 ```
 
 The projection is persisted in `unit_projections`
-(`memory-stacks-roadmap.md` section 12.2). The flat-body BM25 baseline is the
+(`mdbx-containers-extension-tz.md` §5.5). The flat-body BM25 baseline is the
 special case where `kind = Original` and only `body` is non-empty; BM25F
 generalises it by reading additional fields from the same projection.
 
@@ -652,14 +653,16 @@ inverted_token_to_unit:
     key   = (scope_id, token_id, projection_kind, field_id)
     value = DUPSORT unit_id
 
-field_to_postings:
+field_to_postings:                 // KV posting stats by full posting identity
     key   = (scope_id, projection_kind, field_id, token_id, unit_id)
     value = PostingStats { tf, positions_count, generation, resource_id }
 ```
 
 A `unit_id` may appear multiple times for the same token — once per
 projection_kind/field_id combination that contains it. The scorer joins these
-postings at query time using the per-field weights defined below.
+postings at query time using the per-field weights defined below. Targeted
+update/delete of one posting uses the full `(scope_id, projection_kind,
+field_id, token_id, unit_id)` key; `PostingStats` never carries identity.
 
 ### Projection-Weighted BM25F Scoring
 
@@ -844,7 +847,7 @@ Graph retrieval is likely needed earlier than learned sparse or late-interaction
 methods for agent assistants and expert-system style workflows. It should expand
 from retrieved units/resources to related symbols, concepts, people, tasks, and
 dependencies. Graph retrieval operates on `graph_edges_by_src` /
-`graph_edges_by_dst` from `memory-stacks-roadmap.md` section 12.3 and joins
+`graph_edges_by_dst` from `mdbx-containers-extension-tz.md` §5.5 and joins
 its hits into the RRF stream with `retriever_name = "graph"`.
 
 ### SPLADE-v2 Learned Sparse Adapter (M2+)
@@ -1164,7 +1167,7 @@ of that ordering; each substep is its own PR.
 ### L2. SearchProjections and projection-aware BM25F (memory-stacks step 7)
 
 10. Add the `SearchProjection` value type and the `unit_projections` DBI
-    (`memory-stacks-roadmap.md` section 12.2).
+    (`mdbx-containers-extension-tz.md` §5.5).
 11. Add `projection_kind` and `scope_id` to the `inverted_token_to_unit`
     and `field_to_postings` keys (see MDBX Layout above).
 12. Add projection build rules per `ProjectionKind` for `Original`, `QAQuestion`,
@@ -1208,7 +1211,7 @@ of that ordering; each substep is its own PR.
     (resource -> token set, metadata_key -> unit_id, unit_revision -> unit_id)
     so reindex and stale filtering stay fast. See
     [`optimization-roadmap.md`](optimization-roadmap.md) "Secondary
-    Indexes" and `memory-stacks-roadmap.md` section 12.3.
+    Indexes" and `mdbx-containers-extension-tz.md` §5.5.
 
 unit_id <-> envelope.revision:
   - LexicalPosting.unit_revision = envelope.revision на момент индексации.

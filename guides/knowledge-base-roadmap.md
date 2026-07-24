@@ -18,7 +18,7 @@
 - `ContextAssembly` — budget-aware trim с citations.
 - Evaluation & tracing — golden dataset, метрики, traces.
 
-Cross-references: `guides/memory-stacks-roadmap.md` (ADR'ы, MemoryProfileSpec, MemoryStack, MDBX layout), `guides/knowledge-units-roadmap.md` (per-kind payload-компоненты), `guides/lexical-search-roadmap.md` (BM25F), `guides/optimization-roadmap.md` (vector/binary indexes), `guides/mdbx-containers-extension-tz.md` (storage primitives).
+Cross-references: `guides/memory-stacks-roadmap.md` (ADR'ы, MemoryProfileSpec, MemoryStack, capability validation), `guides/knowledge-units-roadmap.md` (per-kind payload-компоненты), `guides/lexical-search-roadmap.md` (BM25F), `guides/optimization-roadmap.md` (vector/binary indexes), `guides/mdbx-containers-extension-tz.md` (storage primitives, canonical physical manifest).
 
 Non-goals: BM25F scoring details, embedding model адаптеры, per-kind payload схемы, CompactionWorker, runtime services.
 
@@ -729,7 +729,8 @@ Reporting:
 
 ## 12. References
 
-- `guides/memory-stacks-roadmap.md` — центральный манифест архитектуры, ADR'ы, MemoryProfileSpec, MemoryStack, MDBX layout, maturity levels.
+- `guides/memory-stacks-roadmap.md` — центральный манифест архитектуры, ADR'ы, MemoryProfileSpec, MemoryStack, capability validation, maturity levels.
+- `guides/mdbx-containers-extension-tz.md` — canonical physical MDBX manifest and DBI budget.
 - `guides/knowledge-units-roadmap.md` — per-kind payload-компоненты (QAPayload, FactPayload, ChunkPayload, ConversationEpisodePayload, CompiledArticlePayload, Entity, Relation).
 - `guides/lexical-search-roadmap.md` — BM25F поверх projections, postings, tokenization.
 - `guides/optimization-roadmap.md` — vector/binary secondary indexes, multi-projection embeddings.

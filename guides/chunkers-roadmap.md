@@ -39,6 +39,9 @@ Related roadmaps:
 2. **Map to our substrate.** Показать, как эти паттерны ложатся на наш `IResourceAdapter` + `ChunkPayload` + `SearchProjection` + `envelope.revision` contract'ы.
 3. **Document enrichment strategies.** Context-enrichment на индексации (Anthropic-style contextualization, late chunking, reverse Q-A generation) — это слой **поверх** chunking, не замена.
 4. **Implementation ladder.** Что в M0 (baseline), что в M1 (production), что в M2+ (advanced optional).
+5. **Raw document path.** Зафиксировать, что обычные `.md`, `.txt`,
+   extracted `.pdf`, transcripts and logs могут индексироваться без
+   предварительной curated-card нормализации.
 
 Non-goals:
 
@@ -47,6 +50,26 @@ Non-goals:
 - Не описывать vector storage — это в `optimization-roadmap.md`.
 
 ## §2. Default Chunker
+
+### §2.0. Raw Resource Ingestion Path
+
+Chunking starts from raw resources, not only from curated cards. The minimal
+path for generic documents is:
+
+```text
+IResourceAdapter
+  -> RawResource{ResourceId, uri/path, content_type, revision, body/extracted_text}
+  -> optional ResourceBodyStore write (compressed or plain)
+  -> ChunkPayload records with SourceRef byte/text ranges
+  -> SearchProjection::Original for retrieval
+  -> optional later normalizer: Fact / QAPair / Summary / CompiledArticle
+```
+
+If a source already provides curated metadata, the importer may create a
+specific `KnowledgeUnitKind` immediately. If it does not, the importer creates
+a weaker generic `Note`/`Chunk` unit that is still searchable and citeable.
+This keeps early RAG usable for raw vaults/playbooks while preserving the
+curated card-like layer for trust, lifecycle, graph relations and compaction.
 
 Default chunker — length-based sliding window. ЮMoney production case использует:
 

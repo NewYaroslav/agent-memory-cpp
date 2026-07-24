@@ -13,11 +13,21 @@
 
 Документ фиксирует **спектр внешних memory-архитектур** для LLM-агентов и сопоставляет их с ролями, которые `agent-memory-cpp` готов принять на себя. Цель — дать набор решений «когда что выбирать», а не канонизировать один источник истины. Сравнения построены на цитатах из первичных конспектов в `ai-agent-playbook`.
 
-Этот roadmap — компас для выбора архитектуры. Реализационные слои (envelope/components/projections, MDBX layout, decay-aware scoring) живут в [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) (in-house стеки для `agent-memory-cpp`). Этот документ смотрит наружу: какие внешние архитектуры конкурируют или дополняют наш подход.
+Этот roadmap — компас для выбора архитектуры. Реализационные слои
+(envelope/components/projections, profiles, decay-aware scoring) живут в
+[`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) (in-house стеки для
+`agent-memory-cpp`); единственный canonical physical MDBX manifest and DBI
+budget живут в [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md)
+§5.5/§5.5.1. Этот документ смотрит наружу: какие внешние архитектуры
+конкурируют или дополняют наш подход.
 
 Related roadmaps:
 
-- [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — внутренний манифест: ADR'ы, `MemoryProfileSpec`, `MemoryStack`, capability matrix, MDBX layout, M0/M1/M2 maturity.
+- [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — внутренний манифест:
+  ADR'ы, `MemoryProfileSpec`, `MemoryStack`, capability matrix, validation,
+  M0/M1/M2 maturity.
+- [`mdbx-containers-extension-tz.md`](mdbx-containers-extension-tz.md) §5.5/§5.5.1
+  — sole canonical physical MDBX manifest and DBI budget.
 - [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) — retrieval flow, decay-aware scoring, evaluation pipeline.
 - [`lexical-search-roadmap.md`](lexical-search-roadmap.md) — BM25/BM25F первая линия, в которой наш стек пересекается с BM25-семейством из playbook.
 - [`optimization-roadmap.md`](optimization-roadmap.md) — vector/binary/ANN optimization поверх retrieval primitives.
@@ -371,7 +381,7 @@ See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadm
 
 ### 9.2. In-house (agent-memory-cpp/guides/)
 
-- [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — манифест: 15 ADR'ов, `MemoryProfileSpec`, `MemoryStack`, MDBX layout, M0/M1/M2 maturity, runtime services.
+- [`memory-stacks-roadmap.md`](memory-stacks-roadmap.md) — манифест: ADR'ы, `MemoryProfileSpec`, `MemoryStack`, physical manifest ownership, M0/M1/M2 maturity, runtime services.
 - [`knowledge-base-roadmap.md`](knowledge-base-roadmap.md) — envelope + components + projections + decay-aware scoring + retrieval contracts.
 - [`lexical-search-roadmap.md`](lexical-search-roadmap.md) — BM25/BM25F, postings, projection-aware indexing, Cyrillic morphology gated.
 - [`optimization-roadmap.md`](optimization-roadmap.md) — vector/binary/ANN optimization layer.
@@ -379,6 +389,6 @@ See [`compression-is-intelligence-roadmap.md`](compression-is-intelligence-roadm
 - [`compaction-roadmap.md`](compaction-roadmap.md) — CompactionWorker, decay jobs.
 - [`runtime-services-roadmap.md`](runtime-services-roadmap.md) — PromptCache, AsyncIndexer, WriteGate.
 - [`memory-stacks-roadmap.md` §13 Runtime Services](memory-stacks-roadmap.md) — `IQueryTransformer`, `IRetrievalEvaluator` контракты для LLM-augmented retrieval.
-- [`memory-stacks-roadmap.md` §12 MDBX Layout](memory-stacks-roadmap.md) — graph_edges / embedding_meta DBI shapes.
+- [`mdbx-containers-extension-tz.md` §5.5](mdbx-containers-extension-tz.md) — canonical graph_edges / embedding_meta DBI shapes.
 - [`resource-reindexing.md`](resource-reindexing.md) — targeted reindexing protocol.
 - [`research-reading-map.md`](research-reading-map.md) — research references backing the project.

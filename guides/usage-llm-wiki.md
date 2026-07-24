@@ -275,7 +275,7 @@ the source tree, it is tagged as planned.
 | **Raw notes** | §4.1 `raw/`, §4.2 `daily-logs/` | `Note` / `Fact` / `Chunk` units (see `KnowledgeUnitKind` enum in [`knowledge-units-roadmap.md`](knowledge-units-roadmap.md) §2) |
 | **Synthesized wiki** | §4.1 `wiki/`, §4.2 `concepts/`, §4.3 `shared/` + `agent-name/` | `CompiledArticle` kind + `CompiledArticlePayload` |
 | **Index** | All variants | `HybridRetrievalEngine` query; `index.md` is computed from `CompiledArticlePayload.title` + `keywords` projection |
-| **Log + audit** | §4.1 `log.md`, §4.3 `COMPACT-LOG.md` | `wiki_audit_log` DBI (append-only, see §6.10) + `compaction_jobs` DBI (operational state, separate) |
+| **Log + audit** | §4.1 `log.md`, §4.3 `COMPACT-LOG.md` | `wiki_audit_log` DBI (append-only, see §6.10) + compaction queue DBIs (operational state, separate) |
 | **Maintainer cron** | §4.2 daily flush, §4.3 6h cron, §4.4 GitHub Actions | `CompactionWorker` running `SummaryPromotionJob` |
 | **Anti-mусор mechanics** | §4.3 `injection_count` + 60-day archive, weekly compact | `CompiledArticlePayload.injection_count` + `LifecycleState::Deprecated` transition via `ArchiveColdJob` |
 | **Frontmatter `keywords`** | §4.3 | `CompiledArticlePayload.keywords` + `SearchProjection::tags` (see [`lexical-search-roadmap.md`](lexical-search-roadmap.md) §"Projection Build Rules Per ProjectionKind" — `Original.tags`, `Summary.tag`) |
@@ -322,7 +322,8 @@ is a `CompactionWorker` (planned) running jobs:
 
 ```text
 [Daily tick]
-  1. CompactionWorker reads compaction_jobs queue (planned: persistent FIFO).
+  1. CompactionWorker reads the compaction queue (planned: persistent FIFO
+     with priority and leases).
   2. SummaryPromotionJob runs (planned):
        - Find candidate units: usage_count >= threshold, last_decay_score >= threshold.
        - Cluster candidates (by embeddings or fixed N).
@@ -457,7 +458,7 @@ index.md (computed) → generated from CompiledArticlePayload.title + keywords
                      + metadata_filters DBI reverse index on title/keywords
 
 log.md (audit)      → wiki_audit_log DBI (append-only, see §6.10)
-                     + compaction_jobs DBI (operational state, separate)
+                     + compaction queue DBIs (operational state, separate)
 
 CLAUDE.md / AGENTS.md → not stored in MDBX; lives in repo or vault
 ```
@@ -483,7 +484,9 @@ When a new raw resource arrives:
      - Schema validation
      - LifecycleState = Active
      - CompactionMetaComponent.dirty_decay = true
-     - knowledge_units_by_kind update
+     - content_key_to_unit_id update
+     - scope-aware knowledge_units_by_kind update
+     - source_refs update if FullSourceRefs profile is enabled
      - If dirty threshold reached → enqueue DecayJob
 6. MultiTableWriter commits atomically.
 ```
@@ -577,7 +580,11 @@ projects don't share each other's prompts (see open issue 17.7 in
 
 Job queues and audit logs are DIFFERENT substrates:
 
-- **compaction_jobs DBI**: per-job state (queued → running → done → failed). MAY be deleted after retention window. Mutable.
+- **compaction queue DBIs**: per-job state and ordering
+  (`compaction_jobs_by_id`, `compaction_jobs_scheduled`,
+  `compaction_jobs_ready`,
+  `compaction_jobs_by_lease`, `compaction_jobs_by_status`). MAY be deleted
+  after retention window. Mutable.
 - **compaction_handoffs DBI**: technical completion records (which worker, when, what version). Mutable.
 
 For human-reviewable LLM Wiki, **the audit log must be append-only** with:
